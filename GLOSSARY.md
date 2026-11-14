@@ -647,7 +647,7 @@ The atomic Leave-owned act that consumes the request's Leave Credit Commitments,
 _Avoid_: Monetization approval, direct payroll edit
 
 **Monetization Earning Input**:
-An immutable Payroll-owned input that freezes Payroll's authority-bound salary resolution and monetary calculation for one accepted Monetization Posting.
+The Payroll Input that freezes Payroll's authority-bound salary resolution and monetary calculation for one accepted Monetization Posting. It is the only Payroll Input that carries an amount.
 _Avoid_: Caller-supplied payout, leave ledger entry
 
 **Monetization Adjustment**:
@@ -723,7 +723,7 @@ The authoritative HRIS record of individual Service Engagements and their agreed
 _Avoid_: Personnel file, payroll register, payment ledger
 
 **Service Payment**:
-A payment arising from a Service Engagement under its distinct service-provider rules; it is not a Payroll Employee result, Payroll Line, or plantilla payroll payment.
+A payment arising from a Service Engagement under its distinct service-provider rules; it is not a Payroll Employee Result, Payroll Line, or plantilla payroll payment.
 _Avoid_: Salary, payroll result, payslip
 
 ## Personnel Support Tiers
@@ -747,11 +747,11 @@ The effective-dated rules used to calculate payroll for admitted Appointed Perso
 _Avoid_: Plantilla payroll profile, casual payroll profile, contractual payroll profile
 
 **National Payroll Rule Version**:
-An immutable, effective-dated representation of an authoritative national salary, compensation, contribution, tax, or deduction rule. An agency may select an applicable version but cannot alter its substance.
-_Avoid_: Agency default, editable national rate
+An immutable, effective-dated representation of an authoritative national salary, compensation, contribution, tax, or deduction rule, held once for the whole platform. It applies to every Agency by its effectivity, and no Agency copies, selects, or alters it.
+_Avoid_: Agency default, editable national rate, Agency rule copy
 
 **Agency Payroll Applicability**:
-An effective-dated, evidence-backed fact that determines whether a National Payroll Rule Version or conditional pay component applies to an agency or member of its Appointed Personnel.
+An effective-dated, evidence-backed Agency record that a conditional pay component applies to the whole Agency or to one named Employee. An unconditional National Payroll Rule Version applies without one.
 _Avoid_: Agency rule override, assumed entitlement
 
 **Native Payroll Component**:
@@ -759,15 +759,35 @@ A lawful earning, contribution, tax, or deduction calculated by the Appointed Pe
 _Avoid_: Hard-coded allowance, agency formula
 
 **Authorized Payroll Component Input**:
-An evidence-backed amount or quantity accepted for a lawful pay component when the Reference Agency Profile cannot authoritatively calculate it. It does not authorize a new component or override a national rule.
-_Avoid_: Free-form pay item, manual rule override
+An approved, effective-dated amount, rate, or quantity accepted for a lawful pay component when the Reference Agency Profile cannot authoritatively calculate it. It carries its own authority and eligible Agency or Employee, and does not authorize a new component or override a national rule.
+_Avoid_: Free-form pay item, manual rule override, Payroll Input
+
+**Payroll Period**:
+One payroll run of one Agency, with its run type, coverage dates, cutoff, and single payment date. A regular Payroll Period covers one calendar month, and a special Payroll Period pays only the components it names.
+_Avoid_: Payroll run, pay period, payroll batch, Attendance Period
+
+**Payroll Input**:
+An immutable, idempotent source effect that Leave or Overtime posts to Payroll for one Employee: a quantity with its provenance, never a rate. Payroll consumes it exactly once.
+_Avoid_: Manual input, Attendance Payroll Fact, Authorized Payroll Component Input
+
+**Payroll Employee Result**:
+One Employee's calculated outcome in one calculation version of a Payroll Period: the frozen compensation basis, the Payroll Lines, and the gross, deduction, and net totals they reconcile to.
+_Avoid_: Payroll employee, pay record, payslip
+
+**Payroll Line**:
+One calculated earning, deduction, employer share, or informational amount within a Payroll Employee Result, with its component, quantity, rate, rule version, and sources. It is never overridden.
+_Avoid_: Pay item, manual line, Payment Instruction
+
+**Payroll Hold**:
+The Payroll Preparer's reasoned decision to leave one Employee who has a blocking exception out of a Payroll Period so the rest can proceed. It waives nothing: the Employee gets no Payroll Employee Result in that period.
+_Avoid_: Exception waiver, withheld payslip, excluded employee
 
 **Payment Export**:
 A provider-neutral, reviewable set of Payment Instructions derived from one finalized payroll result. It does not assert provider acceptance or that funds were disbursed.
 _Avoid_: Bank file, disbursement confirmation
 
 **Payment Instruction**:
-The positive-net-pay direction for one Payroll Employee result to one designated disbursement destination within a Payment Export.
+The positive-net-pay direction for one Payroll Employee Result to one designated disbursement destination within a Payment Export.
 _Avoid_: Payroll line, split payment
 
 **Disbursement Outcome**:

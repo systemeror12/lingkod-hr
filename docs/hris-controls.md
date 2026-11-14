@@ -1055,19 +1055,21 @@ FINALIZED
 VOIDED
 ```
 
-| Current     | Action                     | Next        | Actor                                       | Permission                             | Validations                                       | Side effects and audit                     |
-| ----------- | -------------------------- | ----------- | ------------------------------------------- | -------------------------------------- | ------------------------------------------------- | ------------------------------------------ |
-| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate period                               | Create period                              |
-| DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                            | `payroll.periods.calculate`            | Rule snapshot; source cutoff complete             | Queue calculation                          |
-| CALCULATING | Complete calculation       | FOR_REVIEW  | System                                      | Internal                               | No technical failure; results stored              | Run validations                            |
-| CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                   | `payroll.periods.reopen`               | Failure or blocking setup issue                   | Record failure                             |
-| FOR_REVIEW  | Return for correction      | DRAFT       | Accounting Reviewer / HR Certifier          | `payroll.periods.return`               | Review comment required                           | Unlock permitted inputs                    |
-| FOR_REVIEW  | Certify HR inputs          | CERTIFIED   | HR Certifying Officer                       | `payroll.periods.certify`              | Personnel, attendance, and leave checks complete  | Lock certified version                     |
-| CERTIFIED   | Revoke certification       | FOR_REVIEW  | HR Certifying Officer / Authorized Approver | `payroll.periods.revoke_certification` | Reason and no finalization                        | Audit revocation                           |
-| CERTIFIED   | Approve payroll            | APPROVED    | Payroll Approver                            | `payroll.periods.approve`              | Review, budget, and accounting controls satisfied | Lock approval version                      |
-| APPROVED    | Return before finalization | FOR_REVIEW  | Payroll Approver                            | `payroll.periods.return_approved`      | Reason; no payment release                        | Reopen controlled review                   |
-| APPROVED    | Finalize payroll           | FINALIZED   | Payroll Approver                            | `payroll.periods.finalize`             | Approved version unchanged; segregation satisfied | Immutable lines; generate outputs          |
-| FINALIZED   | Void payroll               | VOIDED      | Payroll Approver / Agency Authority         | `payroll.periods.void`                 | Formal correction case and authority              | Preserve original; create replacement path |
+| Current     | Action                     | Next        | Actor                                       | Permission                             | Validations                                                           | Side effects and audit                             |
+| ----------- | -------------------------- | ----------- | ------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
+| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate period; no other open regular period                     | Create period                                      |
+| DRAFT       | Move cutoff                | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | Reason                                                                | Audit Event                                        |
+| DRAFT       | Place or lift Payroll Hold | DRAFT       | Payroll Preparer                            | `payroll.periods.calculate`            | Employee-level blocking exception; reason                             | Employee left out; audit                           |
+| DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                            | `payroll.periods.calculate`            | Cutoff passed; rule snapshot taken                                    | New calculation version; queue calculation         |
+| CALCULATING | Complete calculation       | FOR_REVIEW  | System                                      | Internal                               | No technical failure; results stored                                  | Run validations                                    |
+| CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                   | `payroll.periods.reopen`               | Failure or blocking setup issue                                       | Record failure                                     |
+| FOR_REVIEW  | Return for correction      | DRAFT       | Accounting Reviewer / HR Certifier          | `payroll.periods.return`               | Review comment required                                               | Unlock permitted inputs                            |
+| FOR_REVIEW  | Certify HR inputs          | CERTIFIED   | HR Certifying Officer                       | `payroll.periods.certify`              | Personnel, attendance, and leave checks complete                      | Lock certified version                             |
+| CERTIFIED   | Revoke certification       | FOR_REVIEW  | HR Certifying Officer / Authorized Approver | `payroll.periods.revoke_certification` | Reason and no finalization                                            | Audit revocation                                   |
+| CERTIFIED   | Approve payroll            | APPROVED    | Payroll Approver                            | `payroll.periods.approve`              | Review, budget, and accounting controls satisfied                     | Lock approval version                              |
+| APPROVED    | Return before finalization | FOR_REVIEW  | Payroll Approver                            | `payroll.periods.return_approved`      | Reason; no payment release                                            | Reopen controlled review                           |
+| APPROVED    | Finalize payroll           | FINALIZED   | Payroll Approver                            | `payroll.periods.finalize`             | Approved version unchanged; segregation satisfied; sources unconsumed | Consume sources; immutable lines; generate outputs |
+| FINALIZED   | Void payroll               | VOIDED      | Payroll Approver / Agency Authority         | `payroll.periods.void`                 | Formal correction case and authority                                  | Preserve original; create replacement path         |
 
 Invalid examples:
 
@@ -1076,6 +1078,47 @@ DRAFT → FINALIZED
 FOR_REVIEW → FINALIZED
 FINALIZED → DRAFT
 ```
+
+A Payroll Period is one payroll run of one Agency (#328). A regular period
+covers exactly one calendar month with one payment date, and a special period
+pays only the components it names ([ADR 0015](adr/0015-regular-payroll-period-is-one-calendar-month.md)).
+A duplicate is a second regular period, not `VOIDED`, for a month already
+covered. An Agency has at most one regular period that is not `FINALIZED` or
+`VOIDED`.
+
+"Cutoff passed" means the current time is at or after `cutoff_at`. The
+calculation then uses every Payroll Input accepted, and every Attendance
+Payroll Fact published, at or before the cutoff that no finalized payroll has
+consumed ([ADR 0014](adr/0014-consume-payroll-sources-by-cutoff.md)). An
+Attendance Period that ended before the cutoff and is not locked raises a
+warning, not a block. The cutoff moves only in `DRAFT`. Finalization rechecks
+that every source is still unconsumed and fails with a blocking exception if
+another payroll consumed one first.
+
+Each calculation takes one rule snapshot and writes a new calculation version.
+Certification and approval lock that exact version, and earlier versions are
+kept.
+
+Exceptions (#27, #328):
+
+- A blocking exception prevents certification and finalization and cannot be
+  waived. It ends when its cause is fixed and the period recalculated.
+- A warning is acknowledged with a reason.
+- A Payroll Hold leaves one Employee with a blocking exception out of the
+  period. The Employee gets no Payroll Employee Result, stays on the exception
+  report, and keeps their sources unconsumed. An exception that affects the
+  whole period, such as a missing rule every Employee needs, cannot be held
+  out.
+
+A National Payroll Rule Version loaded after the snapshot never recalculates a
+period silently (#328):
+
+| Status                  | Effect                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `DRAFT`                 | The next calculation uses it                                                               |
+| `FOR_REVIEW`            | Blocking exception; `Certify HR inputs` is refused until the period is recalculated        |
+| `CERTIFIED`, `APPROVED` | The snapshot stands and the period is flagged; the officer returns it or corrects it later |
+| `FINALIZED`             | Correction only                                                                            |
 
 ---
 

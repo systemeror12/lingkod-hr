@@ -557,17 +557,17 @@ erDiagram
 
 ```mermaid
 erDiagram
-    AGENCY ||--o{ SALARY_SCHEDULE : adopts
-    SALARY_SCHEDULE ||--o{ SALARY_GRADE_RATE : contains
-
-    AGENCY ||--o{ PAY_COMPONENT : applies
-    PAY_COMPONENT ||--o{ PAY_COMPONENT_RULE_VERSION : governed_by
-    EMPLOYEE ||--o{ EMPLOYEE_COMPENSATION : receives
-    PAY_COMPONENT ||--o{ EMPLOYEE_COMPENSATION : classifies
+    NATIONAL_PAYROLL_RULE_VERSION ||--o{ SALARY_GRADE_RATE : contains
+    AGENCY ||--o{ AGENCY_PAYROLL_APPLICABILITY : records
+    PAY_COMPONENT ||--o{ AGENCY_PAYROLL_APPLICABILITY : switched_on_by
+    AGENCY ||--o{ AUTHORIZED_PAYROLL_COMPONENT_INPUT : approves
+    PAY_COMPONENT ||--o{ AUTHORIZED_PAYROLL_COMPONENT_INPUT : valued_by
 
     AGENCY ||--o{ PAYROLL_PERIOD : processes
     PAYROLL_PERIOD ||--o{ PAYROLL_RULE_SNAPSHOT : freezes
+    NATIONAL_PAYROLL_RULE_VERSION ||--o{ PAYROLL_RULE_SNAPSHOT : frozen_in
     PAYROLL_PERIOD ||--o{ PAYROLL_EMPLOYEE : includes
+    PAYROLL_PERIOD ||--o{ PAYROLL_HOLD : holds_out
     EMPLOYEE ||--o{ PAYROLL_EMPLOYEE : paid_through
 
     PAYROLL_EMPLOYEE ||--o{ PAYROLL_LINE : calculated_as
@@ -588,31 +588,36 @@ erDiagram
     PAYROLL_PERIOD ||--o{ PAYROLL_ADJUSTMENT : contains
 ```
 
-| Entity                  | Purpose                                               |
-| ----------------------- | ----------------------------------------------------- |
-| `SALARY_SCHEDULE`       | Effective government salary schedule                  |
-| `SALARY_GRADE_RATE`     | Grade-and-step amount                                 |
-| `PAY_COMPONENT`         | Earning, deduction, contribution, or adjustment type  |
-| `EMPLOYEE_COMPENSATION` | Effective employee compensation assignment            |
-| `PAYROLL_PERIOD`        | Payroll run                                           |
-| `PAYROLL_RULE_SNAPSHOT` | Frozen rules used by the run                          |
-| `PAYROLL_EMPLOYEE`      | Employee-level payroll result                         |
-| `PAYROLL_LINE`          | Detailed immutable calculation line                   |
-| `CONTRIBUTION_LINE`     | Employee and employer contribution detail             |
-| `TAX_LINE`              | Withholding-tax detail                                |
-| `LOAN_DEDUCTION_LINE`   | Loan or authorized deduction                          |
-| `PAYROLL_EXCEPTION`     | Warning or blocking issue                             |
-| `PAYSLIP`               | Employee payroll statement                            |
-| `PAYROLL_ADJUSTMENT`    | Supplemental, correction, refund, or replacement item |
-| `PAYMENT_EXPORT`        | Payment Instructions from one finalized payroll       |
-| `PAYMENT_INSTRUCTION`   | Positive net pay for one result to one destination    |
-| `DISBURSEMENT_OUTCOME`  | External evidence of a Payment Instruction's progress |
+| Entity                               | Purpose                                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `NATIONAL_PAYROLL_RULE_VERSION`      | Platform-wide, immutable national rule: salary schedule, component, contribution, or tax |
+| `SALARY_GRADE_RATE`                  | Grade-and-step amount of a salary schedule version                                       |
+| `PAY_COMPONENT`                      | Platform-wide catalogue of earning, deduction, and contribution types                    |
+| `AGENCY_PAYROLL_APPLICABILITY`       | The Agency's record that a conditional component applies                                 |
+| `AUTHORIZED_PAYROLL_COMPONENT_INPUT` | Approved amount, rate, or quantity for a component no rule computes                      |
+| `PAYROLL_PERIOD`                     | One payroll run: regular for one calendar month, or special                              |
+| `PAYROLL_RULE_SNAPSHOT`              | Rules and Agency records one calculation version used                                    |
+| `PAYROLL_EMPLOYEE`                   | Payroll Employee Result for one calculation version                                      |
+| `PAYROLL_HOLD`                       | One Employee left out of a period, with a reason                                         |
+| `PAYROLL_LINE`                       | Detailed immutable calculation line                                                      |
+| `CONTRIBUTION_LINE`                  | Employee and employer contribution detail                                                |
+| `TAX_LINE`                           | Withholding-tax detail                                                                   |
+| `LOAN_DEDUCTION_LINE`                | Loan or authorized deduction                                                             |
+| `PAYROLL_EXCEPTION`                  | Warning or blocking issue                                                                |
+| `PAYSLIP`                            | Employee payroll statement                                                               |
+| `PAYROLL_ADJUSTMENT`                 | Supplemental, correction, refund, or replacement item                                    |
+| `PAYMENT_EXPORT`                     | Payment Instructions from one finalized payroll                                          |
+| `PAYMENT_INSTRUCTION`                | Positive net pay for one result to one destination                                       |
+| `DISBURSEMENT_OUTCOME`               | External evidence of a Payment Instruction's progress                                    |
 
 One Appointed Personnel Payroll Rule Set calculates every payroll, with pay
-basis as an effective-dated variant rather than a payroll profile. Salary
-schedules and component rules are National Payroll Rule Versions that an
-Agency applies but never overrides. JO/COS Service Payments are outside this
-domain (#27). A Payment Export marks no one paid (#28).
+basis as an effective-dated Personnel fact rather than a payroll profile.
+Salary schedules and component, contribution, and tax rules are National
+Payroll Rule Versions, held once for the whole platform and never authored,
+copied, or overridden by an Agency (#27, #328, ADR 0013). A Payroll Period
+consumes each Payroll Input and Attendance Payroll Fact exactly once, by cutoff
+(ADR 0014). JO/COS Service Payments are outside this domain (#27). A Payment
+Export marks no one paid (#28).
 
 ---
 
@@ -822,11 +827,11 @@ The logical ERD must later enforce:
 10. raw attendance events cannot be edited directly;
 11. locked attendance requires an adjustment;
 12. leave and COC reversals must reference original ledger entries;
-13. one payroll-employee result per employee and payroll period;
+13. one Payroll Employee Result per Employee, Payroll Period, and calculation version;
 14. finalized payroll lines cannot be edited;
 15. final performance ratings require controlled amendment;
 16. effectual separation closes service and occupancy but preserves history;
-17. every operational entity is traceable to one agency.
+17. every operational entity is traceable to one agency; National Payroll Rule Versions and the pay component catalogue are platform-wide reference data.
 
 ---
 
@@ -843,7 +848,7 @@ The logical ERD must later enforce:
 | Attendance  | WorkSchedule, AttendancePeriod, AttendanceDay                                                       |
 | Leave       | LeaveType, LeaveAccount, LeaveApplication, LeaveApplicationVersion, LeavePosting, LeaveCancellation |
 | Overtime    | OvertimeAuthority, CocAccount, CtoRequest                                                           |
-| Payroll     | SalarySchedule, PayComponent, PayrollPeriod                                                         |
+| Payroll     | NationalPayrollRuleVersion, PayrollInput, PayrollPeriod                                             |
 | Performance | PerformanceCycle, IndividualCommitment                                                              |
 | Separation  | SeparationCase                                                                                      |
 | Workflow    | ApprovalRequest                                                                                     |

@@ -317,26 +317,35 @@ Grant `overtime.cto.approve` and `overtime.cto.reject` after the CTO Request tab
 
 Create:
 
-1. `salary_schedules`
+1. `national_payroll_rule_versions`
 2. `salary_grade_rates`
 3. `pay_components`
-4. `pay_component_rule_versions`
-5. `employee_compensations`
-6. `payroll_inputs`
-7. `payroll_periods`
-8. `payroll_rule_snapshots`
-9. `payroll_employees`
-10. `payroll_lines`
-11. `contribution_lines`
-12. `tax_lines`
-13. `loan_deduction_lines`
-14. `payroll_exceptions`
-15. `payroll_adjustments`
-16. `payslips`
-17. `remittance_schedules`
-18. `payment_exports`
-19. `payment_instructions`
-20. `disbursement_outcomes`
+4. `agency_payroll_applicabilities`
+5. `payroll_periods`
+6. `payroll_period_components`
+7. `authorized_payroll_component_inputs`
+8. `payroll_inputs`
+9. `payroll_rule_snapshots`
+10. `payroll_rule_snapshot_items`
+11. `payroll_employees`
+12. `payroll_exceptions`
+13. `payroll_holds`
+14. `payroll_lines`
+15. `payroll_line_sources`
+16. `payroll_consumed_attendance_facts`
+17. `contribution_lines`
+18. `tax_lines`
+19. `loan_deduction_lines`
+20. `payroll_adjustments`
+21. `payslips`
+22. `remittance_schedules`
+23. `payment_exports`
+24. `payment_instructions`
+25. `disbursement_outcomes`
+
+The first three are platform-wide: no `agency_id`, no Agency policy, `SELECT`
+only for `hris_app`, and rows loaded by the `hris_operator` command (#328, ADR
+0013).
 
 Add deferred FKs:
 
@@ -348,8 +357,9 @@ Add deferred FKs:
 Attach:
 
 - finalized-payroll mutation trigger;
+- National Payroll Rule Version and salary grade rate immutability;
 - rule-snapshot immutability;
-- payroll line immutability;
+- payroll result and line immutability once a calculation completes;
 - total reconciliation checks through finalization function.
 
 ---
@@ -458,13 +468,12 @@ Seed only stable baseline data:
 - role templates;
 - government leave-type templates;
 - standard workflow status references if reference tables are used;
-- baseline pay-component templates;
 - document classifications;
 - audit action codes.
 
 Do not hard-code current statutory rates as timeless seed data.
 
-Salary schedules, contribution tables, and tax rules are immutable, effective-dated National Payroll Rule Versions (#27).
+Salary schedules, contribution tables, and tax rules are immutable, effective-dated National Payroll Rule Versions (#27). They and the pay component catalogue are not seed data: the `hris_operator` command loads each from a reviewed file that cites the research register (#328, ADR 0013).
 
 ---
 
@@ -502,7 +511,8 @@ audit event DELETE fails
 ```text
 one active incumbent per position
 one active leave account per type
-one employee result per payroll period
+one employee result per payroll period and calculation version
+one regular payroll period per month, and one open at a time
 one current attendance result per employee/date
 ```
 
