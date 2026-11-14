@@ -72,6 +72,8 @@ CREATE TABLE salary_grade_rates (
 
 Add an exclusion constraint for overlapping active salary schedules. One rule set serves every pay basis, so there is no per-profile schedule (#27).
 
+`daily_rate_rule` holds the daily-rate derivation only; its sourced basis is the 22-working-day divisor of RA No. 6758, sec. 7. It does not prorate a partial month of a monthly-paid Employee: no rule is recorded for that case, and it blocks until an authority is found ([authorities](../../research/partial-month-basic-salary-authorities.md)).
+
 ---
 
 ## 2. Pay Components and Rules
