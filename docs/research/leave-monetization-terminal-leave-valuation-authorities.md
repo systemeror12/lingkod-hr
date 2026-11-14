@@ -7,7 +7,7 @@ scope, amendments, effectivity, salary basis, valuation date, credit quantities,
 factor, rounding, funding, approvals, forms, certifications, and unresolved
 gaps?
 
-**As of:** 2026-09-15 (Philippine Standard Time)
+**As of:** 2026-09-15 (Philippine Standard Time). The five open questions of #614 were rechecked on 2026-11-14.
 
 **Source boundary:** This note uses only primary Philippine government sources
 (CSC, DBM, and the FY 2026 General Appropriations Act). It records the
@@ -17,6 +17,8 @@ ordinary civilian NGA profile. Teachers, personnel covered by special leave or
 retirement laws, Constitutional Commission members with a special regime, and
 other populations with a separate authority profile are not silently folded into
 this baseline.
+
+**One exception (added 2026-11-14):** the superseded CSC MC No. 31, s. 1991 is quoted from a non-official mirror, and the register marks it as one. It is cited only to show that its worked example states no rounding rule.
 
 ## Resolution
 
@@ -36,6 +38,20 @@ monetization of leave credits (MLC). The source does not prescribe final-peso
 rounding, a general salary effective-date rule for MLC, or an allocation/rounding
 rule for fractional special-monetization days. Those are genuine unresolved
 questions, not safe defaults.
+
+## Answers to the five open questions
+
+Rechecked 2026-11-14 against the primary sources named. "Blocking" means
+monetization keeps failing closed on that point. Each row's searched list is
+the set of sources read for that question.
+
+| # | Question | Answer or status | Authority or searched list | Status |
+| - | -------- | ---------------- | -------------------------- | ------ |
+| 1 | Valuation date for ordinary and special MLC salary and balance: request, approval, fund release, or payment | No authority found. No text read fixes a valuation date for either kind of MLC. | Searched: CSC MC No. 41, s. 1998, Secs. 22-24 and Rule I(p)(7); CSC MC No. 16, s. 2002, Sec. 23; DBM BC No. 2002-1, Sec. 3.1.2; DBM BC No. 2016-2, Sec. 3.1 and its funding and liability provisions; DBM CL Nos. 2019-11, 2021-4, 2022-4, and 2024-1; Supreme Court, G.R. No. 262193 | **Blocking** |
+| 2 | The exact `12/249` ratio or the published `0.0481927` | **0.0481927, the published decimal, for terminal leave and for monetization alike.** CSC MC No. 2, s. 2016 is titled "Amendment to the Constant Factor in the Formula Used for Computing Terminal Leave Benefits (Section 40) and Computation of Leave Monetization (Section 24) of the Omnibus Rules on Leave" and prints "= .0481927". Resolution No. 1501530's WHEREFORE clause changes "the constant factor used in computing the Terminal Leave Benefits (Section 40 of CSC Memorandum Circular No. 14, s. 1999) and Monetization of Leave Credits (Section 24 of the Omnibus Rules on Leave) from .0478087 to .0481927." DBM BC No. 2016-2, sec. 3.1, gives "CF = Constant factor which is 0.0481927" for "TLB and MLC." `12/249` is the derivation only: 12/249 = 0.04819277…, and the published figure is that quotient cut at seven places. | CSC MC No. 2, s. 2016, page 1, and Resolution No. 1501530 (annexed, page 3); DBM BC No. 2016-2, sec. 3.1 | **Answered** for terminal leave and monetization. The 2021 repeal of MC 8, s. 2003 is a question for the developer (see the gap list), not a blocking point. |
+| 3 | Rounding of fractional leave credits | No authority found for monetization. Section 28's fraction-of-a-day rule is not stated for monetization. | Searched: CSC MC No. 41, s. 1998, Secs. 22-24 and 28 | **Blocking** |
+| 4 | Rounding of the peso amount to centavos, and at which stage | No authority found. The one worked example, in CSC MC No. 31, s. 1991 (superseded; non-official mirror), reads "EXAMPLE: P10,000.00 (monthly sal.) X 10 days = P4,545.45 / 22." It shows two decimals, but 4,545.4545… gives that figure under nearest or truncating rounding alike, so it does not show the rule. | Searched: CSC MC No. 41, s. 1998, Secs. 22-24; CSC MC No. 8, s. 2003 (repealed); DBM BC No. 2002-1; DBM BC No. 2016-2; CSC MC No. 31, s. 1991 (non-official mirror) | **Blocking** |
+| 5 | Whether the 50%-or-more special share applies to the combined VL+SL balance or to each Leave Account | No issuance states the rule. None says whether the 50% share is computed on a combined VL+SL balance or per Leave Account. The texts read use "accumulated leave credits" without naming an account. CSC MC No. 16, s. 2002 (Sec. 23, as amended): "The monetization of 50% or more of the accumulated leave credits shall be upon the favorable recommendation of the agency head and subject to availability of funds." Resolution No. 02-0731 (WHEREAS clause): "Section 23 of the Omnibus Rules on Leave provides for up to 50% monetization of all accumulated leave credits ..." | Searched: CSC MC No. 41, s. 1998, Sec. 23; CSC MC No. 16, s. 2002, Sec. 23; CSC Resolution No. 02-0731 (annexed to the MC 16 scan, pages 3-5) | **Blocking** |
 
 ## Direct rules
 
@@ -85,6 +101,8 @@ adopts `TLB = S × D × CF`, where `S` is the **highest monthly salary received*
 DBM also states that the equivalent month for this purpose is 20.75 working
 days. [CSC MC No. 2, s. 2016](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/2016/MC%20No.%2002%20s.%202016.pdf),
 [DBM BC No. 2016-2, secs. 1-3.1](https://www.dbm.gov.ph/wp-content/uploads/Issuances/2016/Budget%20Circular/BC%202016%20-%202%20-%20COMPUTATION%20AND%20FUNDING%20OF%20TERMINAL%20LEAVE%20BENEFITS%20AND%20MONETIZATION%20OF%20LEAVE%20CREDITS%20%281%29.pdf)
+
+Dated note (checked 2026-11-14): BC 2016-2 gives the equivalent of 20.75 days "for purposes of computation of TLB"; it gives no equivalent month for MLC. Its sec. 3.1 states that "TLB and MLC shall be computed as follows" with the same CF.
 
 For terminal leave on retirement or voluntary resignation, Section 39 is more
 specific: salary is the highest monthly salary received at any time during the
@@ -150,6 +168,8 @@ For DBM release authority, the current Table A2 lists the following evidence:
 
 [DBM Table A2 — release of TLB, retirement gratuity, MLC, and trust-receipt
 authorities](https://www.dbm.gov.ph/index.php/central-office/services-for-client-agencies/2500-release-of-obligational-and-or-disbursement-authorities-for-terminal-leave-retirement-gratuity-claims-monetization-of-leave-credits-and-trust-receipts)
+
+Dated note (checked 2026-11-14): the Table A2 page, as fetched that day, lists under the MLC action documents a Memorandum for the Secretary, the SARO/NCA/ANCAI, and "other attachments such as the LARP and LPAMLC for Monetization of NGA personnel." The phrases "special budget" and "approved MLC" do not appear on the page. The MLC bullet above is the base text and is kept; that page does not confirm it.
 
 For payment claims, the current DBM checklist additionally calls for the
 accepted resignation or retirement letter, leave card/certificate as of the
@@ -225,6 +245,7 @@ official. A mere employee request is not the funding or approval evidence.
    2016-2** adopted it for TLB and MLC and states effectivity on 23 January 2016
    for employees retiring after 22 January 2016. The sources do not give a
    separate MLC request/payment cut-off date.
+   Dated note (checked 2026-11-14): the subject line of CSC MC No. 2, s. 2016 (page 1) and the dispositive clause of Resolution No. 1501530 (page 3) name both Section 40 (TLB) and Section 24 (monetization) as the provisions whose constant changes, so item 4 covers both.
 5. **CSC MC No. 15, s. 2020** changed terminal-claim timing from the former
    10-year period to any time after severance.
 6. **CSC MC No. 5, s. 2021** prescribed the Revised 2020 Form 6 and discontinued
@@ -241,7 +262,6 @@ issuance date alone.
 The controlling sources publish the seven-decimal factor `0.0481927` and the
 equivalent 20.75 working-day month. They do **not** prescribe:
 
-- rounding the exact `12/249` ratio versus using the published decimal;
 - rounding fractional leave credits, especially for the 50%-or-more case;
 - rounding the final peso amount to centavos or at what calculation stage;
 - whether special monetization's percentage is calculated against a combined
@@ -253,6 +273,10 @@ equivalent 20.75 working-day month. They do **not** prescribe:
 - the precise salary components included in “monthly salary” for the factor; or
 - a single current rule for involuntary/no-fault separation where Section 39's
   explicit highest-salary wording names retirement and voluntary resignation.
+
+**Status of the five questions of #614 (added 2026-11-14).** Question 2, the `12/249` ratio against the published decimal, stood in this list in #199 and is answered: the published decimal is the constant for terminal leave and monetization alike (see the Answers table). Question 1 (valuation date), question 3 (fractional credits), question 4 (centavo rounding), and question 5 (percentage base) stay blocking, and monetization keeps failing closed on each. The four other bullets above (annual window, computation form, salary components, involuntary separation) are unchanged from #199 and are not among the five questions.
+
+**Question for the developer, not blocking (added 2026-11-14).** CSC Resolution No. 2100020, item 6, reads: "To REPEAL the provisions of CSC Memorandum Circular No. 8, s. 2003 (Amendment to Section 24 of CSC MC No. 41, s. 1998 on Computation on Leave Monetization and Reiteration of Policy on Maternity Leave)." That resolution does not name CSC Resolution No. 1501530 or DBM BC No. 2016-2, and no text read says what Section 24 reads after the repeal. This note does not answer that question.
 
 The direct terminal evidence points to an effective-separation/last-service
 balance cutoff and historical highest salary, but it does not prescribe a
@@ -274,3 +298,32 @@ revalidated before treating a funding source or priority as permanent.
 - [DBM Table A2 — release authority documents](https://www.dbm.gov.ph/index.php/central-office/services-for-client-agencies/2500-release-of-obligational-and-or-disbursement-authorities-for-terminal-leave-retirement-gratuity-claims-monetization-of-leave-credits-and-trust-receipts)
 - [DBM TLB payment-claim checklist](https://www.dbm.gov.ph/index.php/central-office/services-for-the-bureau-service-office-employee/3310-processing-of-claims-of-suppliers-service-providers-and-agency-officials-and-employees-for-payment-through-list-of-due-and-demandable-accounts-payable-advice-to-debit-account-lddap-ada)
 - [DBM BC No. 2021-1 — devolved-personnel terminal-leave evidence](https://www.dbm.gov.ph/wp-content/uploads/Issuances/2021/Budget-Circular/BUDGET-CIRCULAR-NO-2021-1.pdf)
+
+### Added 2026-11-14 for the answers
+
+- [CSC Resolution No. 1501530 — constant factor, 21 Dec 2015 (annexed to CSC MC No. 2, s. 2016)](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/2016/MC%20No.%2002%20s.%202016.pdf).
+  Scan; resolution read at page 3 on 2026-11-14. Its WHEREFORE clause changes the constant in Section 40 of CSC MC No. 14 (TLB) and Section 24 of the Omnibus Rules (monetization) from .0478087 to .0481927. The newspaper footnote on MC 2 page 1 records publication in the Philippine Star on 7 January 2016.
+- [CSC Resolution No. 2100020 — amendments to the Omnibus Rules on Leave (promulgated 7 Jan 2021)](https://csc.gov.ph/phocadownload/userupload/irmo/mc/2021/MC05/CSC%20Resolution%20No.%202100020%20dated%2007%20January%202021.pdf).
+  Text layer, 12 pp.; read on 2026-11-14. Item 6 repeals CSC MC No. 8, s. 2003. The resolution names neither Resolution No. 1501530 nor BC No. 2016-2.
+- [CSC MC No. 14, s. 1999 — additional provisions and amendments to MC 41](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/1999/mc14s1999.pdf).
+  Scan, 23 pp.; read in round 1 (2026-11-14). Its Section 40 is the TLB formula that the 2016 constant amends, as CSC MC No. 2, s. 2016 (page 1) and DBM BC No. 2016-2, sec. 3.1, both name it.
+- [CSC MC No. 8, s. 2003 — Section 24 amendment, with CSC Resolution No. 030949](https://csc.gov.ph/phocadownload/userupload/irmo/mc/2003/mc08s2003.pdf).
+  Scan, 6 pp.; read in round 1 (2026-11-14). Item 6 of Resolution No. 2100020 repeals it, naming it as the amendment to Section 24 of CSC MC No. 41, s. 1998.
+- [CSC Resolution No. 02-0731 — amendment of Sec. 23, Rule XVI (dated 21 May 2002)](https://csc.gov.ph/phocadownload/userupload/irmo/mc/2002/mc16s2002.pdf).
+  Carried as the annex to the CSC MC No. 16, s. 2002 scan (its pages 3–5, signed on page 5); read 2026-11-14. Its WHEREAS clause describes former Section 23 as providing "up to 50% monetization of all accumulated leave credits."
+- [DBM BC No. 2002-1 — computation and funding of TLB and MLC (14 Jan 2002)](https://www.dbm.gov.ph/wp-content/uploads/2012/03/BC-2002-1.pdf).
+  Text, 3 pp.; read on 2026-11-14. Sec. 3.1.1 applies Section 40 of CSC MC No. 14 (the text layer has an OCR comma after "Section"); sec. 3.1.2 says monetization is computed "in accordance with the above formula"; the formula defines S as "Highest monthly salary received."
+- [DBM Circular Letter No. 2019-11 — MLC processing, FY 2019 (25 Jul 2019)](https://www.dbm.gov.ph/wp-content/uploads/Issuances/2019/Circular%20Letter/CIRCULAR-LETTER-NO-2019-11.pdf).
+  Text, 2 pp.; read on 2026-11-14. Processes MLC "subject to the provisions" of the CSC rules and "subject to the availability of funds." It states no constant, valuation date, rounding rule, or percentage base.
+- [DBM Circular Letter No. 2021-4 — MLC release, FY 2021 (3 Mar 2021)](https://www.dbm.gov.ph/wp-content/uploads/Issuances/2021/Circular-Letter/CIRCULAR-LETTER-NO.2021-4.pdf).
+  Text, 2 pp.; read on 2026-11-14. Processes MLC on a case-by-case basis, "subject to extraordinary conditions." It states no constant, valuation date, rounding rule, or percentage base.
+- [DBM Circular Letter No. 2022-4 — MLC processing, FY 2022 (dated 15 Feb 2022)](https://www.dbm.gov.ph/wp-content/uploads/Issuances/2022/Circular-Letter/CIRCULAR-LETTER-NO-2022-4-DATED-FEBRUARY-15-2022.pdf).
+  Text, 2 pp.; read on 2026-11-14. Processes MLC "subject to the provisions of Civil Service" rules. It states no constant, valuation date, rounding rule, or percentage base.
+- [CSC MC No. 31, s. 1991 — guidelines for monetization of leave credits (non-official mirror; superseded)](https://dev.lawyerly.ph/laws/49853).
+  Read on 2026-11-14 as a mirror, not an official copy. Its example, "EXAMPLE: P10,000.00 (monthly sal.) X 10 days = P4,545.45 / 22," is quoted in question 4.
+
+### Searched, no primary text found
+
+- COA Government Accounting Manual, Volume I (NGAs), general provisions. No official COA copy was reachable. The search returned only unofficial copies (Scribd, SlideShare, and a DepEd Google Site). Not opened; no rounding rule is taken from it here.
+- COA or Supreme Court decisions on rounding a money claim to the centavo. None found. The Supreme Court decision in G.R. No. 262193 (11 July 2023) was read in full and states no rounding rule for monetization. PhilHealth G.R. No. 250089 (2021) concerns RA 7875 rather than monetization and is not relied on.
+- CSC resolutions answering agency queries on the valuation date, rounding, or percentage base. None found by search.
