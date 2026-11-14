@@ -633,21 +633,25 @@ flowchart TD
     P --> G
     N -- No --> Q[Set FOR_REVIEW]
     Q --> R[HR certifies personnel and attendance inputs]
-    R --> S[Budget or fund check where required]
-    S --> T[Accounting or payroll reviewer reconciles]
-    T --> U{Review complete?}
-    U -- No --> O
-    U -- Yes --> V[Route to authorized approver]
+    R --> R2[Set CERTIFIED and generate the Certified Payroll Review Export]
+    R2 --> S[Budget Officer records the funding checkpoint review]
+    R2 --> T[Accounting Reviewer records the accounting checkpoint review]
+    S --> U{Both reviews confirmed?}
+    T --> U
+    U -- A review is returned --> Q
+    U -- Yes --> V[Route to the Payroll Approver]
     V --> W{Approved?}
-    W -- No --> O
+    W -- No --> Q
     W -- Yes --> X[Set APPROVED]
     X --> Y[Finalization transaction verifies unchanged approved version]
     Y --> Y2[Recheck that every source is still unconsumed]
     Y2 --> Z{Verification passed?}
     Z -- No --> Q
     Z -- Yes --> AA[Set FINALIZED, mark sources consumed, and make payroll lines immutable]
-    AA --> AB[Generate payslips, registers, and remittance schedules]
-    AB --> AC[Queue PDF generation and employee notification]
+    AA --> AB[Post the Payroll Adjustments it carried and open one for each held Employee]
+    AB --> AC[Generate Payslips, registers, and remittance schedules]
+    AC --> AD[Payroll Approver releases the period's Payslips]
+    AD --> AE[Notify each Employee]
 ```
 
 Payroll deducts salary for tardiness and undertime only from the Unpaid Deficit
@@ -674,21 +678,51 @@ version loaded after the snapshot blocks certification of a `FOR_REVIEW` period
 until it is recalculated, and only flags a `CERTIFIED` or `APPROVED` one
 (#328).
 
+Budget and Accounting review are Payroll Export Checkpoint Reviews on the
+current Certified Payroll Review Export, recorded in either order while the
+period is `CERTIFIED`. A returned review sends the period back to `FOR_REVIEW`
+and revokes the certification, the export, and the other review. From there
+the HR Certifying Officer certifies again or returns the payroll to the Payroll
+Preparer (#29, #330).
+
+On one Payroll Period a person acts in only one function: preparation, HR
+certification, Budget review, Accounting review, approval, or disbursement. A
+second function is refused (#330).
+
+The Payroll Approver releases the period's Payslips by hand. A Payslip is not
+proof of payment, and release does not wait on Disbursement Outcomes (#330).
+
 Correction after finalization:
 
 ```mermaid
 flowchart TD
-    A[Error found after finalization] --> B[Create correction case]
-    B --> C{Correction method}
-    C -- Supplemental or adjustment payroll --> D[Create linked adjustment]
-    C -- Void and replace --> E[Request void approval]
-    E --> F{Approved?}
-    F -- No --> G[Keep original payroll]
-    F -- Yes --> H[Mark original VOIDED without deleting it]
-    H --> I[Create replacement payroll]
-    D --> J[Run normal review and approval]
-    I --> J
+    A[Error found after finalization] --> B{Whole payroll wrong, latest regular period, and no payment handed off?}
+    B -- Yes --> C[Request void with a reason and supporting document]
+    C --> D{A different person approves?}
+    D -- No --> E[Keep original payroll]
+    D -- Yes --> F[Mark VOIDED, release its sources, supersede Payslips and exports]
+    F --> G[Create the replacement regular period for the same month]
+    B -- No --> H[Open a Payroll Adjustment for the Employee and past period]
+    H --> I{Positive, and it cannot wait?}
+    I -- Yes --> J[Special period that names adjustments recalculates and carries the difference]
+    I -- No --> K[Next regular period recalculates and carries the difference]
+    G --> L[Run normal review and approval]
+    J --> L
+    K --> L
 ```
+
+A Payroll Adjustment is Payroll's recalculation of one Employee's result for
+one past Payroll Period. No user enters its amount, and it has no approval of
+its own: the period that carries it takes it through the normal review chain
+(ADR 0016). It opens from a source correction on a consumed input, from a
+Payroll Hold when the holding period finalizes, or from an authorized user's
+recalculation request after a retroactive rule or Personnel fact.
+
+A negative adjustment is a recovery. It stays open and reported, and no period
+carries it, until #661 records how an Agency may recover an overpayment.
+
+Once any payment has been handed off, a void is refused and every correction
+is a Payroll Adjustment.
 
 ---
 

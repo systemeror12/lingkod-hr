@@ -221,11 +221,12 @@ CREATE TABLE payroll_inputs (
   quantity numeric(12,4),
   amount numeric(19,4),
   status text NOT NULL
-    CHECK (status IN ('PENDING','CONSUMED','CANCELLED','REVERSED')),
+    CHECK (status IN ('PENDING','CONSUMED','CANCELLED')),
   payload_snapshot jsonb NOT NULL,
   payload_hash text NOT NULL,
   accepted_at timestamptz NOT NULL DEFAULT now(),
   consumed_by_payroll_period_id uuid,
+  replaces_payroll_input_id uuid,
   CHECK ((input_kind = 'MONETIZATION_EARNING') = (amount IS NOT NULL)),
   CHECK ((input_kind = 'OVERTIME_HOURS') = (source_module = 'OVERTIME')),
   CHECK ((status = 'CONSUMED') = (consumed_by_payroll_period_id IS NOT NULL)),
@@ -233,6 +234,8 @@ CREATE TABLE payroll_inputs (
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, consumed_by_payroll_period_id)
     REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, replaces_payroll_input_id)
+    REFERENCES payroll_inputs (agency_id, id),
   UNIQUE (agency_id, source_module, source_key),
   UNIQUE (agency_id, id)
 );
@@ -252,7 +255,23 @@ owning services and copies neither here (#329, #619).
 
 An input belongs to no period when accepted. After acceptance a trigger allows
 only the status change and `consumed_by_payroll_period_id`, which the
-finalization transaction sets. Consumed inputs are immutable.
+finalization transaction sets. Consumed inputs are immutable, apart from the
+return to `PENDING` when their payroll is voided.
+
+A source module corrects an effect it posted by asking Payroll to withdraw the
+input, in its own transaction and idempotently by a stable correction key
+(#330):
+
+- a `PENDING` input that no live calculation uses, or whose period is `DRAFT`,
+  becomes `CANCELLED`. A replacement is a new input with
+  `replaces_payroll_input_id`;
+- a `PENDING` input used by a `CALCULATING`, `FOR_REVIEW`, `CERTIFIED`, or
+  `APPROVED` period becomes `CANCELLED`, and the period gets a blocking
+  exception until it is returned and recalculated;
+- a `CONSUMED` input is unchanged. Payroll opens a Payroll Adjustment, or
+  joins the open one, and returns its identifier (section 10).
+
+There is no `REVERSED` or `SUPERSEDED` status.
 
 For a Leave Monetization input, Payroll resolves the authoritative salary source
 and computes `amount`; Leave may not supply either as an unrestricted value. The
@@ -284,11 +303,30 @@ CREATE TABLE payroll_periods (
   payment_date date NOT NULL,
   status text NOT NULL
     CHECK (status IN ('DRAFT','CALCULATING','FOR_REVIEW','CERTIFIED','APPROVED','FINALIZED','VOIDED')),
+  carries_adjustments boolean NOT NULL DEFAULT false,
   calculation_version integer NOT NULL DEFAULT 0 CHECK (calculation_version >= 0),
   finalized_at timestamptz,
+  void_requested_by_membership_id uuid,
+  void_requested_at timestamptz,
+  void_reason text,
+  void_document_version_id uuid,
+  voided_by_membership_id uuid,
   voided_at timestamptz,
   row_version integer NOT NULL DEFAULT 1,
   CHECK (period_to >= period_from),
+  CHECK (NOT carries_adjustments OR run_type = 'SPECIAL'),
+  CHECK ((void_requested_at IS NULL) = (void_requested_by_membership_id IS NULL)),
+  CHECK ((status = 'VOIDED') = (voided_at IS NOT NULL)),
+  CHECK (status <> 'VOIDED'
+         OR (voided_by_membership_id IS NOT NULL AND btrim(void_reason) <> '')),
+  CHECK (void_requested_by_membership_id IS NULL
+         OR void_requested_by_membership_id <> voided_by_membership_id),
+  FOREIGN KEY (agency_id, void_requested_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, voided_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, void_document_version_id)
+    REFERENCES document_versions (agency_id, id),
   CHECK (
     run_type <> 'REGULAR'
     OR (period_from = date_trunc('month', period_from)::date
@@ -328,6 +366,55 @@ period to name none.
 
 `cutoff_at` changes only while the period is `DRAFT`. The service refuses to
 start a calculation before it.
+
+A special period carries Payroll Adjustments only with `carries_adjustments`.
+The trigger accepts that in place of a named component. A regular period
+always carries them (section 10).
+
+A period becomes `VOIDED` in two ways (#330). The Payroll Preparer cancels a
+`DRAFT` period with a reason: `void_reason`, `voided_by_membership_id`, and
+`voided_at` are set, and there is no request. A `FINALIZED` period is voided
+in two steps: the request sets `void_requested_by_membership_id`,
+`void_requested_at`, `void_reason`, and `void_document_version_id`, and a
+different person's approval sets `voided_by_membership_id` and `voided_at`. A
+declined request clears the request columns and stays in its Audit Events.
+
+The service refuses a void request and a void approval when:
+
+- a regular period has a later regular period that is not `VOIDED`;
+- any Payment Instruction of the period has `SUBMITTED`, `ACCEPTED`, or
+  `SETTLED` as its latest Disbursement Outcome.
+
+The void transaction marks the period and its results `VOIDED`, returns its
+Payroll Inputs to `PENDING`, sets `released_at` on its
+`payroll_consumed_attendance_facts`, releases its once-only Authorized Payroll
+Component Inputs, supersedes its Payslips and exports, cancels every open
+Payroll Adjustment against it, and reopens every adjustment it carried
+([ADR 0016](../../adr/0016-payroll-corrections-are-recalculated-differences.md)).
+
+```sql
+CREATE TABLE payroll_period_actors (
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  membership_id uuid NOT NULL,
+  payroll_function text NOT NULL
+    CHECK (payroll_function IN ('PREPARATION','HR_CERTIFICATION','BUDGET_REVIEW',
+                                'ACCOUNTING_REVIEW','APPROVAL','DISBURSEMENT')),
+  first_acted_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (payroll_period_id, membership_id),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, membership_id)
+    REFERENCES agency_memberships (agency_id, id)
+);
+```
+
+On one Payroll Period a person acts in at most one payroll function, across
+every calculation version (#330). Each command that belongs to a function
+inserts its row with `ON CONFLICT DO NOTHING` in its own transaction, then
+refuses when the stored function differs. The primary key makes the rule hold
+under concurrency, and a trigger rejects every `UPDATE` and `DELETE`. The
+functions and their commands are in `hris-controls.md` §5.20.
 
 ---
 
@@ -422,7 +509,8 @@ CREATE TABLE payroll_holds (
   FOREIGN KEY (agency_id, placed_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, lifted_by_membership_id)
-    REFERENCES agency_memberships (agency_id, id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
 );
 
 CREATE UNIQUE INDEX payroll_holds_one_active_key
@@ -441,7 +529,9 @@ fraction, salary rate, and their sources.
 
 A hold is placed or lifted only while the period is `DRAFT`, and only against
 an Employee-level blocking exception. A held Employee has no result in that
-period.
+period. When the period is finalized, the finalization transaction opens a
+Payroll Adjustment for each Employee under an active hold, which is how the
+held month is paid later (#330).
 
 ---
 
@@ -462,9 +552,12 @@ CREATE TABLE payroll_lines (
   taxable_amount numeric(19,4) NOT NULL DEFAULT 0,
   contribution_base numeric(19,4) NOT NULL DEFAULT 0,
   source_snapshot jsonb NOT NULL,
+  payroll_adjustment_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_adjustment_id)
+    REFERENCES payroll_adjustments (agency_id, id),
   UNIQUE (agency_id, id)
 );
 
@@ -496,24 +589,31 @@ CREATE TABLE payroll_consumed_attendance_facts (
   attendance_payroll_fact_id uuid NOT NULL,
   payroll_period_id uuid NOT NULL,
   consumed_at timestamptz NOT NULL DEFAULT now(),
+  released_at timestamptz,
   FOREIGN KEY (agency_id, attendance_payroll_fact_id)
     REFERENCES attendance_payroll_facts (agency_id, id),
   FOREIGN KEY (agency_id, payroll_period_id)
-    REFERENCES payroll_periods (agency_id, id),
-  UNIQUE (agency_id, attendance_payroll_fact_id)
+    REFERENCES payroll_periods (agency_id, id)
 );
+
+CREATE UNIQUE INDEX payroll_consumed_attendance_facts_one_live_key
+  ON payroll_consumed_attendance_facts (agency_id, attendance_payroll_fact_id)
+  WHERE released_at IS NULL;
 ```
 
 Lines are inserted with their result. A trigger rejects every `UPDATE` and
 `DELETE` once the calculation that wrote them completes.
 
 A calculated line has no override column. A wrong amount is corrected at its
-source, or after finalization through `payroll_adjustments` (#27).
+source, or after finalization through a Payroll Adjustment (#27, #330). A line
+with `payroll_adjustment_id` carries the past period's component and the
+signed difference.
 
 A line can rest on several sources, and one source on several lines.
 `payroll_consumed_attendance_facts` is Payroll's own record that a finalized
-payroll consumed a fact: the unique key makes the second finalization fail, and
-Attendance's tables are never written (ADR 0014).
+payroll consumed a fact: the unique index makes the second finalization fail,
+and Attendance's tables are never written (ADR 0014). A void sets
+`released_at`, so the replacement payroll can consume the fact (#330).
 
 ---
 
@@ -594,23 +694,92 @@ Employee, not a result, because a blocked or held Employee may have none.
 CREATE TABLE payroll_adjustments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  original_payroll_employee_id uuid NOT NULL,
-  target_payroll_period_id uuid,
-  adjustment_type text NOT NULL
-    CHECK (adjustment_type IN ('SUPPLEMENTAL','REFUND','RECOVERY','VOID_REPLACEMENT')),
-  reason text NOT NULL,
-  status text NOT NULL
-    CHECK (status IN ('DRAFT','APPROVED','POSTED','CANCELLED')),
-  approved_by_membership_id uuid,
-  FOREIGN KEY (agency_id, original_payroll_employee_id)
-    REFERENCES payroll_employees (agency_id, id),
-  FOREIGN KEY (agency_id, target_payroll_period_id)
-    REFERENCES payroll_periods (agency_id, id)
+  original_payroll_period_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  status text NOT NULL CHECK (status IN ('OPEN','POSTED','CANCELLED')),
+  opened_at timestamptz NOT NULL DEFAULT now(),
+  posted_by_payroll_period_id uuid,
+  posted_at timestamptz,
+  cancelled_at timestamptz,
+  CHECK ((status = 'POSTED') = (posted_by_payroll_period_id IS NOT NULL)),
+  CHECK ((status = 'POSTED') = (posted_at IS NOT NULL)),
+  CHECK ((status = 'CANCELLED') = (cancelled_at IS NOT NULL)),
+  FOREIGN KEY (agency_id, original_payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, posted_by_payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX payroll_adjustments_one_open_key
+  ON payroll_adjustments (original_payroll_period_id, employee_id)
+  WHERE status = 'OPEN';
+
+CREATE TABLE payroll_adjustment_causes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_adjustment_id uuid NOT NULL,
+  origin text NOT NULL
+    CHECK (origin IN ('SOURCE_CORRECTION','PAYROLL_HOLD','RECALCULATION')),
+  payroll_input_id uuid,
+  source_correction_key citext,
+  payroll_hold_id uuid,
+  reason text,
+  opened_by_membership_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((origin = 'SOURCE_CORRECTION')
+         = (payroll_input_id IS NOT NULL AND source_correction_key IS NOT NULL)),
+  CHECK ((origin = 'PAYROLL_HOLD') = (payroll_hold_id IS NOT NULL)),
+  CHECK ((origin = 'RECALCULATION')
+         = (opened_by_membership_id IS NOT NULL AND btrim(reason) <> '')),
+  FOREIGN KEY (agency_id, payroll_adjustment_id)
+    REFERENCES payroll_adjustments (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_input_id)
+    REFERENCES payroll_inputs (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_hold_id)
+    REFERENCES payroll_holds (agency_id, id),
+  FOREIGN KEY (agency_id, opened_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, source_correction_key)
 );
 ```
 
-The correction path, including how a held Employee is paid later, is decided in
-#330. `payroll_adjustments` is unchanged until then.
+A Payroll Adjustment is Payroll's recalculation of one Employee's result for
+one past Payroll Period (#330,
+[ADR 0016](../../adr/0016-payroll-corrections-are-recalculated-differences.md)).
+It holds no amount and no type, and it replaces the four-value
+`adjustment_type`.
+
+An Employee and past period have at most one `OPEN` adjustment, and a later
+cause joins it, so a difference is never counted twice. It names the period and
+the Employee, not a result, because a held Employee has none. A cause is
+written in one of three ways:
+
+- `SOURCE_CORRECTION`: by Payroll, when a source module withdraws an input a
+  finalized payroll consumed. The unique correction key makes a retry return
+  the same adjustment;
+- `PAYROLL_HOLD`: by Payroll, in the finalization transaction of a period with
+  an active hold;
+- `RECALCULATION`: by a user with `payroll.inputs.adjust`, with a reason, for
+  one finalized period and one Employee or all of its Employees. Payroll never
+  opens one on its own.
+
+Each calculation of the carrying period recalculates the Employee's result for
+the original period from the rules and facts on record for its dates, less any
+input a cause withdrew. It writes the difference against the original result
+plus every `POSTED` adjustment for the same Employee and period, as
+`payroll_lines` with `payroll_adjustment_id` in the carrying period's result.
+The next regular period carries every open adjustment, and a special period
+with `carries_adjustments` carries only those whose difference is positive.
+The carrying period's finalization marks them `POSTED`. There is no separate
+approval.
+
+A negative adjustment stays `OPEN`, and no period carries it, until #661
+records how an Agency may recover an overpayment. Voiding the original period
+cancels its open adjustments, and voiding a period that carried one returns it
+to `OPEN`.
 
 ---
 
@@ -629,8 +798,10 @@ The database transaction must:
 8. mark payroll period finalized;
 9. mark its Payroll Inputs and `ONCE` Authorized Payroll Component Inputs
    consumed, and insert `payroll_consumed_attendance_facts`;
-10. append audit/outbox records;
-11. commit before generating documents or emails.
+10. mark the Payroll Adjustments it carried `POSTED`, and open one for each
+    Employee under an active Payroll Hold;
+11. append audit/outbox records;
+12. commit before generating documents or emails.
 
 ---
 
@@ -651,6 +822,47 @@ Instruction's Disbursement Outcome separately (#28). The two #29 exports are
 Structured Exports that assert no external validation, obligation, or posting.
 `docs/data-model/payroll-logical-erd.md` lists the columns and rules.
 
+```sql
+CREATE TABLE payslips (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_employee_id uuid NOT NULL,
+  document_id uuid,
+  status text NOT NULL
+    CHECK (status IN ('GENERATING','READY','RELEASED','WITHHELD','SUPERSEDED')),
+  released_at timestamptz,
+  released_by_membership_id uuid,
+  withheld_at timestamptz,
+  withheld_by_membership_id uuid,
+  withhold_reason text,
+  CHECK ((released_at IS NULL) = (released_by_membership_id IS NULL)),
+  CHECK ((withheld_at IS NULL) = (withheld_by_membership_id IS NULL)),
+  CHECK (withheld_at IS NULL OR btrim(withhold_reason) <> ''),
+  CHECK (status <> 'RELEASED' OR released_at IS NOT NULL),
+  CHECK (status <> 'WITHHELD' OR withheld_at IS NOT NULL),
+  FOREIGN KEY (agency_id, payroll_employee_id)
+    REFERENCES payroll_employees (agency_id, id),
+  FOREIGN KEY (agency_id, released_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, withheld_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (payroll_employee_id)
+);
+```
+
+A Payslip is the statement of one finalized Payroll Employee Result, one per
+result, with no version number (#330). The Payroll Approver releases every
+`READY` Payslip of a finalized period with one command, and may withhold a
+`READY` one with a reason. Withholding never stops payment. The void
+transaction supersedes a payroll's Payslips from any status, and nothing else
+does. An Employee reads only their own `RELEASED` Payslips.
+
+A Budget Officer and an Accounting Reviewer each record one immutable Payroll
+Export Checkpoint Review against the current Certified Payroll Review Export,
+in either order. Approval needs both confirmed. A returned review moves the
+period to `FOR_REVIEW` and revokes the certification, the export, and the other
+review (#29, #330). Its table is specified with the export in #636 and #637.
+
 Files are stored through the shared document service.
 
 ---
@@ -666,8 +878,13 @@ Application permissions separately control:
 - compensation access;
 - payroll preparation;
 - certification;
+- the funding and accounting checkpoint reviews;
 - approval;
 - finalization;
-- payslip self-service;
+- void request and void approval;
+- Payslip release, withholding, and self-service;
 - Payment Exports;
 - Disbursement Outcomes.
+
+A permission is not enough on its own: `payroll_period_actors` keeps each
+person to one payroll function on a Payroll Period (section 5).

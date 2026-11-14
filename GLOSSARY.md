@@ -763,7 +763,7 @@ An approved, effective-dated amount, rate, or quantity accepted for a lawful pay
 _Avoid_: Free-form pay item, manual rule override, Payroll Input
 
 **Payroll Period**:
-One payroll run of one Agency, with its run type, coverage dates, cutoff, and single payment date. A regular Payroll Period covers one calendar month, and a special Payroll Period pays only the components it names.
+One payroll run of one Agency, with its run type, coverage dates, cutoff, and single payment date. A regular Payroll Period covers one calendar month, and a special Payroll Period pays only the components it names or the Payroll Adjustments it carries.
 _Avoid_: Payroll run, pay period, payroll batch, Attendance Period
 
 **Payroll Input**:
@@ -781,6 +781,14 @@ _Avoid_: Pay item, manual line, Payment Instruction
 **Payroll Hold**:
 The Payroll Preparer's reasoned decision to leave one Employee who has a blocking exception out of a Payroll Period so the rest can proceed. It waives nothing: the Employee gets no Payroll Employee Result in that period.
 _Avoid_: Exception waiver, withheld payslip, excluded employee
+
+**Payroll Adjustment**:
+Payroll's recalculation of one Employee's result for one past Payroll Period, kept as the line-by-line difference and settled in a later Payroll Period. A positive difference is additional pay and a negative one is a recovery. No user enters its amount.
+_Avoid_: Refund, correction case, manual adjustment, Locked Attendance Adjustment, Monetization Adjustment
+
+**Payslip**:
+The Employee's statement of one finalized Payroll Employee Result, showing each Payroll Line and how it was reached. It is not proof of payment.
+_Avoid_: Pay stub, pay advice, salary slip
 
 **Payment Export**:
 A provider-neutral, reviewable set of Payment Instructions derived from one finalized payroll result. It does not assert provider acceptance or that funds were disbursed.

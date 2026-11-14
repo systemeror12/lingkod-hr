@@ -45,6 +45,8 @@ Payment, and a JO/COS Worker never has a `payroll_employees` or
 | Payroll Employee Result            | `payroll_employees`                                                                      |
 | Payroll Line                       | `payroll_lines`                                                                          |
 | Payroll Hold                       | `payroll_holds`                                                                          |
+| Payroll Adjustment                 | `payroll_adjustments`, with `payroll_adjustment_causes`                                  |
+| Payslip                            | `payslips`                                                                               |
 
 National Payroll Rule Versions and the pay component catalogue are
 platform-wide (#328,
@@ -105,6 +107,12 @@ erDiagram
     NATIONAL_PAYROLL_RULE_VERSIONS ||--o{ PAYROLL_RULE_SNAPSHOT_ITEMS : frozen_as
     PAYROLL_PERIODS ||--o{ PAYROLL_EMPLOYEES : includes
     PAYROLL_PERIODS ||--o{ PAYROLL_HOLDS : holds_out
+    PAYROLL_PERIODS ||--o{ PAYROLL_PERIOD_ACTORS : acted_on_by
+    PAYROLL_PERIODS ||--o{ PAYROLL_ADJUSTMENTS : corrected_by
+    PAYROLL_PERIODS ||--o{ PAYROLL_ADJUSTMENTS : carries
+    EMPLOYEES ||--o{ PAYROLL_ADJUSTMENTS : owed_or_owing
+    PAYROLL_ADJUSTMENTS ||--o{ PAYROLL_ADJUSTMENT_CAUSES : opened_for
+    PAYROLL_ADJUSTMENTS ||--o{ PAYROLL_LINES : settled_as
     EMPLOYEES ||--o{ PAYROLL_EMPLOYEES : paid
     PAYROLL_EMPLOYEES ||--o{ PAYROLL_LINES : contains
     PAYROLL_LINES ||--o{ PAYROLL_LINE_SOURCES : rests_on
@@ -311,11 +319,12 @@ Payroll Input: the idempotent inbox for what Leave and Overtime post to Payroll
 | effective_date                | date         | No    |                    | First Work Date, or the valuation date                                            |
 | quantity                      | decimal      | Yes   |                    | Units                                                                             |
 | amount                        | decimal      | Yes   |                    | Amount, for MONETIZATION_EARNING only                                             |
-| status                        | enum         | No    |                    | PENDING, CONSUMED, CANCELLED, REVERSED                                            |
+| status                        | enum         | No    |                    | PENDING, CONSUMED, CANCELLED                                                      |
 | payload_snapshot              | json         | No    |                    | Approved source snapshot                                                          |
 | payload_hash                  | string       | No    |                    | Hash of the request, for retry matching                                           |
 | accepted_at                   | datetime     | No    |                    | Acceptance time                                                                   |
 | consumed_by_payroll_period_id | uuid         | Yes   | FK payroll_periods | The finalized payroll that consumed it                                            |
+| replaces_payroll_input_id     | uuid         | Yes   | FK payroll_inputs  | The cancelled input this one replaces                                             |
 
 **Constraints and indexes**
 
@@ -366,30 +375,47 @@ undertime salary effect from Attendance Payroll Facts, reads `ABSENCE` facts
 from Attendance, and raises a blocking exception for an Employee whose facts in
 a consumed publication are not all charged (#329, ADR 0012).
 
-What a source correction does to a pending, consumed, or finalized input, and
-whether the monetization table's `SUPERSEDED` status survives beside
-`CANCELLED` and `REVERSED`, is decided in #330.
+A source module corrects an effect it posted by asking Payroll to withdraw the
+input (#330):
 
-**Deletion behavior:** Cancel/reverse; never edit after consumption.
+| Input                                                                               | Payroll's answer                                                                                              |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `PENDING`, and no live calculation uses it, or the period that uses it is `DRAFT`   | The input becomes `CANCELLED`. A replacement is a new input with `replaces_payroll_input_id`                  |
+| `PENDING`, used by a `CALCULATING`, `FOR_REVIEW`, `CERTIFIED`, or `APPROVED` period | The input becomes `CANCELLED`, and the period gets a blocking exception until it is returned and recalculated |
+| `CONSUMED` by a `FINALIZED` period                                                  | The input is unchanged. Payroll opens a Payroll Adjustment, or joins the open one, and returns its identifier |
+
+The command runs in the caller's transaction and is idempotent by the source's
+stable correction key. There is no `REVERSED` or `SUPERSEDED` status: a
+replaced input is `CANCELLED` and its successor links to it, and a consumed
+input stays `CONSUMED` with the adjustment's cause naming it. A void returns
+the period's consumed inputs to `PENDING`.
+
+**Deletion behavior:** Cancel; never edit after consumption.
 
 ## `payroll_periods`
 
 Payroll Period: one payroll run of one Agency (#328)
 
-| Column              | Logical type | Null? | Key / rule  | Description                                                            |
-| ------------------- | ------------ | ----- | ----------- | ---------------------------------------------------------------------- |
-| id                  | uuid         | No    | PK          | Period                                                                 |
-| agency_id           | uuid         | No    | FK agencies | Tenant                                                                 |
-| code                | string       | No    |             | Period code                                                            |
-| run_type            | enum         | No    |             | REGULAR, SPECIAL                                                       |
-| period_from         | date         | No    |             | Coverage start                                                         |
-| period_to           | date         | No    |             | Coverage end                                                           |
-| cutoff_at           | datetime     | No    |             | Source cutoff                                                          |
-| payment_date        | date         | No    |             | The one pay date                                                       |
-| status              | enum         | No    |             | DRAFT, CALCULATING, FOR_REVIEW, CERTIFIED, APPROVED, FINALIZED, VOIDED |
-| calculation_version | integer      | No    |             | Latest calculation version; 0 before the first                         |
-| finalized_at        | datetime     | Yes   |             | Finalization                                                           |
-| voided_at           | datetime     | Yes   |             | Void                                                                   |
+| Column                          | Logical type | Null? | Key / rule            | Description                                                            |
+| ------------------------------- | ------------ | ----- | --------------------- | ---------------------------------------------------------------------- |
+| id                              | uuid         | No    | PK                    | Period                                                                 |
+| agency_id                       | uuid         | No    | FK agencies           | Tenant                                                                 |
+| code                            | string       | No    |                       | Period code                                                            |
+| run_type                        | enum         | No    |                       | REGULAR, SPECIAL                                                       |
+| period_from                     | date         | No    |                       | Coverage start                                                         |
+| period_to                       | date         | No    |                       | Coverage end                                                           |
+| cutoff_at                       | datetime     | No    |                       | Source cutoff                                                          |
+| payment_date                    | date         | No    |                       | The one pay date                                                       |
+| carries_adjustments             | boolean      | No    |                       | True only for a special period that pays Payroll Adjustments           |
+| status                          | enum         | No    |                       | DRAFT, CALCULATING, FOR_REVIEW, CERTIFIED, APPROVED, FINALIZED, VOIDED |
+| calculation_version             | integer      | No    |                       | Latest calculation version; 0 before the first                         |
+| finalized_at                    | datetime     | Yes   |                       | Finalization                                                           |
+| voided_at                       | datetime     | Yes   |                       | Void approval, or draft cancellation                                   |
+| void_requested_by_membership_id | uuid         | Yes   | FK agency_memberships | Who requested the open or approved void                                |
+| void_requested_at               | datetime     | Yes   |                       | Void request                                                           |
+| void_reason                     | string       | Yes   |                       | Reason for the void or the draft cancellation                          |
+| void_document_version_id        | uuid         | Yes   | FK document_versions  | Supporting Document Version of a finalized payroll's void              |
+| voided_by_membership_id         | uuid         | Yes   | FK agency_memberships | Who approved the void or cancelled the draft                           |
 
 **Constraints and indexes**
 
@@ -403,10 +429,29 @@ Payroll Period: one payroll run of one Agency (#328)
 - An Agency has at most one regular period that is not `FINALIZED` or `VOIDED`
   (ADR 0014).
 - A special period names the components it pays in
-  `payroll_period_components`. It pays no basic salary and no contributions,
-  reads no attendance, and may overlap a regular period's dates. It withholds
-  tax on its taxable lines through the same tax calculator and year-to-date
-  figures as a regular period.
+  `payroll_period_components`. It calculates no basic salary and no
+  contributions for its own dates, reads no attendance, and may overlap a
+  regular period's dates. It withholds tax on its taxable lines through the
+  same tax calculator and year-to-date figures as a regular period.
+- A regular period always carries the open Payroll Adjustments. A special
+  period carries them only with `carries_adjustments`, which is the
+  supplemental payroll, and then only those whose difference is positive
+  (#330).
+- The Payroll Preparer may cancel a `DRAFT` period, with a reason. It becomes
+  `VOIDED`, and nothing was consumed (#330).
+- A `FINALIZED` period is voided in two steps: one person requests it with a
+  reason and a supporting Document Version, and a different person approves
+  it. A declined request clears the request columns and stays in its Audit
+  Events. A void is refused when a regular period has a later regular period
+  that is not `VOIDED`, or when any Payment Instruction of the period has
+  `SUBMITTED`, `ACCEPTED`, or `SETTLED` as its latest Disbursement Outcome
+  (#330,
+  [ADR 0016](../adr/0016-payroll-corrections-are-recalculated-differences.md)).
+- An approved void makes the period and its results `VOIDED`, returns its
+  Payroll Inputs to `PENDING`, releases its Attendance Payroll Facts and
+  once-only Authorized Payroll Component Inputs, supersedes its Payslips and
+  exports, cancels every open adjustment against it, and reopens every
+  adjustment it carried.
 - A period carries no payroll profile. One run covers every pay basis of the
   Appointed Personnel Payroll Rule Set, and never a JO/COS Service Payment
   (#27).
@@ -480,12 +525,12 @@ One record a snapshot froze
 
 Nothing recalculates silently (#27, #328).
 
-| Period state            | Effect of a newly loaded version in effect for the period                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `DRAFT`                 | The next calculation's snapshot uses it                                                                                              |
-| `FOR_REVIEW`            | A blocking exception. Certification is refused until the period is recalculated                                                      |
-| `CERTIFIED`, `APPROVED` | The snapshot stands and the period is flagged. The officer returns it, or finalizes it and corrects through the #330 correction path |
-| `FINALIZED`             | Correction only                                                                                                                      |
+| Period state            | Effect of a newly loaded version in effect for the period                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `DRAFT`                 | The next calculation's snapshot uses it                                                                                          |
+| `FOR_REVIEW`            | A blocking exception. Certification is refused until the period is recalculated                                                  |
+| `CERTIFIED`, `APPROVED` | The snapshot stands and the period is flagged. The officer returns it, or finalizes it and corrects through a Payroll Adjustment |
+| `FINALIZED`             | Payroll Adjustment only                                                                                                          |
 
 This narrows #27's "a retroactive rule recalculates open payrolls" to payrolls
 not yet certified.
@@ -549,36 +594,69 @@ Payroll Hold: one Employee left out of a Payroll Period (#328)
 - A hold waives nothing. The held Employee gets no result, stays on the
   exception report with the hold's reason, and keeps their Payroll Inputs and
   Attendance Payroll Facts unconsumed.
-- How a held Employee is paid later is decided in #330. A special period
-  cannot do it, because it pays no basic salary.
+- When a period with an active hold is finalized, Payroll opens a Payroll
+  Adjustment for the held Employee and that period. The held month is paid as
+  the difference against an empty original (#330).
+- A hold does not carry over. An Employee who is still blocked in the next
+  period is held again, and both months stay owed.
 
 **Deletion behavior:** Retain.
+
+## `payroll_period_actors`
+
+The one payroll function each person has acted in on one Payroll Period (#330)
+
+| Column            | Logical type | Null? | Key / rule            | Description                                                                             |
+| ----------------- | ------------ | ----- | --------------------- | --------------------------------------------------------------------------------------- |
+| agency_id         | uuid         | No    | FK agencies           | Tenant                                                                                  |
+| payroll_period_id | uuid         | No    | FK payroll_periods    | Period                                                                                  |
+| membership_id     | uuid         | No    | FK agency_memberships | The person                                                                              |
+| payroll_function  | enum         | No    |                       | PREPARATION, HR_CERTIFICATION, BUDGET_REVIEW, ACCOUNTING_REVIEW, APPROVAL, DISBURSEMENT |
+| first_acted_at    | datetime     | No    |                       | The first command in that function                                                      |
+
+**Constraints and indexes**
+
+- Primary key `(payroll_period_id, membership_id)`: one person holds one
+  function on a period, across every calculation version. A command in a
+  second function is refused. There is no warning mode and no override.
+- A command that belongs to a function claims the row in its own transaction.
+  `Return for correction`, `Request void`, opening a Payroll Adjustment, and
+  generating an export claim none. The functions and their commands are in
+  `hris-controls.md` §5.20.
+- There is no subject rule: a person may act on a period that holds their own
+  Payroll Employee Result.
+
+**Deletion behavior:** Immutable.
 
 ## `payroll_lines`
 
 Payroll Line: one calculated earning, deduction, employer share, or
 informational amount
 
-| Column              | Logical type | Null? | Key / rule                        | Description                                       |
-| ------------------- | ------------ | ----- | --------------------------------- | ------------------------------------------------- |
-| id                  | uuid         | No    | PK                                | Line                                              |
-| agency_id           | uuid         | No    | FK agencies                       | Tenant                                            |
-| payroll_employee_id | uuid         | No    | FK payroll_employees              | Payroll Employee Result                           |
-| pay_component_id    | uuid         | No    | FK pay_components                 | Component                                         |
-| rule_version_id     | uuid         | Yes   | FK national_payroll_rule_versions | Rule                                              |
-| line_type           | enum         | No    |                                   | EARNING, DEDUCTION, EMPLOYER_SHARE, INFORMATIONAL |
-| quantity            | decimal      | Yes   |                                   | Units                                             |
-| rate                | decimal      | Yes   |                                   | Rate                                              |
-| amount              | decimal      | No    |                                   | Amount                                            |
-| taxable_amount      | decimal      | No    |                                   | Taxable base                                      |
-| contribution_base   | decimal      | No    |                                   | Contribution base                                 |
-| source_snapshot     | json         | No    |                                   | Traceability                                      |
+| Column                | Logical type | Null? | Key / rule                        | Description                                       |
+| --------------------- | ------------ | ----- | --------------------------------- | ------------------------------------------------- |
+| id                    | uuid         | No    | PK                                | Line                                              |
+| agency_id             | uuid         | No    | FK agencies                       | Tenant                                            |
+| payroll_employee_id   | uuid         | No    | FK payroll_employees              | Payroll Employee Result                           |
+| pay_component_id      | uuid         | No    | FK pay_components                 | Component                                         |
+| rule_version_id       | uuid         | Yes   | FK national_payroll_rule_versions | Rule                                              |
+| line_type             | enum         | No    |                                   | EARNING, DEDUCTION, EMPLOYER_SHARE, INFORMATIONAL |
+| quantity              | decimal      | Yes   |                                   | Units                                             |
+| rate                  | decimal      | Yes   |                                   | Rate                                              |
+| amount                | decimal      | No    |                                   | Amount                                            |
+| taxable_amount        | decimal      | No    |                                   | Taxable base                                      |
+| contribution_base     | decimal      | No    |                                   | Contribution base                                 |
+| source_snapshot       | json         | No    |                                   | Traceability                                      |
+| payroll_adjustment_id | uuid         | Yes   | FK payroll_adjustments            | The Payroll Adjustment this line settles          |
 
 **Constraints and indexes**
 
 - Finalized lines immutable.
 - A calculated line is never overridden. A wrong amount is corrected at its
-  source, or after finalization through `payroll_adjustments` (#27).
+  source, or after finalization through a Payroll Adjustment (#27, #330).
+- A line with `payroll_adjustment_id` carries the component of the past
+  period's line and the signed difference. It sits in the Employee's result in
+  the period that carries the adjustment.
 
 **Deletion behavior:** Never delete after finalization.
 
@@ -608,25 +686,27 @@ The source records one Payroll Line rests on
 
 Payroll's record that a finalized payroll consumed an Attendance Payroll Fact
 
-| Column                     | Logical type | Null? | Key / rule                  | Description       |
-| -------------------------- | ------------ | ----- | --------------------------- | ----------------- |
-| id                         | uuid         | No    | PK                          | Consumption       |
-| agency_id                  | uuid         | No    | FK agencies                 | Tenant            |
-| attendance_payroll_fact_id | uuid         | No    | FK attendance_payroll_facts | Fact              |
-| payroll_period_id          | uuid         | No    | FK payroll_periods          | Finalized payroll |
-| consumed_at                | datetime     | No    |                             | Finalization time |
+| Column                     | Logical type | Null? | Key / rule                  | Description                    |
+| -------------------------- | ------------ | ----- | --------------------------- | ------------------------------ |
+| id                         | uuid         | No    | PK                          | Consumption                    |
+| agency_id                  | uuid         | No    | FK agencies                 | Tenant                         |
+| attendance_payroll_fact_id | uuid         | No    | FK attendance_payroll_facts | Fact                           |
+| payroll_period_id          | uuid         | No    | FK payroll_periods          | Finalized payroll              |
+| consumed_at                | datetime     | No    |                             | Finalization time              |
+| released_at                | datetime     | Yes   |                             | Set when the payroll is voided |
 
 **Constraints and indexes**
 
-- Unique `(agency_id, attendance_payroll_fact_id)`: a fact is consumed exactly
-  once (ADR 0014).
+- Unique `(agency_id, attendance_payroll_fact_id)` among rows that are not
+  released: a fact is consumed exactly once (ADR 0014). A void releases the
+  period's rows so the replacement consumes the facts (#330).
 - A calculation reads every fact, in an original or an adjustment publication,
   published at or before its cutoff and not listed here. An adjustment
   publication's facts are consumed as their own deltas.
 - Rows are written in the finalization transaction. Attendance's tables are
   never updated.
 
-**Deletion behavior:** Immutable.
+**Deletion behavior:** Immutable, apart from the release a void sets.
 
 ## `contribution_lines`
 
@@ -721,7 +801,8 @@ an `INDETERMINATE` compensation basis; an Employee who served only part of the
 month; an Employee whose tardiness and undertime facts in a consumed
 publication are not all charged; a missing Authorized Payroll Component Input
 for medical-allowance cash, the night-shift rate, or reimbursable RATA; a rule
-version loaded after the snapshot of a `FOR_REVIEW` period; a source another
+version loaded after the snapshot of a `FOR_REVIEW` period; a Payroll Input
+cancelled after a calculation past `DRAFT` used it (#330); a source another
 payroll consumed first, found at finalization; and an unresolved contribution
 reconciliation difference, which blocks finalization.
 
@@ -729,50 +810,127 @@ These warn: variance against the prior period, zero net pay, and an Attendance
 Period that ended before the cutoff and is not locked.
 
 The severity of negative net pay is not decided here. #28 already lets a
-finalized payroll hold a negative-net-pay result.
+finalized payroll hold a negative-net-pay result. It is open with the recovery
+rules in #661.
 
 **Deletion behavior:** Retain.
 
 ## `payslips`
 
-Employee payroll statement metadata
+Payslip: the Employee's statement of one finalized Payroll Employee Result
+(#330)
 
-| Column              | Logical type | Null? | Key / rule           | Description                                       |
-| ------------------- | ------------ | ----- | -------------------- | ------------------------------------------------- |
-| id                  | uuid         | No    | PK                   | Payslip                                           |
-| agency_id           | uuid         | No    | FK agencies          | Tenant                                            |
-| payroll_employee_id | uuid         | No    | FK payroll_employees | Payroll Employee Result                           |
-| document_id         | uuid         | Yes   | FK documents         | Rendered PDF                                      |
-| status              | enum         | No    |                      | GENERATING, READY, RELEASED, WITHHELD, SUPERSEDED |
-| released_at         | datetime     | Yes   |                      | Release                                           |
-| version_no          | integer      | No    |                      | Version                                           |
+| Column                    | Logical type | Null? | Key / rule            | Description                                       |
+| ------------------------- | ------------ | ----- | --------------------- | ------------------------------------------------- |
+| id                        | uuid         | No    | PK                    | Payslip                                           |
+| agency_id                 | uuid         | No    | FK agencies           | Tenant                                            |
+| payroll_employee_id       | uuid         | No    | FK payroll_employees  | Finalized Payroll Employee Result                 |
+| document_id               | uuid         | Yes   | FK documents          | Rendered PDF                                      |
+| status                    | enum         | No    |                       | GENERATING, READY, RELEASED, WITHHELD, SUPERSEDED |
+| released_at               | datetime     | Yes   |                       | Release                                           |
+| released_by_membership_id | uuid         | Yes   | FK agency_memberships | Payroll Approver who released it                  |
+| withheld_at               | datetime     | Yes   |                       | Withholding                                       |
+| withheld_by_membership_id | uuid         | Yes   | FK agency_memberships | Payroll Approver who withheld it                  |
+| withhold_reason           | string       | Yes   |                       | Required when withheld                            |
 
 **Constraints and indexes**
 
-- Unique `(payroll_employee_id, version_no)`.
+- Unique `(payroll_employee_id)`: one Payslip per finalized result. There is
+  no version number, because a Payslip is never reissued. A replacement payroll
+  has its own results and its own Payslips.
+- The Payroll Approver releases every `READY` Payslip of a finalized period
+  with one command. Nothing releases automatically, and release does not wait
+  on Disbursement Outcomes.
+- Withholding hides one `READY` Payslip from its Employee and needs a reason.
+  It never stops payment. A `RELEASED` Payslip cannot be withheld.
+- A Payslip becomes `SUPERSEDED` only when its payroll is voided, from any
+  status, and the system does it. A Payroll Adjustment never supersedes one.
+- An Employee reads only their own `RELEASED` Payslips.
+- It is a Printable System View and not proof of payment (#617).
 
-**Deletion behavior:** Supersede.
+**Deletion behavior:** Retain; supersede on void.
 
 ## `payroll_adjustments`
 
-Post-run correction or supplemental item
+Payroll Adjustment: Payroll's recalculation of one Employee's result for one
+past Payroll Period (#330,
+[ADR 0016](../adr/0016-payroll-corrections-are-recalculated-differences.md))
 
-| Column                       | Logical type | Null? | Key / rule            | Description                                      |
-| ---------------------------- | ------------ | ----- | --------------------- | ------------------------------------------------ |
-| id                           | uuid         | No    | PK                    | Adjustment                                       |
-| agency_id                    | uuid         | No    | FK agencies           | Tenant                                           |
-| original_payroll_employee_id | uuid         | No    | FK payroll_employees  | Original result                                  |
-| target_payroll_period_id     | uuid         | Yes   | FK payroll_periods    | Future/supplemental run                          |
-| adjustment_type              | enum         | No    |                       | SUPPLEMENTAL, REFUND, RECOVERY, VOID_REPLACEMENT |
-| reason                       | string       | No    |                       | Reason                                           |
-| status                       | enum         | No    |                       | DRAFT, APPROVED, POSTED, CANCELLED               |
-| approved_by_membership_id    | uuid         | Yes   | FK agency_memberships | Approver                                         |
+| Column                      | Logical type | Null? | Key / rule         | Description                            |
+| --------------------------- | ------------ | ----- | ------------------ | -------------------------------------- |
+| id                          | uuid         | No    | PK                 | Adjustment                             |
+| agency_id                   | uuid         | No    | FK agencies        | Tenant                                 |
+| original_payroll_period_id  | uuid         | No    | FK payroll_periods | The past period being corrected        |
+| employee_id                 | uuid         | No    | FK employees       | Employee                               |
+| status                      | enum         | No    |                    | OPEN, POSTED, CANCELLED                |
+| opened_at                   | datetime     | No    |                    | Opening                                |
+| posted_by_payroll_period_id | uuid         | Yes   | FK payroll_periods | The finalized period that carried it   |
+| posted_at                   | datetime     | Yes   |                    | That period's finalization             |
+| cancelled_at                | datetime     | Yes   |                    | Set when the original period is voided |
 
 **Constraints and indexes**
 
-- Cannot alter original finalized lines.
+- At most one `OPEN` adjustment per `(original_payroll_period_id,
+employee_id)`. A later cause joins the open one, so a difference is never
+  counted twice.
+- The original period is `FINALIZED`. It names the period and the Employee,
+  not a result, because a held Employee has none.
+- It holds no amount and no type. Each calculation of the carrying period
+  recalculates the Employee's result for the original period from the rules
+  and facts on record for its dates, less any input a cause withdrew, and
+  writes the difference against the original result plus every `POSTED`
+  adjustment for the same Employee and period. The difference is that
+  period's Payroll Lines with `payroll_adjustment_id`. A positive difference
+  is additional pay and a negative one is a recovery.
+- The next regular period carries every open adjustment. A special period
+  with `carries_adjustments` carries only those whose difference is positive.
+  Finalization marks the carried ones `POSTED`. There is no separate approval:
+  the carrying period's review chain covers them.
+- A recalculation that raises a blocking exception blocks the carrying period
+  like any other Employee-level exception.
+- An Employee with no pay in the carrying period gets a result that holds only
+  the adjustment lines.
+- A negative adjustment stays `OPEN` and reported, and no period carries it,
+  until #661 records how an Agency may recover an overpayment. LingkodHR
+  records no cash collection.
+- Voiding the original period cancels its open adjustments. Voiding a period
+  that carried one returns it to `OPEN`.
+- The tax and contribution treatment of a difference is specified with #348,
+  #350, and #632.
 
 **Deletion behavior:** Retain.
+
+## `payroll_adjustment_causes`
+
+Why a Payroll Adjustment was opened or joined
+
+| Column                  | Logical type | Null? | Key / rule             | Description                                    |
+| ----------------------- | ------------ | ----- | ---------------------- | ---------------------------------------------- |
+| id                      | uuid         | No    | PK                     | Cause                                          |
+| agency_id               | uuid         | No    | FK agencies            | Tenant                                         |
+| payroll_adjustment_id   | uuid         | No    | FK payroll_adjustments | Adjustment                                     |
+| origin                  | enum         | No    |                        | SOURCE_CORRECTION, PAYROLL_HOLD, RECALCULATION |
+| payroll_input_id        | uuid         | Yes   | FK payroll_inputs      | The consumed input a source withdrew           |
+| source_correction_key   | string       | Yes   |                        | The source's stable correction key             |
+| payroll_hold_id         | uuid         | Yes   | FK payroll_holds       | The hold that left the Employee out            |
+| reason                  | string       | Yes   |                        | Required for a recalculation                   |
+| opened_by_membership_id | uuid         | Yes   | FK agency_memberships  | The user who asked for a recalculation         |
+| created_at              | datetime     | No    |                        | Creation                                       |
+
+**Constraints and indexes**
+
+- `SOURCE_CORRECTION` names the input and the correction key, and Payroll
+  writes it on the source module's handoff. Unique `(agency_id,
+source_correction_key)` makes a retry return the same adjustment.
+- `PAYROLL_HOLD` names the hold, and Payroll writes it when the holding period
+  is finalized.
+- `RECALCULATION` names the user and a reason. It needs
+  `payroll.inputs.adjust` and covers one finalized period and one Employee or
+  all of its Employees. It is how a retroactive National Payroll Rule Version
+  or Personnel fact reaches a finalized payroll. Payroll never opens one on
+  its own.
+
+**Deletion behavior:** Immutable.
 
 ## `remittance_schedules`
 
@@ -824,9 +982,11 @@ settlement through any bank or disbursement system (#28)
   mismatch, blocks the entire export.
 - The export is an immutable, checksummed snapshot. Generating again against
   the same payroll and destination snapshot returns the same artifact.
-- A payroll correction or replacement produces a new linked export. So does a
-  destination corrected after a Payment Instruction is REJECTED or RETURNED.
-  The original is never mutated or resent.
+- A destination corrected after a Payment Instruction is REJECTED or RETURNED
+  produces a new linked export. The original is never mutated or resent.
+- A Payroll Adjustment is paid through the export of the period that carries
+  it. A voided payroll's exports are superseded, and its replacement produces
+  its own (#330).
 - The export has no status of its own. Generating it marks no one paid, and
   progress is recorded as Disbursement Outcomes.
 - Amounts use PHP with two decimal places and no grouping separators, dates
@@ -877,8 +1037,8 @@ Result to one designated disbursement destination (#28)
   instruction in a superseding export, allowed only after REJECTED or
   RETURNED and with a reason.
 - A new handoff is blocked while an instruction is SUBMITTED or ACCEPTED.
-- A payee or amount change goes through the payroll correction path, not a
-  new instruction.
+- A payee or amount change goes through a Payroll Adjustment, not a new
+  instruction.
 
 **Deletion behavior:** Retain securely.
 
@@ -904,6 +1064,10 @@ result after handoff, recorded by the Cashier (#28)
 - Outcomes are recorded per instruction, apart from payroll finalization and
   export generation. Mixed outcomes within one batch are allowed.
 - ACCEPTED does not imply SETTLED.
+- Recording an outcome is the Disbursement function. The recorder holds no
+  other payroll function on that Payroll Period (#330).
+- An instruction whose latest outcome is SUBMITTED, ACCEPTED, or SETTLED
+  blocks a void of its payroll.
 
 **Deletion behavior:** Retain.
 
@@ -917,11 +1081,15 @@ portal submission, or agency-system adapter (#29).
   payroll snapshot, for budget or fund validation and accounting review before
   approval. If payroll data changes after it is exported, it is superseded,
   the affected budget and accounting validation is revoked, and a new version
-  must be exported and reviewed.
+  must be exported and reviewed. A Budget Officer and an Accounting Reviewer
+  each record one Payroll Export Checkpoint Review against it, in either
+  order, and approval needs both confirmed on the current export. A returned
+  review sends the period back to `FOR_REVIEW` and revokes the certification,
+  the export, and the other review (#330).
 - **Finalized Payroll Accounting Support Export:** an export of the immutable
-  finalized payroll result. It stays immutable. A later payee or amount
-  correction follows the payroll correction path and produces a linked
-  replacement artifact where applicable.
+  finalized payroll result. It stays immutable. A later amount correction is a
+  Payroll Adjustment in a later period, which has its own export. A voided
+  payroll's export is superseded.
 
 For each, an authorized user records the external reference, outcome,
 supporting External Evidence, actor, and timestamp by hand. The HRIS does not
@@ -951,7 +1119,13 @@ Their entities are not specified here yet.
 - There is no free-form formula and no override of a calculated line (#27,
   #43).
 - Finalized lines are immutable and reconciled to header totals.
-- Corrections use adjustments, supplemental payroll, refunds, or void-and-replace.
+- A finalized payroll is corrected by a Payroll Adjustment, a recalculated
+  difference that no user enters, or voided and replaced before any money
+  moves (ADR 0016).
 - A Payment Export marks no one paid. Disbursement Outcomes are recorded
   separately (#28).
-- Preparation, certification, approval, and disbursement remain distinct permissions.
+- On one Payroll Period a person acts in only one payroll function:
+  preparation, HR certification, Budget review, Accounting review, approval,
+  or disbursement (#330).
+- A Payslip is released by hand, is superseded only by a void, and is not
+  proof of payment (#330).

@@ -585,7 +585,10 @@ erDiagram
     PAYMENT_INSTRUCTION ||--o{ DISBURSEMENT_OUTCOME : records
 
     PAYROLL_INPUT ||--o{ PAYROLL_LINE : consumed_by
-    PAYROLL_PERIOD ||--o{ PAYROLL_ADJUSTMENT : contains
+    PAYROLL_PERIOD ||--o{ PAYROLL_ADJUSTMENT : corrected_by
+    PAYROLL_PERIOD ||--o{ PAYROLL_ADJUSTMENT : carries
+    EMPLOYEE ||--o{ PAYROLL_ADJUSTMENT : owed_or_owing
+    PAYROLL_ADJUSTMENT ||--o{ PAYROLL_LINE : settled_as
 ```
 
 | Entity                               | Purpose                                                                                  |
@@ -604,8 +607,8 @@ erDiagram
 | `TAX_LINE`                           | Withholding-tax detail                                                                   |
 | `LOAN_DEDUCTION_LINE`                | Loan or authorized deduction                                                             |
 | `PAYROLL_EXCEPTION`                  | Warning or blocking issue                                                                |
-| `PAYSLIP`                            | Employee payroll statement                                                               |
-| `PAYROLL_ADJUSTMENT`                 | Supplemental, correction, refund, or replacement item                                    |
+| `PAYSLIP`                            | Statement of one finalized Payroll Employee Result; not proof of payment                 |
+| `PAYROLL_ADJUSTMENT`                 | Recalculated difference for one Employee and one past period, settled in a later period  |
 | `PAYMENT_EXPORT`                     | Payment Instructions from one finalized payroll                                          |
 | `PAYMENT_INSTRUCTION`                | Positive net pay for one result to one destination                                       |
 | `DISBURSEMENT_OUTCOME`               | External evidence of a Payment Instruction's progress                                    |
@@ -618,6 +621,12 @@ copied, or overridden by an Agency (#27, #328, ADR 0013). A Payroll Period
 consumes each Payroll Input and Attendance Payroll Fact exactly once, by cutoff
 (ADR 0014). JO/COS Service Payments are outside this domain (#27). A Payment
 Export marks no one paid (#28).
+
+A finalized payroll is corrected by a Payroll Adjustment, whose amount Payroll
+recalculates and no user enters, or voided and replaced before any money moves
+(#330, ADR 0016). On one Payroll Period a person acts in only one payroll
+function: preparation, HR certification, Budget review, Accounting review,
+approval, or disbursement (#330).
 
 ---
 

@@ -1055,21 +1055,27 @@ FINALIZED
 VOIDED
 ```
 
-| Current     | Action                     | Next        | Actor                                       | Permission                             | Validations                                                           | Side effects and audit                             |
-| ----------- | -------------------------- | ----------- | ------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
-| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate period; no other open regular period                     | Create period                                      |
-| DRAFT       | Move cutoff                | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | Reason                                                                | Audit Event                                        |
-| DRAFT       | Place or lift Payroll Hold | DRAFT       | Payroll Preparer                            | `payroll.periods.calculate`            | Employee-level blocking exception; reason                             | Employee left out; audit                           |
-| DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                            | `payroll.periods.calculate`            | Cutoff passed; rule snapshot taken                                    | New calculation version; queue calculation         |
-| CALCULATING | Complete calculation       | FOR_REVIEW  | System                                      | Internal                               | No technical failure; results stored                                  | Run validations                                    |
-| CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                   | `payroll.periods.reopen`               | Failure or blocking setup issue                                       | Record failure                                     |
-| FOR_REVIEW  | Return for correction      | DRAFT       | Accounting Reviewer / HR Certifier          | `payroll.periods.return`               | Review comment required                                               | Unlock permitted inputs                            |
-| FOR_REVIEW  | Certify HR inputs          | CERTIFIED   | HR Certifying Officer                       | `payroll.periods.certify`              | Personnel, attendance, and leave checks complete                      | Lock certified version                             |
-| CERTIFIED   | Revoke certification       | FOR_REVIEW  | HR Certifying Officer / Authorized Approver | `payroll.periods.revoke_certification` | Reason and no finalization                                            | Audit revocation                                   |
-| CERTIFIED   | Approve payroll            | APPROVED    | Payroll Approver                            | `payroll.periods.approve`              | Review, budget, and accounting controls satisfied                     | Lock approval version                              |
-| APPROVED    | Return before finalization | FOR_REVIEW  | Payroll Approver                            | `payroll.periods.return_approved`      | Reason; no payment release                                            | Reopen controlled review                           |
-| APPROVED    | Finalize payroll           | FINALIZED   | Payroll Approver                            | `payroll.periods.finalize`             | Approved version unchanged; segregation satisfied; sources unconsumed | Consume sources; immutable lines; generate outputs |
-| FINALIZED   | Void payroll               | VOIDED      | Payroll Approver / Agency Authority         | `payroll.periods.void`                 | Formal correction case and authority                                  | Preserve original; create replacement path         |
+| Current     | Action                     | Next        | Actor                                    | Permission                             | Validations                                                                         | Side effects and audit                                               |
+| ----------- | -------------------------- | ----------- | ---------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| None        | Create period              | DRAFT       | Payroll Preparer                         | `payroll.periods.create`               | No duplicate period; no other open regular period                                   | Create period                                                        |
+| DRAFT       | Move cutoff                | DRAFT       | Payroll Preparer                         | `payroll.periods.create`               | Reason                                                                              | Audit Event                                                          |
+| DRAFT       | Cancel draft period        | VOIDED      | Payroll Preparer                         | `payroll.periods.create`               | Reason                                                                              | Nothing was consumed; audit                                          |
+| DRAFT       | Place or lift Payroll Hold | DRAFT       | Payroll Preparer                         | `payroll.periods.calculate`            | Employee-level blocking exception; reason                                           | Employee left out; audit                                             |
+| DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                         | `payroll.periods.calculate`            | Cutoff passed; rule snapshot taken                                                  | New calculation version; queue calculation                           |
+| CALCULATING | Complete calculation       | FOR_REVIEW  | System                                   | Internal                               | No technical failure; results stored                                                | Run validations                                                      |
+| CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                | `payroll.periods.reopen`               | Failure or blocking setup issue                                                     | Record failure                                                       |
+| FOR_REVIEW  | Return for correction      | DRAFT       | Accounting Reviewer / HR Certifier       | `payroll.periods.return`               | Review comment required                                                             | Unlock permitted inputs                                              |
+| FOR_REVIEW  | Certify HR inputs          | CERTIFIED   | HR Certifying Officer                    | `payroll.periods.certify`              | Personnel, attendance, and leave checks complete; no open blocking exception        | Lock certified version                                               |
+| CERTIFIED   | Revoke certification       | FOR_REVIEW  | HR Certifying Officer / Payroll Approver | `payroll.periods.revoke_certification` | Reason                                                                              | Supersede the review export and revoke its reviews; audit            |
+| CERTIFIED   | Confirm funding review     | CERTIFIED   | Budget Officer                           | `payroll.periods.review_funding`       | Current Certified Payroll Review Export; external reference and evidence            | Immutable Payroll Export Checkpoint Review                           |
+| CERTIFIED   | Confirm accounting review  | CERTIFIED   | Accounting Reviewer                      | `payroll.periods.review_accounting`    | Current Certified Payroll Review Export; external reference and evidence            | Immutable Payroll Export Checkpoint Review                           |
+| CERTIFIED   | Return checkpoint review   | FOR_REVIEW  | Budget Officer / Accounting Reviewer     | The reviewer's own review permission   | Current Certified Payroll Review Export; reason                                     | Revoke certification; supersede the export; revoke the other review  |
+| CERTIFIED   | Approve payroll            | APPROVED    | Payroll Approver                         | `payroll.periods.approve`              | Both checkpoint reviews confirmed on the current export; no open blocking exception | Lock approval version                                                |
+| APPROVED    | Return before finalization | FOR_REVIEW  | Payroll Approver                         | `payroll.periods.return_approved`      | Reason                                                                              | Revoke certification, the export, and its reviews                    |
+| APPROVED    | Finalize payroll           | FINALIZED   | Payroll Approver                         | `payroll.periods.finalize`             | Approved version unchanged; no open blocking exception; sources unconsumed          | Consume sources; immutable lines; post adjustments; generate outputs |
+| FINALIZED   | Request void               | FINALIZED   | Accounting Reviewer / Payroll Approver   | `payroll.periods.void`                 | Void conditions below; reason and supporting Document Version                       | Record the request; audit                                            |
+| FINALIZED   | Decline void               | FINALIZED   | Payroll Approver                         | `payroll.periods.approve_void`         | Open request; reason                                                                | Close the request; audit                                             |
+| FINALIZED   | Approve void               | VOIDED      | Payroll Approver                         | `payroll.periods.approve_void`         | Open request by a different person; void conditions rechecked                       | Preserve original; release its sources; supersede outputs            |
 
 Invalid examples:
 
@@ -1118,7 +1124,134 @@ period silently (#328):
 | `DRAFT`                 | The next calculation uses it                                                               |
 | `FOR_REVIEW`            | Blocking exception; `Certify HR inputs` is refused until the period is recalculated        |
 | `CERTIFIED`, `APPROVED` | The snapshot stands and the period is flagged; the officer returns it or corrects it later |
-| `FINALIZED`             | Correction only                                                                            |
+| `FINALIZED`             | Payroll Adjustment only                                                                    |
+
+### Checkpoint reviews (#29, #330)
+
+Budget and Accounting review are not Payroll Period statuses. Each is a Payroll
+Export Checkpoint Review recorded against the current Certified Payroll Review
+Export while the period is `CERTIFIED`. The two are independent and may be
+recorded in either order, and approval needs both confirmed on the current
+export.
+
+A returned review rejects that exact snapshot. It moves the period back to
+`FOR_REVIEW` with the review's reason, revokes the certification, supersedes
+the export, and revokes the other review. A reviewer who is only waiting, for
+example on funds, records nothing.
+
+### Payroll functions (#330)
+
+On one Payroll Period a person acts in at most one of these six functions,
+counted across every calculation version of the period. A second function is
+refused. There is no warning mode and no override.
+
+| Function          | Commands                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| Preparation       | Create period, move cutoff, cancel draft period, place or lift Payroll Hold, start calculation, reopen |
+| HR certification  | Certify HR inputs, revoke certification                                                                |
+| Budget review     | Confirm or return the funding checkpoint review                                                        |
+| Accounting review | Confirm or return the accounting checkpoint review                                                     |
+| Approval          | Approve, return before finalization, finalize, approve or decline void, release or withhold a Payslip  |
+| Disbursement      | Record a Disbursement Outcome on a Payment Instruction of the period                                   |
+
+`Return for correction`, `Request void`, opening a Payroll Adjustment, and
+generating an export assign no function, because each only sends work back,
+proposes, or reproduces a stored result. A Payroll Approver who revokes a
+certification acts in the Approval function.
+
+There is no subject rule. Every officer is an Employee paid in the same
+period, so anyone may act on a period that holds their own Payroll Employee
+Result. The control is that no line can be overridden (#27) and that six
+different people act.
+
+This is a project rule modelled on the monetization contract (#161). No
+research file records a national rule on payroll segregation.
+
+### Source corrections (#330)
+
+A source module corrects an effect it already posted by asking Payroll to
+withdraw the Payroll Input. Payroll's answer depends on where the input is:
+
+| Input                                                                               | Payroll's answer                                                                                              |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `PENDING`, and no live calculation uses it, or the period that uses it is `DRAFT`   | The input becomes `CANCELLED`. A replacement is a new Payroll Input linked to it                              |
+| `PENDING`, used by a `CALCULATING`, `FOR_REVIEW`, `CERTIFIED`, or `APPROVED` period | The input becomes `CANCELLED`, and the period gets a blocking exception until it is returned and recalculated |
+| `CONSUMED` by a `FINALIZED` period                                                  | The input is unchanged. Payroll opens a Payroll Adjustment, or joins the open one, and returns its identifier |
+
+The middle row is stricter than a late rule version, which only flags the
+period. Paying a cancelled leave monetization while Leave restores the credits
+would pay twice.
+
+An Attendance adjustment publication needs none of this. Its facts are deltas
+that the next period consumes
+([ADR 0014](adr/0014-consume-payroll-sources-by-cutoff.md)).
+
+### Corrections after finalization (#330)
+
+A finalized payroll is corrected in one of two ways
+([ADR 0016](adr/0016-payroll-corrections-are-recalculated-differences.md)).
+
+**Payroll Adjustment.** Payroll recalculates one Employee's result for one past
+Payroll Period and keeps the line-by-line difference. No user enters an
+amount. A positive difference is additional pay, and a negative one is a
+recovery. An adjustment is `OPEN`, then `POSTED` or `CANCELLED`, and opens in
+one of three ways:
+
+| Origin                                                        | Opened by                                                                                                             |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| A source correction on an input a finalized payroll consumed  | Payroll, on the handoff                                                                                               |
+| A Payroll Hold                                                | Payroll, when the period with the hold finalizes                                                                      |
+| A retroactive National Payroll Rule Version or Personnel fact | A user with `payroll.inputs.adjust`, with a reason, for one finalized period and one Employee or all of its Employees |
+
+Payroll never opens a recalculation on its own. An Employee and past period
+have at most one open adjustment, and a later cause joins it.
+
+- An open adjustment has no amount. Each calculation of the period that
+  carries it computes the difference against the original result plus every
+  adjustment already posted for that Employee and period. Finalization posts
+  it.
+- The next regular Payroll Period carries every open adjustment as Payroll
+  Lines linked to it. The period's own review chain approves them, so an
+  adjustment has no separate approval.
+- A special Payroll Period may name adjustments as its content, to pay
+  positive ones before the next regular period. This is the supplemental
+  payroll. It never carries a negative one.
+- The month of an Employee under a Payroll Hold is an adjustment against an
+  empty original, calculated for the held month's dates, rules, and salary. A
+  hold does not carry over: an Employee who is still blocked is held again,
+  and both months stay owed.
+- An Employee with no pay in the carrying period, such as a separated
+  Employee, gets a Payroll Employee Result that holds only the adjustment
+  lines.
+- A negative adjustment stays `OPEN` and reported, and no period carries it,
+  until #661 records how an Agency may recover an overpayment. LingkodHR
+  records no cash collection. The severity of negative net pay is open with
+  it.
+- The tax and contribution treatment of a difference is specified with #348,
+  #350, and #632.
+
+**Void and replace.** A void applies only when the whole payroll is wrong and
+no money has moved. The void conditions are:
+
+- for a regular period, the Agency has no later regular period that is not
+  `VOIDED`. A later draft is cancelled first;
+- no Payment Instruction of the period has `SUBMITTED`, `ACCEPTED`, or
+  `SETTLED` as its latest Disbursement Outcome.
+
+One person requests the void with a reason and a supporting Document Version,
+and a different person approves it. On approval:
+
+- the period and its results become `VOIDED` and stay readable;
+- its Payroll Inputs return to `PENDING`, and its Attendance Payroll Facts and
+  once-only Authorized Payroll Component Inputs are released, so the
+  replacement consumes them;
+- its Payslips and exports are superseded;
+- every open Payroll Adjustment against it is cancelled, and an input whose
+  source correction was waiting in one becomes `CANCELLED`;
+- every adjustment it carried reopens.
+
+The replacement is a new regular period for the same month, through the normal
+workflow. After money has moved, every correction is a Payroll Adjustment.
 
 ---
 
@@ -1134,14 +1267,31 @@ WITHHELD
 SUPERSEDED
 ```
 
-| Current    | Action           | Next       | Actor                     | Permission                   | Validations                | Side effects                               |
-| ---------- | ---------------- | ---------- | ------------------------- | ---------------------------- | -------------------------- | ------------------------------------------ |
-| None       | Generate         | GENERATING | System                    | Internal                     | Payroll FINALIZED          | Queue PDF                                  |
-| GENERATING | Mark ready       | READY      | System                    | Internal                     | File generated and secured | Store document                             |
-| READY      | Release          | RELEASED   | Payroll Approver / System | `payroll.payslips.release`   | Release policy satisfied   | Notify employee                            |
-| READY      | Withhold release | WITHHELD   | Payroll Approver          | `payroll.payslips.withhold`  | Authorized reason          | Prevent employee access                    |
-| WITHHELD   | Release          | RELEASED   | Payroll Approver          | `payroll.payslips.release`   | Issue resolved             | Notify employee                            |
-| RELEASED   | Supersede        | SUPERSEDED | Payroll Approver          | `payroll.payslips.supersede` | Replacement payroll exists | Keep historical access according to policy |
+| Current                               | Action                  | Next       | Actor            | Permission                  | Validations                | Side effects                                            |
+| ------------------------------------- | ----------------------- | ---------- | ---------------- | --------------------------- | -------------------------- | ------------------------------------------------------- |
+| None                                  | Generate                | GENERATING | System           | Internal                    | Payroll FINALIZED          | Queue PDF                                               |
+| GENERATING                            | Mark ready              | READY      | System           | Internal                    | File generated and secured | Store document                                          |
+| READY                                 | Release period payslips | RELEASED   | Payroll Approver | `payroll.payslips.release`  | Payroll FINALIZED          | Every READY payslip of the period; notify each Employee |
+| READY                                 | Withhold release        | WITHHELD   | Payroll Approver | `payroll.payslips.withhold` | Reason                     | Employee cannot read it; audit                          |
+| WITHHELD                              | Release                 | RELEASED   | Payroll Approver | `payroll.payslips.release`  | Reason                     | Notify employee                                         |
+| GENERATING, READY, RELEASED, WITHHELD | Supersede               | SUPERSEDED | System           | Internal                    | Payroll VOIDED             | Employee can no longer read it                          |
+
+A Payslip states one finalized Payroll Employee Result. It is not proof of
+payment (#330).
+
+- The Payroll Approver releases by hand, with one command for the whole
+  finalized period. Nothing releases automatically, and release does not wait
+  on Disbursement Outcomes.
+- Withholding hides one `READY` Payslip from its Employee. It never stops
+  payment: the Payment Instruction is unaffected, and leaving an Employee out
+  of a payroll is a Payroll Hold. A `RELEASED` Payslip cannot be withheld.
+- A Payslip is superseded only when its payroll is voided, and the system does
+  it. A Payroll Adjustment never supersedes one, because the original still
+  states what was paid. The difference shows on the Payslip of the period that
+  carries it.
+- An Employee reads only their own `RELEASED` Payslips.
+
+No national rule on issuing a payslip is on file. This is a project policy.
 
 ---
 
@@ -1598,39 +1748,44 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 
 ## 6.10 Payroll
 
-| Permission                         | Payroll Preparer | HR Certifier | Budget Officer | Accounting Reviewer | Payroll Approver | Cashier | HR Admin | Auditor |
-| ---------------------------------- | ---------------: | -----------: | -------------: | ------------------: | ---------------: | ------: | -------: | ------: |
-| `payroll.periods.read`             |                A |            A |              A |                   A |                A |       R |        C |       R |
-| `payroll.periods.create`           |                A |            — |              — |                   — |                — |       — |        — |       — |
-| `payroll.periods.calculate`        |                A |            — |              — |                   — |                — |       — |        — |       — |
-| `payroll.periods.return`           |                C |            A |              C |                   A |                A |       — |        — |       — |
-| `payroll.periods.certify`          |                — |            A |              — |                   — |                — |       — |        — |       — |
-| `payroll.periods.approve`          |                — |            — |              — |                   C |                A |       — |        — |       — |
-| `payroll.periods.finalize`         |                — |            — |              — |                   — |                A |       — |        — |       — |
-| `payroll.periods.void`             |                — |            — |              — |                   C |                A |       — |        — |       — |
-| `payroll.inputs.read`              |                A |            A |              R |                   A |                A |       — |        C |       R |
-| `payroll.inputs.adjust`            |                A |            C |              — |                   C |                C |       — |        — |       — |
-| `payroll.compensation.read`        |                A |            A |              C |                   A |                A |       R |        C |       R |
-| `payroll.compensation.manage`      |                C |            C |              — |                   — |                — |       — |        A |       — |
-| `payroll.deductions.manage`        |                A |            C |              — |                   C |                — |       — |        C |       — |
-| `payroll.payslips.read`            |                A |            C |              — |                   R |                A |       R |        C |       R |
-| `payroll.payslips.release`         |                — |            — |              — |                   — |                A |       — |        — |       — |
-| `payroll.registers.generate`       |                A |            A |              A |                   A |                A |       A |        C |       R |
-| `payroll.payment_exports.generate` |                C |            — |              — |                   A |                A |       A |        — |       R |
-| `payroll.disbursement.update`      |                — |            — |              — |                   C |                C |       A |        — |       R |
-| `payroll.audit.read`               |                R |            R |              R |                   R |                R |       R |        R |       A |
+| Permission                             | Payroll Preparer | HR Certifier | Budget Officer | Accounting Reviewer | Payroll Approver | Cashier | HR Admin | Auditor |
+| -------------------------------------- | ---------------: | -----------: | -------------: | ------------------: | ---------------: | ------: | -------: | ------: |
+| `payroll.periods.read`                 |                A |            A |              A |                   A |                A |       R |        C |       R |
+| `payroll.periods.create`               |                A |            — |              — |                   — |                — |       — |        — |       — |
+| `payroll.periods.calculate`            |                A |            — |              — |                   — |                — |       — |        — |       — |
+| `payroll.periods.reopen`               |                A |            — |              — |                   — |                — |       — |        — |       — |
+| `payroll.periods.return`               |                C |            A |              C |                   A |                A |       — |        — |       — |
+| `payroll.periods.certify`              |                — |            A |              — |                   — |                — |       — |        — |       — |
+| `payroll.periods.revoke_certification` |                — |            A |              — |                   — |                A |       — |        — |       — |
+| `payroll.periods.review_funding`       |                — |            — |              A |                   — |                — |       — |        — |       — |
+| `payroll.periods.review_accounting`    |                — |            — |              — |                   A |                — |       — |        — |       — |
+| `payroll.periods.approve`              |                — |            — |              — |                   C |                A |       — |        — |       — |
+| `payroll.periods.return_approved`      |                — |            — |              — |                   — |                A |       — |        — |       — |
+| `payroll.periods.finalize`             |                — |            — |              — |                   — |                A |       — |        — |       — |
+| `payroll.periods.void`                 |                — |            — |              — |                   C |                A |       — |        — |       — |
+| `payroll.periods.approve_void`         |                — |            — |              — |                   — |                A |       — |        — |       — |
+| `payroll.inputs.read`                  |                A |            A |              R |                   A |                A |       — |        C |       R |
+| `payroll.inputs.adjust`                |                A |            C |              — |                   C |                C |       — |        — |       — |
+| `payroll.compensation.read`            |                A |            A |              C |                   A |                A |       R |        C |       R |
+| `payroll.compensation.manage`          |                C |            C |              — |                   — |                — |       — |        A |       — |
+| `payroll.deductions.manage`            |                A |            C |              — |                   C |                — |       — |        C |       — |
+| `payroll.payslips.read`                |                A |            C |              — |                   R |                A |       R |        C |       R |
+| `payroll.payslips.release`             |                — |            — |              — |                   — |                A |       — |        — |       — |
+| `payroll.payslips.withhold`            |                — |            — |              — |                   — |                A |       — |        — |       — |
+| `payroll.registers.generate`           |                A |            A |              A |                   A |                A |       A |        C |       R |
+| `payroll.payment_exports.generate`     |                C |            — |              — |                   A |                A |       A |        — |       R |
+| `payroll.disbursement.update`          |                — |            — |              — |                   C |                C |       A |        — |       R |
+| `payroll.audit.read`                   |                R |            R |              R |                   R |                R |       R |        R |       A |
 
-Recommended separation:
+`payroll.periods.void` requests a void, and `payroll.periods.approve_void`
+approves or declines it. `payroll.inputs.adjust` opens a Payroll Adjustment for
+recalculation; it enters no amount. There is no `payroll.payslips.supersede`:
+the system supersedes a Payslip when its payroll is voided (§5.21).
 
-```text
-Payroll Preparer ≠ Payroll Approver
-```
-
-and, where staffing permits:
-
-```text
-Payroll Approver ≠ Cashier / Disbursing Officer
-```
+Holding a permission is not enough. On one Payroll Period a person acts in at
+most one payroll function: preparation, HR certification, Budget review,
+Accounting review, approval, or disbursement. A second function is refused
+(§5.20, #330).
 
 ---
 
@@ -1700,9 +1855,9 @@ Supervisors may not finalize their own rating unless the agency's approved hiera
 
 ## 7.1 Mandatory baseline checks
 
-The system shall prevent or warn against these combinations for the same transaction:
+The system shall prevent or warn against these combinations for the same transaction. The payroll combination in item 1 is always prevented:
 
-1. The payroll preparer must not be the sole payroll approver.
+1. A person must not act in more than one payroll function on the same Payroll Period: preparation, HR certification, Budget review, Accounting review, approval, or disbursement (§5.20).
 2. A user must not approve their own leave application.
 3. A user must not approve their own overtime or CTO request.
 4. A selection-board member must not act on a record where a declared conflict exists.
@@ -1725,6 +1880,10 @@ The agency should review assignments where one person holds:
 - Records Officer and unrestricted document-deletion authority;
 - DPO and operational HR editing roles;
 - Auditor and operational write roles.
+
+This list is advice about role assignments. It does not relax §7.1: a person
+who holds two payroll roles still acts in only one payroll function on each
+Payroll Period.
 
 ---
 
@@ -1818,7 +1977,8 @@ Overrides requiring additional approval include:
 - Agency Membership reactivation after Agency Membership Suspension.
 
 A payroll line is not on this list. No user overrides a National Payroll Rule
-Version or a calculated line (#27).
+Version or a calculated line (#27). A finalized payroll void is requested by
+one person and approved by another (§5.20, #330).
 
 ---
 
