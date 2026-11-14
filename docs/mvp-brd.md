@@ -1021,13 +1021,27 @@ The rule engine shall support restrictions based on employee category, work arra
 
 # 17. Government Payroll Requirements
 
-## PAY-001 Payroll profiles
+## PAY-001 Appointed Personnel Payroll Rule Set
 
-Payroll rules shall be separated by personnel category:
+Payroll shall calculate pay for admitted Appointed Personnel through one
+Appointed Personnel Payroll Rule Set (#27). It covers civilian NGA personnel
+appointed to authorized plantilla items, appointed casual personnel, and
+appointed contractual personnel. There are no separate plantilla, casual, or
+contractual payroll profiles.
 
-- plantilla personnel;
-- casual or contractual personnel where covered by the agency profile;
-- Job Order or Contract of Service personnel through a distinct payment profile.
+The rule set shall support these pay bases as effective-dated variants (#27):
+
+- monthly full-time salary;
+- proportional part-time salary;
+- the official casual daily wage.
+
+Special-regime populations are outside the Reference Agency Profile. An
+unsupported category-specific rule shall block processing rather than inherit
+plantilla behavior (#27).
+
+JO/COS Service Payments are outside payroll. A Service Payment and its
+contributions and taxes are never a Payroll Employee result or a Payroll Line
+(#21, #27).
 
 ## PAY-002 Salary basis
 
@@ -1043,30 +1057,85 @@ For plantilla personnel, the system shall use:
 
 ## PAY-003 Compensation components
 
-The system shall support effective-dated:
+Every earning shall come from a Native Payroll Component or an Authorized
+Payroll Component Input. The system shall provide no free-form formula and no
+free-form pay item (#27, #43).
 
-- basic salary;
-- PERA and other authorized allowances;
-- RATA where applicable;
-- hazard, subsistence, laundry, or special-law benefits where configured;
-- overtime pay;
-- leave monetization;
-- bonuses and incentives authorized by current issuances;
-- deductions for absence, tardiness, and undertime;
-- loans and agency deductions;
-- adjustments and refunds.
+The rule set shall calculate these Native Payroll Components from an applicable
+National Payroll Rule Version and authoritative source facts (#27, as narrowed
+by #43):
+
+- basic salary on the monthly full-time, proportional part-time, and casual
+  daily-wage bases;
+- the salary effect of absence without pay, with tardiness and undertime first
+  charged under the government leave rules;
+- PERA;
+- a cash uniform or clothing allowance, after the Agency activates it;
+- commutable RATA for eligible incumbents;
+- mid-year bonus, year-end bonus, and cash gift;
+- overtime pay from approved overtime quantities;
+- leave monetization from an approved number of days.
+
+Adjustments and refunds follow PAY-008.
+
+Three variants are calculated only from an Authorized Payroll Component Input
+that carries its authority. A missing input shall block the affected line
+(#43):
+
+- a medical-allowance cash line requires the Agency grant mode, amount and
+  schedule, qualification, and supporting authority. A procured group HMO is
+  outside payroll;
+- night-shift differential requires the effective-dated percentage the agency
+  head selected within the national 20% ceiling. Approved night hours remain
+  native source quantities;
+- reimbursable RATA requires the approved actual amount. The national
+  calculation enforces eligibility and ceilings.
+
+Honoraria, hazard, subsistence, laundry, Magna Carta or other special-law
+benefits, and agency-specific compensation shall enter only as Authorized
+Payroll Component Inputs until a complete applicable authority and calculation
+rule are sourced. Each input shall carry its authority, source, effective
+period, eligible person or population, amount or quantity, and approval. A
+component without lawful authority or an allowed classification is unsupported
+(#27).
+
+Salary schedules and tranche rules, and each annual GAA's component
+definitions, eligibility constraints, caps, amounts, and exclusions, are
+immutable, effective-dated National Payroll Rule Versions. An Agency may
+activate an applicable version but shall not copy or override its substance. A
+conditional component stays disabled until the Agency records its Agency
+Payroll Applicability: the authority, eligible population, funding, and
+effective period (#27).
+
+PERA, the clothing and medical allowances, RATA, the bonuses, the cash gift,
+and their conditions and amounts shall be revalidated against each fiscal
+year's GAA (#43). A missing, expired, or unverified required rule shall block
+the affected calculation. It shall never fall back to an older version, a
+default rate, or a formula (#27, #43).
 
 ## PAY-004 Deductions and employer shares
 
-The system shall support configurable:
+The system shall support:
 
 - GSIS premiums and loan deductions;
 - PhilHealth contributions;
 - Pag-IBIG contributions and loans;
+- employer-only Employees' Compensation;
 - BIR withholding tax;
 - employee association or cooperative deductions;
 - court or legal deductions;
 - other authorized deductions.
+
+Contribution coverage, bases, rates, floors, ceilings, and share rules, and BIR
+tax tables and treatment, are National Payroll Rule Versions, not Agency
+configuration. The system shall calculate expected statutory contributions
+from the applicable version and reconcile them against issuer-validated
+billing. An unresolved discrepancy shall block finalization (#27).
+
+Loans and third-party deductions are issuer-validated obligations that the
+Agency records or imports. Payroll shall apply the national payee
+restrictions, priority order, and net-take-home floor to them. It shall not
+calculate external loan interest or amortization (#27).
 
 ## PAY-005 Payroll workflow
 
@@ -1103,8 +1172,11 @@ Each employee calculation shall preserve:
 - amount;
 - rule version;
 - employee/employer share;
-- accounting or reporting category;
-- override and reason.
+- accounting or reporting category.
+
+No user shall override a National Payroll Rule Version or a calculated line
+(#27). A wrong amount is corrected at its source, or after finalization
+through PAY-008.
 
 ## PAY-008 Finalization
 
@@ -1120,10 +1192,26 @@ The system shall produce:
 - agency and employee contribution summaries;
 - loan-remittance summaries;
 - tax summaries;
-- bank or payment export;
+- the Payment Export and its Payment Instructions (#28);
+- the Certified Payroll Review Export (#29);
+- the Finalized Payroll Accounting Support Export (#29);
 - funding and cost-center summaries;
 - accounting-support schedules;
 - variance and exception reports.
+
+A Payment Export is a provider-neutral handoff generated only from a FINALIZED
+payroll, with one Payment Instruction for each positive-net-pay Payroll
+Employee result. It claims no bank format, acceptance, or settlement, and
+generating it marks no one paid. The Cashier records each Payment
+Instruction's Disbursement Outcome separately as SUBMITTED, ACCEPTED,
+REJECTED, SETTLED, or RETURNED (#28).
+
+The Certified Payroll Review Export is taken from the certified payroll
+snapshot for budget and accounting review before approval. The Finalized
+Payroll Accounting Support Export is taken from the immutable finalized
+payroll result. Creating or downloading either never asserts that funds were
+validated or obligated, that an accounting entry was posted, or that a
+receiving system accepted the data (#29).
 
 ## PAY-010 Direct filing boundary
 

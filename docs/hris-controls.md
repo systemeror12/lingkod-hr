@@ -1029,7 +1029,7 @@ VOIDED
 
 | Current     | Action                     | Next        | Actor                                       | Permission                             | Validations                                       | Side effects and audit                     |
 | ----------- | -------------------------- | ----------- | ------------------------------------------- | -------------------------------------- | ------------------------------------------------- | ------------------------------------------ |
-| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate profile/period                       | Create period                              |
+| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate period                               | Create period                              |
 | DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                            | `payroll.periods.calculate`            | Rule snapshot; source cutoff complete             | Queue calculation                          |
 | CALCULATING | Complete calculation       | FOR_REVIEW  | System                                      | Internal                               | No technical failure; results stored              | Run validations                            |
 | CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                   | `payroll.periods.reopen`               | Failure or blocking setup issue                   | Record failure                             |
@@ -1739,11 +1739,13 @@ Overrides requiring additional approval include:
 - leave-credit adjustment;
 - locked attendance adjustment;
 - COC adjustment;
-- payroll-line override;
 - finalized payroll void;
 - performance-rating amendment;
 - clearance waiver;
 - Agency Membership reactivation after Agency Membership Suspension.
+
+A payroll line is not on this list. No user overrides a National Payroll Rule
+Version or a calculated line (#27).
 
 ---
 

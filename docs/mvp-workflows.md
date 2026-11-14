@@ -578,7 +578,7 @@ Claimed, authorized, actual, certified, credited, used, and paid values are stor
 
 ```mermaid
 flowchart TD
-    A[Create payroll period] --> B[Set personnel profile, cutoff, and payment date]
+    A[Create payroll period] --> B[Set cutoff and payment date]
     B --> C[Snapshot salary schedule, contribution rules, and payroll configuration]
     C --> D[Collect active service and salary-grade data]
     D --> E[Collect locked DTR, leave, OT pay, monetization, and adjustments]
