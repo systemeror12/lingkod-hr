@@ -641,6 +641,7 @@ Leave's conversion and charge of one tardiness or undertime Attendance Payroll F
   creates a successor with zero quantities.
 - No row exists for a fact Leave could not convert. Leave derives those from the
   publication's facts that have no charge, with the reason.
+- `expected_minutes` is 480, the only duty Table II covers (ADR 0012, #654).
 - Rows are immutable.
 
 **Deletion behavior:** Never delete.
@@ -1446,8 +1447,8 @@ One preserved Leave Account balance
 - Posted leave balances are derived from immutable signed ledger entries; active
   commitments affect availability without changing the posted balance.
 - The source record owns a ledger posting's business meaning.
-- Each tardiness or undertime Attendance Payroll Fact is charged once to
-  vacation leave through an Attendance Deficit Charge. Absence and sick leave
+- Each tardiness or undertime Attendance Payroll Fact on a 480-minute Work Date
+  is charged once to vacation leave through an Attendance Deficit Charge. Absence and sick leave
   are never charged, a charge is decided once against available credits, and
   only an adjustment publication replaces it (ADR 0012).
 - Payroll learns a tardiness or undertime salary effect only from the Unpaid

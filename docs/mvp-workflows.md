@@ -511,8 +511,11 @@ together for an Employee or not at all, and a retry returns the existing
 charge. `ABSENCE` facts are never charged (section 50), and sick leave is never
 charged: undertime for health reasons is an ordinary sick Leave Application
 over those hours. A charge is decided once; only an adjustment publication
-reverses and replaces it. A fact Leave cannot convert stays uncharged until a
-rerun finds the missing authority or account (#654).
+reverses and replaces it. A fact Leave cannot convert stays uncharged with its
+reason until a rerun finds the missing authority or account. Only Work Dates
+with 480 expected minutes convert through Table II. Compressed-workweek days of
+600 minutes, part-time days, and flexible-hours tardiness or undertime facts stay
+uncharged until a decision names their rule (#654).
 
 ### Leave monetization
 
