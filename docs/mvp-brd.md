@@ -1041,6 +1041,8 @@ For plantilla personnel, the system shall use:
 - step-increment actions;
 - statutory and special-law adjustments.
 
+Basic salary for a monthly-paid Employee who assumes duty or separates inside a calendar month has no recorded rule. No national authority found fixes its divisor, paid days, first and last paid day, or rounding. Until one is recorded, the system shall give that Employee a blocking exception and create no Payroll Line ([authorities](research/partial-month-basic-salary-authorities.md)).
+
 ## PAY-003 Compensation components
 
 The system shall support effective-dated:
