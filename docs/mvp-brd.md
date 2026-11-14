@@ -1237,6 +1237,17 @@ The system shall produce:
 - accounting-support schedules;
 - variance and exception reports.
 
+Every output is LingkodHR's own Printable System View or Structured Export.
+None is an Exact Versioned Form. The payslip and the payroll register are
+Printable System Views. The deduction register, the remittance schedules, and
+the contribution, loan-remittance, and tax summaries are Structured Exports
+for review. No output shall be labelled as, or claim to conform to, a COA or
+BIR form or an issuer's format: the forms baseline established no universal
+payslip layout (`research/official-forms-security-records-baselines.md` §1.4),
+and the MVP files and remits nothing (PAY-010). Reproducing a named official
+form is a separate decision that needs that form's controlling issuance
+(#617).
+
 A Payment Export is a provider-neutral handoff generated only from a FINALIZED
 payroll, with one Payment Instruction for each positive-net-pay Payroll
 Employee result. It claims no bank format, acceptance, or settlement, and
