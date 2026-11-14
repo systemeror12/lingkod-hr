@@ -1223,10 +1223,24 @@ have at most one open adjustment, and a later cause joins it.
 - An Employee with no pay in the carrying period, such as a separated
   Employee, gets a Payroll Employee Result that holds only the adjustment
   lines.
-- A negative adjustment stays `OPEN` and reported, and no period carries it,
-  until #661 records how an Agency may recover an overpayment. LingkodHR
-  records no cash collection. The severity of negative net pay is open with
-  it.
+- A negative adjustment is deducted only under a final and executory COA
+  decision that decrees the obligation (#661,
+  [authorities](research/salary-overpayment-recovery-authorities.md)). An
+  Agency order, an audit finding, and a disallowance that is not yet final
+  authorize nothing. The deduction is the whole amount, or the monthly amount
+  COA approved on the Employee's installment request. It comes after BIR,
+  PhilHealth, GSIS, and HDMF obligations and never takes net take-home pay
+  below the floor of the General Appropriations Act in force. What a period
+  cannot take stays owed.
+- An Employee with no later pay is not collected from through payroll, and
+  LingkodHR records no cash collection.
+- Until #648 builds this, a negative adjustment stays `OPEN` and reported, and
+  no period carries it. No authority found settles consent without a COA
+  decision, the date a COA-decreed obligation is incurred, the installment
+  schedule in force, or the FY 2027 deduction list and floor. Each blocks the
+  part of #648 that needs it.
+- No authority found addresses negative net pay. A recovery never produces
+  it, because of the floor. Its severity stays the developer's ruling.
 - The tax and contribution treatment of a difference is specified with #348,
   #350, and #632.
 

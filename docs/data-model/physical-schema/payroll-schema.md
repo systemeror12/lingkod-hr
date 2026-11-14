@@ -776,10 +776,15 @@ with `carries_adjustments` carries only those whose difference is positive.
 The carrying period's finalization marks them `POSTED`. There is no separate
 approval.
 
-A negative adjustment stays `OPEN`, and no period carries it, until #661
-records how an Agency may recover an overpayment. Voiding the original period
-cancels its open adjustments, and voiding a period that carried one returns it
-to `OPEN`.
+A negative adjustment stays `OPEN`, and no period carries it, until #648
+builds the recovery rules #661 recorded
+([authorities](../../research/salary-overpayment-recovery-authorities.md)). A
+period deducts one only under a final and executory COA decision, for the
+whole amount or the monthly amount COA approved, after statutory deductions
+and never below the net-take-home floor. These tables do not yet hold that
+decision, an approved monthly amount, or an adjustment settled across more
+than one period. #648 adds them. Voiding the original period cancels its open
+adjustments, and voiding a period that carried one returns it to `OPEN`.
 
 ---
 

@@ -1345,11 +1345,29 @@ salary. A hold does not carry over to the next period. An Employee with no pay
 in the carrying period, such as a separated Employee, shall get a Payroll
 Employee Result that holds only the adjustment lines.
 
-No authority on file says how an Agency may recover a salary overpayment: the
-Employee's consent, installments, the net-take-home floor, or collection from
-an Employee with no later pay. Until one is recorded, a negative adjustment
-shall stay open and reported, and no period shall carry it (#661). LingkodHR
-records no cash collection.
+A negative adjustment is an overpayment the Employee must return (#661,
+[authorities](research/salary-overpayment-recovery-authorities.md)). The Agency
+shall not deduct it from later salary on its own order. A Payroll Period shall
+deduct it only for an obligation decreed in a final and executory decision of
+the Commission on Audit (COA), and then:
+
+- the whole amount, or the monthly amount COA approved when the Employee asked
+  to pay by installment. Payroll shall compute no schedule;
+- after obligations to the BIR, PhilHealth, GSIS, and HDMF;
+- never below the net-take-home floor of the General Appropriations Act in
+  force for the period.
+
+What a period cannot take stays owed. An Employee with no later pay shall not
+be collected from through payroll, and GSIS benefits and retirement pay are
+never applied. LingkodHR records no cash collection.
+
+No authority found settles four points, and each blocks part of #648: whether
+the Employee's written consent alone allows a deduction, the date a
+COA-decreed obligation is incurred for the priority order, the installment
+schedule in force, and the FY 2027 deduction list and floor. No authority
+found addresses negative net pay; a recovery never produces it, and its
+severity stays the developer's ruling. Until #648 is built, a negative
+adjustment shall stay open and reported, and no period shall carry it.
 
 A source module corrects an effect it posted by asking Payroll to withdraw the
 Payroll Input. A pending input shall be cancelled, and a replacement is a new

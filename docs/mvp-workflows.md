@@ -718,8 +718,11 @@ its own: the period that carries it takes it through the normal review chain
 Payroll Hold when the holding period finalizes, or from an authorized user's
 recalculation request after a retroactive rule or Personnel fact.
 
-A negative adjustment is a recovery. It stays open and reported, and no period
-carries it, until #661 records how an Agency may recover an overpayment.
+A negative adjustment is a recovery. A period deducts it only under a final
+and executory COA decision, after statutory deductions and never below the
+net-take-home floor (#661,
+[authorities](research/salary-overpayment-recovery-authorities.md)). Until
+#648 builds this, it stays open and reported, and no period carries it.
 
 Once any payment has been handed off, a void is refused and every correction
 is a Payroll Adjustment.
