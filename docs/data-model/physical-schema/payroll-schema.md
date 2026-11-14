@@ -13,140 +13,192 @@
 ## Scope and rule model
 
 These tables serve one Appointed Personnel Payroll Rule Set. No table carries a
-payroll profile: pay basis is an effective-dated fact of the Employee's
-compensation, with monthly full-time, proportional part-time, and casual
+payroll profile: pay basis is an effective-dated Personnel fact that Payroll
+reads (#619), with monthly full-time, proportional part-time, and casual
 daily-wage variants. JO/COS Service Payments are outside payroll and have no
 table here (#21, #27).
 
-`salary_schedules`, `salary_grade_rates`, and `pay_component_rule_versions`
-hold National Payroll Rule Versions. A version is immutable, keeps its issuing
-authority, source, verification date, effectivity, supersession, and
-applicability, and is activated by an Agency but never copied or overridden
-(#27). Whether a version is a platform-wide record or an Agency-scoped row is
-decided in #328; `agency_id` on those tables is unchanged until then.
+`national_payroll_rule_versions`, `salary_grade_rates`, and `pay_components`
+are platform-wide (#328,
+[ADR 0013](../../adr/0013-platform-wide-national-payroll-rule-versions.md)).
+They have no `agency_id` and no row-level security. `hris_app` holds `SELECT`
+only, and the `hris_operator` load command is the only writer. Every other
+table here is Agency-owned and isolated by RLS.
 
-`pay_components` holds Native Payroll Components and the lawful components
-that accept Authorized Payroll Component Inputs. Tables for Agency Payroll
-Applicability and Authorized Payroll Component Inputs are not specified here
-yet. `docs/data-model/payroll-logical-erd.md` states what each must carry, the
-three variants that fail closed without an authorized input, and the yearly
-GAA revalidation (#27, #43).
+A Payroll Period consumes its sources by cutoff
+([ADR 0014](../../adr/0014-consume-payroll-sources-by-cutoff.md)), and a
+regular period is one calendar month
+([ADR 0015](../../adr/0015-regular-payroll-period-is-one-calendar-month.md)).
+`docs/data-model/payroll-logical-erd.md` states each table's rules, the three
+variants that fail closed without an authorized input, and the yearly GAA
+revalidation (#27, #43).
 
-No table stores a free-form formula or an override of a calculated line (#27,
-#43).
+No table stores a free-form formula, a calculation method, or an override of a
+calculated line (#27, #43).
 
 ---
 
-## 1. Salary Schedules
+## 1. National Payroll Rule Versions
 
 ```sql
-CREATE TABLE salary_schedules (
+CREATE TABLE national_payroll_rule_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  code citext NOT NULL,
+  rule_kind text NOT NULL
+    CHECK (rule_kind IN ('SALARY_SCHEDULE')),
+  code citext NOT NULL UNIQUE,
   name text NOT NULL,
+  issuing_authority text NOT NULL,
   issuance_reference text NOT NULL,
+  source_url text NOT NULL,
+  verified_on date NOT NULL,
+  verified_by text NOT NULL,
   effective_from date NOT NULL,
   effective_to date,
-  status text NOT NULL
-    CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED')),
-  CHECK (effective_to IS NULL OR effective_to >= effective_from),
-  UNIQUE (agency_id, code),
-  UNIQUE (agency_id, id)
+  supersedes_rule_version_id uuid UNIQUE
+    REFERENCES national_payroll_rule_versions (id) ON DELETE RESTRICT,
+  parameters jsonb NOT NULL DEFAULT '{}',
+  loaded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (effective_to IS NULL OR effective_to >= effective_from)
 );
 
 CREATE TABLE salary_grade_rates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  salary_schedule_id uuid NOT NULL,
+  rule_version_id uuid NOT NULL
+    REFERENCES national_payroll_rule_versions (id) ON DELETE RESTRICT,
   salary_grade integer NOT NULL CHECK (salary_grade > 0),
   salary_step integer NOT NULL CHECK (salary_step > 0),
   monthly_rate numeric(19,4) NOT NULL CHECK (monthly_rate > 0),
-  daily_rate_rule jsonb,
-  FOREIGN KEY (agency_id, salary_schedule_id)
-    REFERENCES salary_schedules (agency_id, id),
-  UNIQUE (salary_schedule_id, salary_grade, salary_step),
-  UNIQUE (agency_id, id)
+  UNIQUE (rule_version_id, salary_grade, salary_step)
 );
 ```
 
-Add an exclusion constraint for overlapping active salary schedules. One rule set serves every pay basis, so there is no per-profile schedule (#27).
+Each ticket that adds a rule kind adds its value to the `rule_kind` check and
+its calculator and parameter schema in code. The load validates `parameters`
+against that schema. `SALARY_SCHEDULE` has empty parameters, because its rates
+are rows.
 
-`daily_rate_rule` holds the daily-rate derivation only; its sourced basis is the 22-working-day divisor of RA No. 6758, sec. 7. It does not prorate a partial month of a monthly-paid Employee: no rule is recorded for that case, and it blocks until an authority is found ([authorities](../../research/partial-month-basic-salary-authorities.md)).
+A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
+immutable from load, so there is no status column and no draft. A correction or
+a new issuance is a new row that names the version it supersedes.
+
+The version in effect on a date is the one whose effectivity covers the date
+and that no successor has replaced from that date. The load refuses a version
+that would leave two versions of one kind in effect on the same date. A
+superseded row keeps its own dates, so this is checked by the load, not by an
+exclusion constraint.
+
+There is no derived-rate column. The salary calculator derives the daily rate
+as the monthly rate ÷ 22, the 22-working-day divisor of RA No. 6758, sec. 7. It
+does not prorate a partial month of a monthly-paid Employee: no rule is
+recorded for that case, and it blocks until an authority is found
+([authorities](../../research/partial-month-basic-salary-authorities.md)).
 
 ---
 
-## 2. Pay Components and Rules
+## 2. Pay Component Catalogue
 
 ```sql
 CREATE TABLE pay_components (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  code citext NOT NULL,
+  code citext NOT NULL UNIQUE,
   name text NOT NULL,
   category text NOT NULL
     CHECK (category IN ('EARNING','DEDUCTION','EMPLOYER_SHARE','INFORMATIONAL')),
-  status text NOT NULL CHECK (status IN ('ACTIVE','INACTIVE')),
-  current_rule_version_id uuid,
-  UNIQUE (agency_id, code),
-  UNIQUE (agency_id, id)
-);
-
-CREATE TABLE pay_component_rule_versions (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  pay_component_id uuid NOT NULL,
-  version_no integer NOT NULL CHECK (version_no > 0),
-  calculation_method text NOT NULL
-    CHECK (calculation_method IN ('FIXED','RATE','TABLE')),
-  tax_treatment jsonb NOT NULL,
-  contribution_treatment jsonb NOT NULL,
-  accounting_category text,
-  rule_definition jsonb NOT NULL,
-  effective_from date NOT NULL,
-  effective_to date,
-  status text NOT NULL
-    CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED')),
-  CHECK (effective_to IS NULL OR effective_to >= effective_from),
-  FOREIGN KEY (agency_id, pay_component_id)
-    REFERENCES pay_components (agency_id, id),
-  UNIQUE (pay_component_id, version_no),
-  UNIQUE (agency_id, id)
+  is_conditional boolean NOT NULL,
+  is_gaa_revalidated boolean NOT NULL,
+  accepts_authorized_input boolean NOT NULL,
+  reporting_category text
 );
 ```
 
-A rule definition holds the validated rate, amount, or table for a fixed calculation. It never holds a formula to evaluate, and there is no manual method (#27, #43).
+The catalogue is fixed and loaded with the rule versions. An Agency cannot add
+or change a component, and there is no free-form pay item (#27).
+
+A component's tax and contribution treatment is not a column here. It is
+specified with the contribution and tax calculators (#348, #350, #632).
+
+There is no `pay_component_rule_versions` and no `employee_compensations`
+table. A component's rule is a `national_payroll_rule_versions` row of its
+kind. Grade, step, pay basis, and employment fraction are Personnel facts
+(#619).
 
 ---
 
-## 3. Employee Compensation
+## 3. Agency Payroll Applicability and Authorized Inputs
 
 ```sql
-CREATE TABLE employee_compensations (
+CREATE TABLE agency_payroll_applicabilities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  employee_id uuid NOT NULL,
-  pay_component_id uuid NOT NULL,
-  source_service_segment_id uuid,
-  amount numeric(19,4),
-  rate numeric(19,8),
-  quantity_basis text,
+  pay_component_id uuid NOT NULL REFERENCES pay_components (id),
+  scope text NOT NULL CHECK (scope IN ('AGENCY','EMPLOYEE')),
+  employee_id uuid,
+  authority_document_version_id uuid NOT NULL,
+  funding_reference text NOT NULL,
   effective_from date NOT NULL,
   effective_to date,
-  status text NOT NULL CHECK (status IN ('ACTIVE','INACTIVE')),
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
   CHECK (effective_to IS NULL OR effective_to >= effective_from),
-  CHECK (amount IS NOT NULL OR rate IS NOT NULL),
+  CHECK ((scope = 'EMPLOYEE') = (employee_id IS NOT NULL)),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
-  FOREIGN KEY (agency_id, pay_component_id)
-    REFERENCES pay_components (agency_id, id),
-  FOREIGN KEY (agency_id, source_service_segment_id)
-    REFERENCES service_segments (agency_id, id),
+  FOREIGN KEY (agency_id, authority_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE authorized_payroll_component_inputs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  pay_component_id uuid NOT NULL REFERENCES pay_components (id),
+  scope text NOT NULL CHECK (scope IN ('AGENCY','EMPLOYEE')),
+  employee_id uuid,
+  value_kind text NOT NULL CHECK (value_kind IN ('AMOUNT','RATE','QUANTITY')),
+  value numeric(19,8) NOT NULL,
+  payment_schedule text NOT NULL
+    CHECK (payment_schedule IN ('ONCE','EACH_REGULAR_PERIOD')),
+  authority_document_version_id uuid NOT NULL,
+  source_reference text NOT NULL,
+  effective_from date NOT NULL,
+  effective_to date,
+  status text NOT NULL CHECK (status IN ('RECORDED','APPROVED','CANCELLED')),
+  recorded_by_membership_id uuid NOT NULL,
+  approved_by_membership_id uuid,
+  approved_at timestamptz,
+  consumed_by_payroll_period_id uuid,
+  row_version integer NOT NULL DEFAULT 1,
+  CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CHECK ((scope = 'EMPLOYEE') = (employee_id IS NOT NULL)),
+  CHECK (approved_by_membership_id IS DISTINCT FROM recorded_by_membership_id),
+  CHECK ((status = 'APPROVED') = (approved_at IS NOT NULL)),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, authority_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, approved_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, consumed_by_payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
   UNIQUE (agency_id, id)
 );
 ```
 
-Use exclusion constraints for single-instance components that must not overlap.
+Applicability records for one component and one scope target must not overlap:
+add an exclusion constraint over `(agency_id, pay_component_id, employee_id,
+daterange)`. A trigger requires the component to be conditional and, for a
+GAA-revalidated component, an `effective_to` no later than 31 December of the
+year of `effective_from`. After insert, only `effective_to` may move, and only
+earlier.
+
+A trigger requires an authorized input's component to accept one. An approved
+input changes only by an earlier `effective_to` or by its `ONCE` consumption.
+National ceilings, such as the 20% night-shift rate, are checked by the service
+that records the input (#43).
 
 ---
 
@@ -158,31 +210,49 @@ CREATE TABLE payroll_inputs (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
   source_module text NOT NULL
-    CHECK (source_module IN ('ATTENDANCE','LEAVE','OVERTIME','PERSONNEL')),
+    CHECK (source_module IN ('LEAVE','OVERTIME')),
+  input_kind text NOT NULL
+    CHECK (input_kind IN ('LEAVE_WITHOUT_PAY','UNPAID_DEFICIT_REMAINDER',
+                          'MONETIZATION_EARNING','OVERTIME_HOURS')),
+  source_key citext NOT NULL,
   source_type text NOT NULL,
   source_id uuid NOT NULL,
-  pay_component_id uuid NOT NULL,
   effective_date date NOT NULL,
   quantity numeric(12,4),
   amount numeric(19,4),
   status text NOT NULL
     CHECK (status IN ('PENDING','CONSUMED','CANCELLED','REVERSED')),
   payload_snapshot jsonb NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
+  payload_hash text NOT NULL,
+  accepted_at timestamptz NOT NULL DEFAULT now(),
+  consumed_by_payroll_period_id uuid,
+  CHECK ((input_kind = 'MONETIZATION_EARNING') = (amount IS NOT NULL)),
+  CHECK ((input_kind = 'OVERTIME_HOURS') = (source_module = 'OVERTIME')),
+  CHECK ((status = 'CONSUMED') = (consumed_by_payroll_period_id IS NOT NULL)),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
-  FOREIGN KEY (agency_id, pay_component_id)
-    REFERENCES pay_components (agency_id, id),
-  UNIQUE (agency_id, source_module, source_type, source_id, pay_component_id),
+  FOREIGN KEY (agency_id, consumed_by_payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  UNIQUE (agency_id, source_module, source_key),
   UNIQUE (agency_id, id)
 );
 ```
 
-Consumed inputs are immutable.
+Only Leave and Overtime post here. The source names an input kind and its own
+stable effect key, never a pay component. A retry with the same key and the
+same `payload_hash` returns the existing input, and the same key with a
+different payload is rejected. Payroll returns `ACCEPTED`, matching
+`ALREADY_ACCEPTED`, `REJECTED`, or `RETRYABLE_FAILURE` to the owner command. A
+rejected or retryable request creates no Payroll Input.
 
-There is no manual source. An amount or quantity that no source module owns
-enters only as an Authorized Payroll Component Input (#27). Whether that input
-shares this inbox is decided in #328.
+There is no manual source. An amount, rate, or quantity that no source module
+owns is an Authorized Payroll Component Input in its own table (#27, #328).
+Payroll reads Attendance Payroll Facts and Personnel salary facts through their
+owning services and copies neither here (#329, #619).
+
+An input belongs to no period when accepted. After acceptance a trigger allows
+only the status change and `consumed_by_payroll_period_id`, which the
+finalization transaction sets. Consumed inputs are immutable.
 
 For a Leave Monetization input, Payroll resolves the authoritative salary source
 and computes `amount`; Leave may not supply either as an unrestricted value. The
@@ -190,9 +260,13 @@ immutable `payload_snapshot` must bind the exact Monetization Posting, approved
 per-account credit quantities, stable effect key, valuation date, fixed
 calculator and authority-bound factor, policy and authority Document Versions,
 funding determination, Approval Decisions, resolved salary source and value,
-calculation steps, and evidence-backed rounding rule and result. Payroll returns
-`ACCEPTED`, matching `ALREADY_ACCEPTED`, `REJECTED`, or `RETRYABLE_FAILURE` to
-the owner command. A rejected or retryable request creates no Payroll Input.
+calculation steps, and evidence-backed rounding rule and result. The live
+`payroll_monetization_earning_inputs` table folds into this one in #339.
+
+For leave without pay, `payload_snapshot` holds the day quantity for each Work
+Date of the allocation line. Payroll values each calendar month's days at the
+monthly salary in effect on those Work Dates, ÷ 22 (CSC MC No. 8, s. 2014;
+#328).
 
 ---
 
@@ -203,24 +277,57 @@ CREATE TABLE payroll_periods (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   code citext NOT NULL,
+  run_type text NOT NULL CHECK (run_type IN ('REGULAR','SPECIAL')),
   period_from date NOT NULL,
   period_to date NOT NULL,
   cutoff_at timestamptz NOT NULL,
   payment_date date NOT NULL,
   status text NOT NULL
     CHECK (status IN ('DRAFT','CALCULATING','FOR_REVIEW','CERTIFIED','APPROVED','FINALIZED','VOIDED')),
-  calculation_version integer NOT NULL DEFAULT 1 CHECK (calculation_version > 0),
+  calculation_version integer NOT NULL DEFAULT 0 CHECK (calculation_version >= 0),
   finalized_at timestamptz,
   voided_at timestamptz,
   row_version integer NOT NULL DEFAULT 1,
   CHECK (period_to >= period_from),
-  UNIQUE (agency_id, code, calculation_version),
+  CHECK (
+    run_type <> 'REGULAR'
+    OR (period_from = date_trunc('month', period_from)::date
+        AND period_to = (period_from + interval '1 month - 1 day')::date)
+  ),
+  UNIQUE (agency_id, code),
   UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX payroll_periods_regular_month_key
+  ON payroll_periods (agency_id, period_from)
+  WHERE run_type = 'REGULAR' AND status <> 'VOIDED';
+
+CREATE UNIQUE INDEX payroll_periods_one_open_regular_key
+  ON payroll_periods (agency_id)
+  WHERE run_type = 'REGULAR' AND status NOT IN ('FINALIZED','VOIDED');
+
+CREATE TABLE payroll_period_components (
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  pay_component_id uuid NOT NULL REFERENCES pay_components (id),
+  PRIMARY KEY (payroll_period_id, pay_component_id),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id)
 );
 ```
 
 A period carries no payroll profile. One run covers every pay basis of the
 Appointed Personnel Payroll Rule Set (#27).
+
+`calculation_version` counts the calculations of one run and is not part of the
+key. A regular period is one calendar month, so one unique index refuses a
+duplicate month and the other keeps an Agency to one regular period that is not
+`FINALIZED` or `VOIDED`. A special period may overlap any dates, and a trigger
+requires it to name at least one component before calculation and a regular
+period to name none.
+
+`cutoff_at` changes only while the period is `DRAFT`. The service refuses to
+start a calculation before it.
 
 ---
 
@@ -231,35 +338,55 @@ CREATE TABLE payroll_rule_snapshots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   payroll_period_id uuid NOT NULL,
-  calculation_version integer NOT NULL,
-  salary_schedule_id uuid NOT NULL,
-  tax_rule_version text NOT NULL,
-  contribution_rule_versions jsonb NOT NULL,
-  pay_component_rule_ids jsonb NOT NULL,
+  calculation_version integer NOT NULL CHECK (calculation_version > 0),
+  cutoff_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (agency_id, payroll_period_id)
     REFERENCES payroll_periods (agency_id, id),
-  FOREIGN KEY (agency_id, salary_schedule_id)
-    REFERENCES salary_schedules (agency_id, id),
   UNIQUE (payroll_period_id, calculation_version),
   UNIQUE (agency_id, id)
 );
+
+CREATE TABLE payroll_rule_snapshot_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_rule_snapshot_id uuid NOT NULL,
+  national_payroll_rule_version_id uuid
+    REFERENCES national_payroll_rule_versions (id),
+  agency_payroll_applicability_id uuid,
+  authorized_payroll_component_input_id uuid,
+  CHECK (num_nonnulls(national_payroll_rule_version_id,
+                      agency_payroll_applicability_id,
+                      authorized_payroll_component_input_id) = 1),
+  FOREIGN KEY (agency_id, payroll_rule_snapshot_id)
+    REFERENCES payroll_rule_snapshots (agency_id, id),
+  FOREIGN KEY (agency_id, agency_payroll_applicability_id)
+    REFERENCES agency_payroll_applicabilities (agency_id, id),
+  FOREIGN KEY (agency_id, authorized_payroll_component_input_id)
+    REFERENCES authorized_payroll_component_inputs (agency_id, id),
+  UNIQUE (payroll_rule_snapshot_id, national_payroll_rule_version_id),
+  UNIQUE (payroll_rule_snapshot_id, agency_payroll_applicability_id),
+  UNIQUE (payroll_rule_snapshot_id, authorized_payroll_component_input_id)
+);
 ```
 
-Snapshots are immutable.
+One snapshot is taken per calculation version, when calculation starts. It
+lists every rule version in effect on any date of the period, plus the
+applicability and authorized-input records used. Items are references, not
+copies. Snapshots and their items are immutable.
 
 ---
 
-## 7. Employee Payroll Results
+## 7. Payroll Employee Results and Payroll Holds
 
 ```sql
 CREATE TABLE payroll_employees (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   payroll_period_id uuid NOT NULL,
+  calculation_version integer NOT NULL CHECK (calculation_version > 0),
   employee_id uuid NOT NULL,
-  service_segment_id uuid,
-  salary_grade_rate_id uuid,
+  compensation_basis_snapshot jsonb NOT NULL,
   status text NOT NULL
     CHECK (status IN ('PENDING','CALCULATED','EXCEPTION','REVIEWED','FINALIZED','VOIDED')),
   gross_amount numeric(19,4) NOT NULL DEFAULT 0,
@@ -270,27 +397,63 @@ CREATE TABLE payroll_employees (
     REFERENCES payroll_periods (agency_id, id),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
-  FOREIGN KEY (agency_id, service_segment_id)
-    REFERENCES service_segments (agency_id, id),
-  FOREIGN KEY (agency_id, salary_grade_rate_id)
-    REFERENCES salary_grade_rates (agency_id, id),
-  UNIQUE (payroll_period_id, employee_id),
+  UNIQUE (payroll_period_id, calculation_version, employee_id),
   UNIQUE (agency_id, id)
 );
+
+CREATE TABLE payroll_holds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  payroll_exception_id uuid NOT NULL,
+  reason text NOT NULL CHECK (btrim(reason) <> ''),
+  placed_by_membership_id uuid NOT NULL,
+  placed_at timestamptz NOT NULL DEFAULT now(),
+  lifted_by_membership_id uuid,
+  lifted_at timestamptz,
+  CHECK ((lifted_at IS NULL) = (lifted_by_membership_id IS NULL)),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_exception_id)
+    REFERENCES payroll_exceptions (agency_id, id),
+  FOREIGN KEY (agency_id, placed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, lifted_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id)
+);
+
+CREATE UNIQUE INDEX payroll_holds_one_active_key
+  ON payroll_holds (payroll_period_id, employee_id)
+  WHERE lifted_at IS NULL;
 ```
+
+Results are append-only. A recalculation inserts the next calculation version's
+rows and never deletes or recomputes an earlier version's, because
+certification and the Certified Payroll Review Export bind one exact version
+(#29, #328). Once a calculation completes, only a result's `status` changes.
+
+`compensation_basis_snapshot` freezes what #332 resolved, one entry per
+continuous segment: Service Segment, salary grade, step, pay basis, employment
+fraction, salary rate, and their sources.
+
+A hold is placed or lifted only while the period is `DRAFT`, and only against
+an Employee-level blocking exception. A held Employee has no result in that
+period.
 
 ---
 
-## 8. Payroll Lines
+## 8. Payroll Lines and Their Sources
 
 ```sql
 CREATE TABLE payroll_lines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   payroll_employee_id uuid NOT NULL,
-  pay_component_id uuid NOT NULL,
-  rule_version_id uuid,
-  payroll_input_id uuid,
+  pay_component_id uuid NOT NULL REFERENCES pay_components (id),
+  rule_version_id uuid REFERENCES national_payroll_rule_versions (id),
   line_type text NOT NULL
     CHECK (line_type IN ('EARNING','DEDUCTION','EMPLOYER_SHARE','INFORMATIONAL')),
   quantity numeric(12,4),
@@ -302,19 +465,55 @@ CREATE TABLE payroll_lines (
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
-  FOREIGN KEY (agency_id, pay_component_id)
-    REFERENCES pay_components (agency_id, id),
-  FOREIGN KEY (agency_id, rule_version_id)
-    REFERENCES pay_component_rule_versions (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE payroll_line_sources (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_line_id uuid NOT NULL,
+  payroll_input_id uuid,
+  attendance_payroll_fact_id uuid,
+  authorized_payroll_component_input_id uuid,
+  CHECK (num_nonnulls(payroll_input_id, attendance_payroll_fact_id,
+                      authorized_payroll_component_input_id) = 1),
+  FOREIGN KEY (agency_id, payroll_line_id)
+    REFERENCES payroll_lines (agency_id, id),
   FOREIGN KEY (agency_id, payroll_input_id)
     REFERENCES payroll_inputs (agency_id, id),
-  UNIQUE (agency_id, id)
+  FOREIGN KEY (agency_id, attendance_payroll_fact_id)
+    REFERENCES attendance_payroll_facts (agency_id, id),
+  FOREIGN KEY (agency_id, authorized_payroll_component_input_id)
+    REFERENCES authorized_payroll_component_inputs (agency_id, id),
+  UNIQUE (payroll_line_id, payroll_input_id),
+  UNIQUE (payroll_line_id, attendance_payroll_fact_id),
+  UNIQUE (payroll_line_id, authorized_payroll_component_input_id)
+);
+
+CREATE TABLE payroll_consumed_attendance_facts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_payroll_fact_id uuid NOT NULL,
+  payroll_period_id uuid NOT NULL,
+  consumed_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, attendance_payroll_fact_id)
+    REFERENCES attendance_payroll_facts (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  UNIQUE (agency_id, attendance_payroll_fact_id)
 );
 ```
 
-A trigger prevents update/delete when the parent payroll period is `FINALIZED` or `VOIDED`.
+Lines are inserted with their result. A trigger rejects every `UPDATE` and
+`DELETE` once the calculation that wrote them completes.
 
-A calculated line has no override column. A wrong amount is corrected at its source, or after finalization through `payroll_adjustments` (#27).
+A calculated line has no override column. A wrong amount is corrected at its
+source, or after finalization through `payroll_adjustments` (#27).
+
+A line can rest on several sources, and one source on several lines.
+`payroll_consumed_attendance_facts` is Payroll's own record that a finalized
+payroll consumed a fact: the unique key makes the second finalization fail, and
+Attendance's tables are never written (ADR 0014).
 
 ---
 
@@ -325,11 +524,13 @@ CREATE TABLE contribution_lines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   payroll_employee_id uuid NOT NULL,
-  contribution_type text NOT NULL,
+  contribution_type text NOT NULL
+    CHECK (contribution_type IN ('GSIS','PHILHEALTH','PAGIBIG','EMPLOYEES_COMPENSATION')),
   employee_share numeric(19,4) NOT NULL,
   employer_share numeric(19,4) NOT NULL,
   compensation_base numeric(19,4) NOT NULL,
-  rule_version text NOT NULL,
+  rule_version_id uuid NOT NULL REFERENCES national_payroll_rule_versions (id),
+  CHECK (contribution_type <> 'EMPLOYEES_COMPENSATION' OR employee_share = 0),
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
   UNIQUE (payroll_employee_id, contribution_type)
@@ -342,13 +543,17 @@ CREATE TABLE tax_lines (
   taxable_compensation numeric(19,4) NOT NULL,
   non_taxable_compensation numeric(19,4) NOT NULL,
   withholding_tax numeric(19,4) NOT NULL,
-  rule_version text NOT NULL,
+  rule_version_id uuid NOT NULL REFERENCES national_payroll_rule_versions (id),
   year_to_date_snapshot jsonb NOT NULL,
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
   UNIQUE (payroll_employee_id)
 );
 ```
+
+Employees' Compensation is employer-only, and there is no `OTHER` contribution
+type (#27, #328). A special period writes a tax line for its taxable lines and
+no contribution lines.
 
 Loan lines use a separate table because multiple deductions may exist.
 
@@ -361,18 +566,29 @@ CREATE TABLE payroll_exceptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   payroll_period_id uuid NOT NULL,
-  payroll_employee_id uuid,
+  calculation_version integer NOT NULL,
+  employee_id uuid,
   exception_type text NOT NULL,
   severity text NOT NULL CHECK (severity IN ('WARNING','BLOCKING')),
-  status text NOT NULL CHECK (status IN ('OPEN','ACKNOWLEDGED','RESOLVED','WAIVED')),
+  status text NOT NULL CHECK (status IN ('OPEN','ACKNOWLEDGED','RESOLVED')),
   details jsonb NOT NULL,
+  reason text,
   resolved_by_membership_id uuid,
+  CHECK (status <> 'ACKNOWLEDGED'
+         OR (severity = 'WARNING' AND btrim(reason) <> '')),
   FOREIGN KEY (agency_id, payroll_period_id)
     REFERENCES payroll_periods (agency_id, id),
-  FOREIGN KEY (agency_id, payroll_employee_id)
-    REFERENCES payroll_employees (agency_id, id)
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, resolved_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
 );
 ```
+
+There is no `WAIVED` status: no blocking exception can be waived, and only a
+warning can be acknowledged, with a reason (#27, #328). An exception names the
+Employee, not a result, because a blocked or held Employee may have none.
 
 ```sql
 CREATE TABLE payroll_adjustments (
@@ -393,6 +609,9 @@ CREATE TABLE payroll_adjustments (
 );
 ```
 
+The correction path, including how a held Employee is paid later, is decided in
+#330. `payroll_adjustments` is unchanged until then.
+
 ---
 
 ## 11. Finalization Transaction
@@ -404,11 +623,14 @@ The database transaction must:
 3. verify `row_version` and approved calculation hash;
 4. reject unresolved blocking exceptions;
 5. verify totals against line sums;
-6. mark employee results finalized;
-7. mark payroll period finalized;
-8. mark consumed payroll inputs;
-9. append audit/outbox records;
-10. commit before generating documents or emails.
+6. verify every source the approved version used is still unconsumed, and fail
+   with a blocking exception if another payroll consumed one first;
+7. mark the approved version's employee results finalized;
+8. mark payroll period finalized;
+9. mark its Payroll Inputs and `ONCE` Authorized Payroll Component Inputs
+   consumed, and insert `payroll_consumed_attendance_facts`;
+10. append audit/outbox records;
+11. commit before generating documents or emails.
 
 ---
 
@@ -435,7 +657,9 @@ Files are stored through the shared document service.
 
 ## 13. RLS and Sensitive Access
 
-RLS isolates agencies.
+RLS isolates agencies on every Agency-owned table. The three platform-wide
+tables in sections 1 and 2 have no Agency policy: their protection is the
+grant, `SELECT` only for `hris_app` (ADR 0013).
 
 Application permissions separately control:
 

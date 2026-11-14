@@ -1414,9 +1414,8 @@ Create agency
 
 ## Phase 9 — Government Payroll
 
-- salary schedules;
-- pay components;
-- compensation assignments;
+- platform-wide National Payroll Rule Versions and pay components;
+- Agency Payroll Applicability and Authorized Payroll Component Inputs;
 - payroll inputs;
 - payroll periods;
 - calculations;

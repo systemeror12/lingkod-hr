@@ -614,13 +614,14 @@ Claimed, authorized, actual, certified, credited, used, and paid values are stor
 
 ```mermaid
 flowchart TD
-    A[Create payroll period] --> B[Set cutoff and payment date]
-    B --> C[Snapshot salary schedule, contribution rules, and payroll configuration]
-    C --> D[Collect active service and salary-grade data]
-    D --> E[Collect locked DTR, leave, OT pay, monetization, and adjustments]
+    A[Create regular or special payroll period] --> B[Set cutoff and payment date]
+    B --> B2[Wait for the cutoff]
+    B2 --> G[Set CALCULATING and queue payroll job]
+    G --> C[Snapshot rule versions, applicability, and authorized inputs]
+    C --> D[Read salary facts from Personnel]
+    D --> E[Collect unconsumed Payroll Inputs and attendance facts up to the cutoff]
     E --> F[Collect GSIS, PhilHealth, Pag-IBIG, tax, loan, and agency deductions]
-    F --> G[Set CALCULATING and queue payroll job]
-    G --> H[Calculate basic salary and authorized compensation]
+    F --> H[Calculate basic salary and authorized compensation]
     H --> I[Calculate absence, tardiness, undertime, and leave effects]
     I --> J[Calculate contributions, taxes, loans, and other deductions]
     J --> K[Calculate employee and employer shares]
@@ -628,7 +629,7 @@ flowchart TD
     L --> M[Run variance, negative-pay, missing-data, and duplicate checks]
     M --> N{Blocking exception?}
     N -- Yes --> O[Return to payroll preparer]
-    O --> P[Correct source or create authorized adjustment]
+    O --> P[Correct the source, move the cutoff, or hold the Employee out]
     P --> G
     N -- No --> Q[Set FOR_REVIEW]
     Q --> R[HR certifies personnel and attendance inputs]
@@ -641,9 +642,10 @@ flowchart TD
     W -- No --> O
     W -- Yes --> X[Set APPROVED]
     X --> Y[Finalization transaction verifies unchanged approved version]
-    Y --> Z{Verification passed?}
+    Y --> Y2[Recheck that every source is still unconsumed]
+    Y2 --> Z{Verification passed?}
     Z -- No --> Q
-    Z -- Yes --> AA[Set FINALIZED and make payroll lines immutable]
+    Z -- Yes --> AA[Set FINALIZED, mark sources consumed, and make payroll lines immutable]
     AA --> AB[Generate payslips, registers, and remittance schedules]
     AB --> AC[Queue PDF generation and employee notification]
 ```
@@ -653,6 +655,24 @@ Remainder that Leave sends as a Payroll Input, and reads `ABSENCE` facts from
 Attendance. It never deducts tardiness or undertime from Attendance Payroll
 Facts. An Employee whose tardiness and undertime facts in a consumed publication
 are not all charged raises a blocking exception.
+
+A regular Payroll Period covers one calendar month, and an Agency has one open
+at a time (ADR 0015). A special Payroll Period pays only the components it
+names and reads no attendance. Each calculation writes a new calculation
+version with its own rule snapshot, and earlier versions are kept.
+
+A calculation uses every Payroll Input accepted, and every Attendance Payroll
+Fact published, at or before the cutoff that no finalized payroll has consumed.
+Finalization consumes them, so a fact that arrives after the cutoff waits for
+the next period (ADR 0014). An Attendance Period that ended before the cutoff
+and is not locked is a warning, not a block.
+
+No blocking exception is waived. The Payroll Preparer fixes its source and
+recalculates, moving the cutoff forward when the fix came after it, or places a
+Payroll Hold that leaves the one affected Employee out of the period. A rule
+version loaded after the snapshot blocks certification of a `FOR_REVIEW` period
+until it is recalculated, and only flags a `CERTIFIED` or `APPROVED` one
+(#328).
 
 Correction after finalization:
 
@@ -831,9 +851,11 @@ Overtime
 - overtime_pay_inputs
 
 Payroll
-- salary_schedules
+- national_payroll_rule_versions
 - pay_components
-- employee_compensation
+- agency_payroll_applicabilities
+- authorized_payroll_component_inputs
+- payroll_inputs
 - payroll_periods
 - payroll_employees
 - payroll_lines

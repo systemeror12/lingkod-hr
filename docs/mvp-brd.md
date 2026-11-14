@@ -1080,7 +1080,7 @@ unsupported category-specific rule shall block processing rather than inherit
 plantilla behavior (#27).
 
 JO/COS Service Payments are outside payroll. A Service Payment and its
-contributions and taxes are never a Payroll Employee result or a Payroll Line
+contributions and taxes are never a Payroll Employee Result or a Payroll Line
 (#21, #27).
 
 ## PAY-002 Salary basis
@@ -1112,7 +1112,8 @@ by #43):
 - the salary effect of absence without pay, with tardiness and undertime first
   charged under the government leave rules;
 - PERA;
-- a cash uniform or clothing allowance, after the Agency activates it;
+- a cash uniform or clothing allowance, once the Agency records its Agency
+  Payroll Applicability;
 - commutable RATA for eligible incumbents;
 - mid-year bonus, year-end bonus, and cash gift;
 - overtime pay from approved overtime quantities;
@@ -1128,38 +1129,58 @@ that carries its authority. A missing input shall block the affected line
   schedule, qualification, and supporting authority. A procured group HMO is
   outside payroll;
 - night-shift differential requires the effective-dated percentage the agency
-  head selected within the national 20% ceiling. Approved night hours remain
-  native source quantities;
+  head selected within the national 20% ceiling. Approved night hours are a
+  native source quantity: the worked scheduled-duty minutes between 18:00 and
+  06:00 that Attendance publishes at Attendance Period Lock (RA No. 11701).
+  Night overtime is excluded, because stacking the differential with overtime
+  pay is unexamined (#328);
 - reimbursable RATA requires the approved actual amount. The national
   calculation enforces eligibility and ceilings.
 
 Honoraria, hazard, subsistence, laundry, Magna Carta or other special-law
 benefits, and agency-specific compensation shall enter only as Authorized
 Payroll Component Inputs until a complete applicable authority and calculation
-rule are sourced. Each input shall carry its authority, source, effective
-period, eligible person or population, amount or quantity, and approval. A
-component without lawful authority or an allowed classification is unsupported
-(#27).
+rule are sourced. Any other bonus or incentive shall enter as agency-specific
+compensation with its issuance (#328). A component without lawful authority or
+an allowed classification is unsupported (#27).
+
+An Authorized Payroll Component Input is its own approved, effective-dated
+Agency record, not a Payroll Input. It shall carry its authority, source,
+effective period, the whole Agency or one named Employee, one amount, rate, or
+quantity, whether it is paid once or in every regular Payroll Period, and its
+approval by someone other than its recorder. It needs no separate Agency
+Payroll Applicability (#27, #328).
 
 Salary schedules and tranche rules, and each annual GAA's component
 definitions, eligibility constraints, caps, amounts, and exclusions, are
-immutable, effective-dated National Payroll Rule Versions. An Agency may
-activate an applicable version but shall not copy or override its substance. A
+immutable, effective-dated National Payroll Rule Versions. Each is held once
+for the whole platform, loaded by a platform operator from a reviewed file that
+cites its source, and read-only inside the application. It applies to every
+Agency by its effectivity, and no Agency user authors, copies, activates, or
+overrides it (#27, #328,
+[ADR 0013](adr/0013-platform-wide-national-payroll-rule-versions.md)). A
 conditional component stays disabled until the Agency records its Agency
-Payroll Applicability: the authority, eligible population, funding, and
-effective period (#27).
+Payroll Applicability: the authority, funding, and effective period, for the
+whole Agency or one named Employee (#27, #328).
 
 PERA, the clothing and medical allowances, RATA, the bonuses, the cash gift,
 and their conditions and amounts shall be revalidated against each fiscal
-year's GAA (#43). A missing, expired, or unverified required rule shall block
-the affected calculation. It shall never fall back to an older version, a
-default rate, or a formula (#27, #43).
+year's GAA (#43). A rule or an Agency Payroll Applicability that rests on a
+fiscal year's GAA shall end on 31 December of that year and need a successor
+(#328). A missing or expired required rule shall block the affected
+calculation. It shall never fall back to an older version, a default rate, or a
+formula (#27, #43).
 
 Payroll shall deduct salary for tardiness and undertime only from the Unpaid
 Deficit Remainder that Leave sends as a Payroll Input, never from Attendance
 Payroll Facts. It shall read `ABSENCE` facts from Attendance. An Employee whose
 tardiness and undertime facts in a consumed Attendance Payroll Publication are
 not all charged shall raise a blocking exception.
+
+Leave shall send one Payroll Input for each leave-without-pay allocation line,
+carrying its day quantity per Work Date and no rate. Payroll shall value each
+calendar month's days at the monthly salary in effect on those Work Dates,
+divided by 22 (CSC MC No. 8, s. 2014; #328). Paid leave needs no Payroll Input.
 
 ## PAY-004 Deductions and employer shares
 
@@ -1187,7 +1208,7 @@ calculate external loan interest or amortization (#27).
 
 ## PAY-005 Payroll workflow
 
-Payroll shall include:
+A Payroll Period is one payroll run of one Agency, in these statuses:
 
 ```text
 DRAFT
@@ -1198,6 +1219,54 @@ APPROVED
 FINALIZED
 VOIDED
 ```
+
+A regular Payroll Period shall cover exactly one calendar month and have one
+payment date. The Agency sets only its cutoff and payment date. An Agency that
+pays salary in installments is unsupported
+([ADR 0015](adr/0015-regular-payroll-period-is-one-calendar-month.md)). A
+special Payroll Period shall pay only the components it names. It shall pay no
+basic salary and no contributions, read no attendance, and withhold tax on its
+taxable lines through the same calculator and year-to-date figures as a regular
+period (#328).
+
+A second regular period for a month already covered by one that is not `VOIDED`
+is a duplicate. An Agency shall have at most one regular period that is not
+`FINALIZED` or `VOIDED`.
+
+A calculation shall use every Payroll Input accepted, and every Attendance
+Payroll Fact published, at or before the period's cutoff that no finalized
+payroll has consumed. Each is consumed exactly once, by the first payroll
+finalized after it, so a late fact reduces a later period's pay. Calculation
+shall not start before the cutoff, and the Payroll Preparer may move the cutoff
+only while the period is `DRAFT`
+([ADR 0014](adr/0014-consume-payroll-sources-by-cutoff.md)).
+
+Only Leave and Overtime post Payroll Inputs: leave without pay, the Unpaid
+Deficit Remainder, leave monetization, and certified overtime hours. Payroll
+reads Attendance and Personnel facts through their owning services (#328).
+
+Each calculation shall take one rule snapshot and write a new calculation
+version. Every version's results are kept. The snapshot references every
+National Payroll Rule Version in effect on any date of the period and each
+Agency Payroll Applicability and Authorized Payroll Component Input used.
+
+A rule version loaded after a snapshot shall never recalculate a payroll
+silently (#328):
+
+| Period status           | Effect                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `DRAFT`                 | The next calculation uses it                                                     |
+| `FOR_REVIEW`            | Blocking exception; certification is refused until the period is recalculated    |
+| `CERTIFIED`, `APPROVED` | The snapshot stands and the period is flagged for return or for later correction |
+| `FINALIZED`             | Correction only, through PAY-008                                                 |
+
+No blocking exception shall be waived. A warning, such as a variance, zero net
+pay, or an unlocked Attendance Period that ended before the cutoff, is
+acknowledged with a reason. The Payroll Preparer may place a Payroll Hold, with
+a reason, to leave one Employee who has a blocking exception out of the period
+so the rest can proceed. The held Employee gets no Payroll Employee Result,
+stays on the exception report, and keeps their sources unconsumed. An exception
+that affects the whole period cannot be held out (#328).
 
 ## PAY-006 Segregation of duties
 
