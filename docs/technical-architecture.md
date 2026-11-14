@@ -708,6 +708,16 @@ Events, and outbox records, then consumes the commitments. Any authoritative
 failure rolls back the full Leave Posting and leaves the application approved
 for a recorded retry. External delivery remains asynchronous after commit.
 
+Leave also charges tardiness and undertime. It consumes the outbox event of
+each Attendance Period Lock and Locked Attendance Adjustment, reads the
+publication through Attendance's application service, and creates one immutable
+Attendance Deficit Charge per `TARDINESS` or `UNDERTIME` Attendance Payroll
+Fact. The charge converts minutes through MC41 Table II, posts the covered part
+to the vacation Leave Account, and obtains a Payroll Input for the Unpaid
+Deficit Remainder in the same transaction. Attendance never calls Leave, and
+Payroll never derives the charge itself
+([ADR 0012](adr/0012-charge-each-attendance-deficit-fact-once.md)).
+
 Leave Cancellation is a separate authorized record over an approved or posted
 application. Applying it is another atomic Leave-owned command. Whole
 cancellation creates exact linked reversals; partial cancellation fully reverses

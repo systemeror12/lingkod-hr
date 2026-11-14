@@ -92,7 +92,7 @@ The form must preserve the unit stated by the source. Converting a calendar-day 
 
 ### Deductions, restorations, and adjustments
 
-Direct deductions include approved VL and SL, proportional flexible-schedule absences, and VL deductions for tardiness or undertime. If VL is exhausted, SL may be used for absence; SL may not be used in place of VL for a non-illness absence. An absence beyond earned VL and SL is LWOP. Unauthorized absence receives no salary and is not deducted from earned credits. A pending formal administrative charge blocks VL with pay under section 61. [MC41, sections 50, 56, and 61](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/1998/mc41s1998.pdf).
+Direct deductions include approved VL and SL, proportional flexible-schedule absences, and VL deductions for tardiness or undertime. When SL is exhausted, VL may be used in its place, but SL may not be used in place of VL. An absence beyond earned VL and SL is LWOP. Unauthorized absence receives no salary and is not deducted from earned credits. A pending formal administrative charge blocks VL with pay under section 61. [MC41, sections 50, 56, and 61](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/1998/mc41s1998.pdf).
 
 The following restorations or non-deductions are direct rules:
 
@@ -107,6 +107,52 @@ The following restorations or non-deductions are direct rules:
 These rules support an auditable adjustment entry tied to the legal event, source document, effective date, approving authority, and before-and-after balance. They do not create a general free-form adjustment right. A correction must be traceable to an applicable rule or an authorized agency decision.
 
 The CS Form 6 certification gives the operational as-of pattern: it asks for the date, total VL or SL earned, less the current application, and resulting balance. That is a direct form requirement. It does not define the agency's accounting cut-off, historical reconstruction method, or approval of a disputed opening balance. Those remain agency configuration and record-governance decisions.
+
+### Tardiness, undertime, and the day-fraction conversion
+
+Read from the official CSC scan of [MC41](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/1998/mc41s1998.pdf) for #329. The PDF has no text layer; page numbers are the PDF's.
+
+| Rule       | Text                                                                                                                                                                                                                                                                                                                         | Page  |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| Section 34 | "Tardiness and undertime are deducted from vacation leave credits and shall not be charged against sick leave credits, unless the undertime is for health reasons supported by medical certificate and application for leave."                                                                                               | 18    |
+| Section 50 | An employee absent without approved leave receives no salary for that period, and the absence "shall no longer be deducted from his accumulated leave credits, if there are any."                                                                                                                                            | 20    |
+| Section 56 | "All absences of an official or employee in excess of his accumulated vacation or sick leave credits earned shall be without pay. When an employee had already exhausted his sick leave credits, he can use his vacation leave credits but not vice versa."                                                                  | 20–21 |
+| Section 30 | Employees on flexible working hours who render less than eight hours in a day but complete 40 hours in a week are deducted "only the minimum number of hours required to be served for a day but which was not served. Any absence incurred must be charged in proportion to the number of hours required for a day's work." | 17    |
+| Table II   | "Table showing conversion of working hours/minutes into fractions of a day. Based on 8-Hour Day."                                                                                                                                                                                                                            | 15    |
+
+Table II, transcribed in full:
+
+| Hours | Equivalent day |
+| ----: | -------------: |
+|     1 |           .125 |
+|     2 |           .250 |
+|     3 |           .375 |
+|     4 |           .500 |
+|     5 |           .625 |
+|     6 |           .750 |
+|     7 |           .875 |
+|     8 |          1.000 |
+
+| Min |  Day | Min |  Day | Min |  Day | Min |  Day | Min |  Day | Min |  Day |
+| --: | ---: | --: | ---: | --: | ---: | --: | ---: | --: | ---: | --: | ---: |
+|   1 | .002 |  11 | .023 |  21 | .044 |  31 | .065 |  41 | .085 |  51 | .106 |
+|   2 | .004 |  12 | .025 |  22 | .046 |  32 | .067 |  42 | .087 |  52 | .108 |
+|   3 | .006 |  13 | .027 |  23 | .048 |  33 | .069 |  43 | .090 |  53 | .110 |
+|   4 | .008 |  14 | .029 |  24 | .050 |  34 | .071 |  44 | .092 |  54 | .112 |
+|   5 | .010 |  15 | .031 |  25 | .052 |  35 | .073 |  45 | .094 |  55 | .115 |
+|   6 | .012 |  16 | .033 |  26 | .054 |  36 | .075 |  46 | .096 |  56 | .117 |
+|   7 | .015 |  17 | .035 |  27 | .056 |  37 | .077 |  47 | .098 |  57 | .119 |
+|   8 | .017 |  18 | .037 |  28 | .058 |  38 | .079 |  48 | .100 |  58 | .121 |
+|   9 | .019 |  19 | .040 |  29 | .060 |  39 | .081 |  49 | .102 |  59 | .123 |
+|  10 | .021 |  20 | .042 |  30 | .062 |  40 | .083 |  50 | .104 |  60 | .125 |
+
+Every printed value equals minutes ÷ 480 at three decimal places, with an exact half rounded down: 6, 18, 30, 42 and 54 minutes print .012, .037, .062, .087 and .112. A quantity over 60 minutes adds its whole-hours row to its remaining-minutes row, so 90 minutes is .125 + .062 = .187. The printed values are the rule; the division is only a check on the transcription.
+
+What MC41 does not say:
+
+- which quantity is converted: each day's tardiness or undertime, or a period total. One minute late on 22 days is 22 × .002 = .044 day converted daily and .046 day converted as one 22-minute total. LingkodHR converts each Attendance Payroll Fact, a Project Decision ([ADR 0012](../adr/0012-charge-each-attendance-deficit-fact-once.md));
+- how minutes convert on a day whose required duty is not eight hours, such as a compressed-workweek day or part-time service. Table II is headed "Based on 8-Hour Day", and section 30 states a proportion for flexible hours without a table. No authority was located. This blocks charging those Work Dates (#654); and
+- whether a salary deduction for tardiness or undertime beyond vacation leave credits uses the same day fraction. Section 56 makes the excess without pay; the salary formula is Payroll's (#341).
 
 ### Forfeiture, expiration, and terminal events
 

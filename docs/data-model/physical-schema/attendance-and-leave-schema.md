@@ -1036,6 +1036,87 @@ release one commitment and create a linked successor only when the successor is
 in the same account and has a smaller quantity. Other replacement requires a new
 Leave Application Version and recertification.
 
+### Attendance Deficit Charges
+
+```sql
+CREATE TABLE attendance_deficit_charges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  attendance_payroll_fact_id uuid NOT NULL,
+  work_date date NOT NULL,
+  deficit_type text NOT NULL CHECK (deficit_type IN ('TARDINESS','UNDERTIME')),
+  deficit_minutes integer NOT NULL CHECK (deficit_minutes >= 0),
+  expected_minutes integer NOT NULL CHECK (expected_minutes > 0),
+  leave_account_id uuid NOT NULL,
+  policy_version_id uuid NOT NULL,
+  converted_quantity numeric(12,4) NOT NULL CHECK (converted_quantity >= 0),
+  charged_quantity numeric(12,4) NOT NULL CHECK (charged_quantity >= 0),
+  unpaid_quantity numeric(12,4) NOT NULL CHECK (unpaid_quantity >= 0),
+  leave_ledger_entry_id uuid,
+  payroll_input_id uuid,
+  supersedes_charge_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (converted_quantity = charged_quantity + unpaid_quantity),
+  CHECK ((charged_quantity > 0) = (leave_ledger_entry_id IS NOT NULL)),
+  CHECK ((unpaid_quantity > 0) = (payroll_input_id IS NOT NULL)),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, attendance_payroll_fact_id)
+    REFERENCES attendance_payroll_facts (agency_id, id),
+  FOREIGN KEY (agency_id, leave_account_id)
+    REFERENCES leave_accounts (agency_id, id),
+  FOREIGN KEY (agency_id, policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
+  FOREIGN KEY (agency_id, leave_ledger_entry_id)
+    REFERENCES leave_ledger_entries (agency_id, id),
+  FOREIGN KEY (agency_id, supersedes_charge_id)
+    REFERENCES attendance_deficit_charges (agency_id, id) ON DELETE RESTRICT,
+  UNIQUE (agency_id, attendance_payroll_fact_id),
+  UNIQUE (agency_id, supersedes_charge_id),
+  UNIQUE (agency_id, id)
+);
+```
+
+An Attendance Deficit Charge is Leave's immutable record of one `TARDINESS` or
+`UNDERTIME` Attendance Payroll Fact (#329,
+[ADR 0012](../../adr/0012-charge-each-attendance-deficit-fact-once.md)). Leave
+creates it after an Attendance Period Lock or Locked Attendance Adjustment, from
+the lock's outbox event, reading the publication through Attendance's
+application service. `ABSENCE` facts get no charge.
+
+`converted_quantity` is the fact's minutes through CSC MC No. 41, s. 1998,
+Table II: the whole-hours row plus the remaining-minutes row, at three decimal
+places. The table is fixed in code with its authority reference and is
+transcribed in
+[the leave research](../../research/authoritative-leave-credit-and-mandatory-leave-rules.md).
+The charge is made only when `expected_minutes` is 480 and a vacation Leave
+Policy Version and Leave Account apply on the Work Date. Otherwise no row is
+written, the fact stays uncharged with its reason, and a rerun charges it once
+the missing fact exists (#654).
+
+Under the vacation Leave Account lock, and in Work Date order for the Employee,
+the service computes available credits as the posted balance as of the Work
+Date, or the current posted balance when lower, less active commitments.
+`charged_quantity` is the part they cover, posted as one ledger entry whose
+source is the charge, whose quantity is the negated charged part, and whose
+`effective_date` is the Work Date. `unpaid_quantity` is the Unpaid Deficit
+Remainder. Leave obtains one Payroll Input for it through Payroll's application
+service in the same transaction and stores the returned identifier. The
+quantity sent is `unpaid_quantity` in days with the fact, minutes, and
+conversion as provenance, never a rate or amount. A `REJECTED` or
+`RETRYABLE_FAILURE` answer rolls back that Employee's charges.
+
+For each changed fact in an adjustment publication, the service reverses the
+earlier charge's ledger entry and writes a successor charge from the corrected
+minutes with `supersedes_charge_id` set, decided against the credits available
+then. Payroll receives a linked correcting input for the earlier remainder
+through its correction contract (#328). Nothing else changes a charge: later
+ledger entries never reopen it.
+
+Attach the immutable mutation-prevention trigger to `attendance_deficit_charges`.
+`hris_app` holds `SELECT, INSERT` under the Agency policy with forced RLS.
+
 ---
 
 ## 9. Leave Applications

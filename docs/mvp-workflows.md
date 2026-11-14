@@ -357,7 +357,7 @@ flowchart TD
     AJ -- Yes --> XA
 ```
 
-An ordinary daytime DTR presents semantic events through the familiar AM In, AM Out, PM In, and PM Out slots. Overnight duty remains one Work Date beginning on the local date of `TIME_IN`; its view uses duty and break labels with actual dates and times. A preview is explicitly unfinalized. Each lock creates separately retained Finalized Daily Time Records and an idempotent Attendance Payroll Publication. A locked correction produces successor Attendance Day and Attendance Period Versions, corrected DTRs, and a delta publication without changing the predecessor.
+An ordinary daytime DTR presents semantic events through the familiar AM In, AM Out, PM In, and PM Out slots. Overnight duty remains one Work Date beginning on the local date of `TIME_IN`; its view uses duty and break labels with actual dates and times. A preview is explicitly unfinalized. Each lock creates separately retained Finalized Daily Time Records and an idempotent Attendance Payroll Publication. A locked correction produces successor Attendance Day and Attendance Period Versions, corrected DTRs, and a delta publication without changing the predecessor. Leave charges each publication's tardiness and undertime facts to vacation leave (WF-008).
 
 Complete events on a rest day create Unscheduled Service, not approved overtime or COC. Outside-schedule and statutory-night-window minutes remain separate factual candidate-hours handoffs to Phase 8. No biometric import exists in MVP.
 
@@ -480,6 +480,39 @@ the Agency for a new year. The Leave workspace prompts the Employee; Phase 7
 sends no notification. An assessment never posts forfeiture, and Phase 7 does
 not post forfeiture at all, so the section 25 exigency cancellation and
 retirement or resignation exceptions are not evaluated.
+
+### Tardiness and undertime charges
+
+```mermaid
+flowchart TD
+    A[Attendance Period Lock or Locked Attendance Adjustment writes its outbox event] --> B[Leave reads the publication's TARDINESS and UNDERTIME facts through Attendance]
+    B --> C{Adjustment publication?}
+    C -- Yes --> D[Reverse the earlier charge's ledger entry for each changed fact]
+    C -- No --> E{Expected duty is 480 minutes, and a vacation policy and account apply?}
+    D --> E
+    E -- No --> F[Leave the fact uncharged with its reason]
+    E -- Yes --> G[Convert minutes through MC41 Table II]
+    G --> H[Lock the vacation Leave Account and compute available credits]
+    H --> I[Post one negative ledger entry for the covered part]
+    I --> J{Unpaid Deficit Remainder?}
+    J -- Yes --> K[Send one Payroll Input through Payroll's application service]
+    J -- No --> L[Record the Attendance Deficit Charge]
+    K --> L
+    F --> M[Payroll raises a blocking exception for that Employee]
+```
+
+Leave charges each `TARDINESS` or `UNDERTIME` Attendance Payroll Fact once, in
+Work Date order, with no human step (MC41 section 34;
+[ADR 0012](adr/0012-charge-each-attendance-deficit-fact-once.md)). Available
+credits are the vacation Leave Account's posted balance as of the Work Date, or
+its current posted balance when lower, less active Leave Credit Commitments.
+The charge, its ledger entry, its Payroll Input, and its Audit Events commit
+together for an Employee or not at all, and a retry returns the existing
+charge. `ABSENCE` facts are never charged (section 50), and sick leave is never
+charged: undertime for health reasons is an ordinary sick Leave Application
+over those hours. A charge is decided once; only an adjustment publication
+reverses and replaces it. A fact Leave cannot convert stays uncharged until a
+rerun finds the missing authority or account (#654).
 
 ### Leave monetization
 
@@ -611,6 +644,12 @@ flowchart TD
     AA --> AB[Generate payslips, registers, and remittance schedules]
     AB --> AC[Queue PDF generation and employee notification]
 ```
+
+Payroll deducts salary for tardiness and undertime only from the Unpaid Deficit
+Remainder that Leave sends as a Payroll Input, and reads `ABSENCE` facts from
+Attendance. It never deducts tardiness or undertime from Attendance Payroll
+Facts. An Employee whose tardiness and undertime facts in a consumed publication
+are not all charged raises a blocking exception.
 
 Correction after finalization:
 

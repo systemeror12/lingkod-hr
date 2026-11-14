@@ -189,6 +189,15 @@ Decisions, resolved highest-monthly-salary source and value, calculation steps,
 rounding authority and result, and owner-service outcome. Missing authoritative
 valuation, salary-component, allocation, or rounding facts reject the input.
 
+For an Unpaid Deficit Remainder, `source_module` is `LEAVE`, `source_id` is the
+Attendance Deficit Charge, and `quantity` is the remainder in days.
+`payload_snapshot` freezes the Attendance Payroll Fact, its minutes, the Work
+Date, and the MC41 Table II conversion. Leave supplies no rate or amount.
+Payroll takes no tardiness or undertime salary effect from Attendance Payroll
+Facts, reads `ABSENCE` facts from Attendance, and raises a blocking exception
+for an Employee whose facts in a consumed publication are not all charged
+(#329, ADR 0012).
+
 **Deletion behavior:** Cancel/reverse; never edit after consumption.
 
 ## `payroll_periods`

@@ -661,7 +661,7 @@ Submitting an Attendance Period for review shall create an immutable Attendance 
 
 An HR Officer shall approve an Attendance Period Version, and a different HR Administrator shall lock it. Lock shall fail closed unless Attendance Period Reconciliation proves complete applicability, current approved submissions and Attendance Day versions, no unresolved exceptions or corrections, unchanged source bindings, valid routed authority, and matching DTR and payroll-publication counts and minute totals.
 
-Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects.
+Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects, and Leave charges tardiness and undertime facts through Attendance Deficit Charges.
 
 A Locked Attendance Adjustment shall create and lock a complete successor Attendance Period Version rather than reopen its predecessor. Its adjustment publication shall link the predecessor, omit unchanged facts, and state each changed fact's prior value, corrected value, and nonnegative `INCREASE` or `DECREASE` difference. Outside-schedule and statutory-night-window minutes shall remain separate factual candidate-hours handoffs to Overtime and COC processing.
 
@@ -737,6 +737,36 @@ The balance contract shall distinguish:
 - active Leave Credit Commitments, which never enter the ledger; and
 - currently available credits after those commitments and the transaction under
   review.
+
+Tardiness and undertime shall be charged to vacation leave through Attendance
+Deficit Charges (CSC MC No. 41, s. 1998, section 34;
+[ADR 0012](adr/0012-charge-each-attendance-deficit-fact-once.md)). After each
+Attendance Period Lock or Locked Attendance Adjustment, Leave shall read the
+Attendance Payroll Publication through Attendance's application service and,
+with no human step, create one immutable charge for each `TARDINESS` or
+`UNDERTIME` Attendance Payroll Fact, unique by that fact. An `ABSENCE` fact
+shall never be charged (section 50).
+
+Each charge shall convert the fact's minutes to a fraction of a day through
+MC No. 41 Table II and draw on the Employee's vacation Leave Account in Work
+Date order: the posted balance as of the Work Date, or the current posted
+balance when lower, less active Leave Credit Commitments. The covered part
+shall post one negative Leave Ledger Entry effective on the Work Date. The
+uncovered part shall be the Unpaid Deficit Remainder (section 56), which Leave
+shall send to Payroll as one Payroll Input in the same transaction. Sick leave
+shall never be charged; undertime for health reasons shall be an ordinary sick
+Leave Application over those hours.
+
+A charge shall be decided once. A later credit posting, restoration, or
+cancellation shall not reopen it. Only an adjustment publication shall change
+it: Leave shall reverse the earlier charge's ledger entry, create a successor
+charge from the corrected minutes, and send Payroll a linked correcting input.
+
+A fact shall stay uncharged, with its reason, when its Work Date's expected
+duty is not 480 minutes or when the Employee has no applicable vacation Leave
+Policy Version and Leave Account. No authority located states the conversion
+for those days (#654). Rerunning the charge shall pick the fact up once the
+missing fact exists.
 
 Ordinary vacation and sick leave rules, category-specific units, transfers,
 restorations, forfeitures, and Agency configuration boundaries are documented in
@@ -1055,6 +1085,12 @@ The system shall support effective-dated:
 - deductions for absence, tardiness, and undertime;
 - loans and agency deductions;
 - adjustments and refunds.
+
+Payroll shall deduct salary for tardiness and undertime only from the Unpaid
+Deficit Remainder that Leave sends as a Payroll Input, never from Attendance
+Payroll Facts. It shall read `ABSENCE` facts from Attendance. An Employee whose
+tardiness and undertime facts in a consumed Attendance Payroll Publication are
+not all charged shall raise a blocking exception.
 
 ## PAY-004 Deductions and employer shares
 
