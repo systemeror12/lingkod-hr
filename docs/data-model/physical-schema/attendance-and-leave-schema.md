@@ -1090,10 +1090,14 @@ Table II: the whole-hours row plus the remaining-minutes row, at three decimal
 places. The table is fixed in code with its authority reference and is
 transcribed in
 [the leave research](../../research/authoritative-leave-credit-and-mandatory-leave-rules.md).
-The charge is made only when `expected_minutes` is 480 and a vacation Leave
-Policy Version and Leave Account apply on the Work Date. Otherwise no row is
-written, the fact stays uncharged with its reason, and a rerun charges it once
-the missing fact exists (#654).
+The charge is made only when `expected_minutes` is 480, the only duty Table II
+covers, and a vacation Leave Policy Version and Leave Account apply on the Work
+Date. Otherwise no row is written. The fact stays uncharged with its reason: a
+compressed-workweek day of 600 expected minutes (MC 6 s. 2026 §V.B.2.6 states no
+divisor for late or undertime), a part-time day (MC 41 Rule XVI §2 states an
+annual proportion only), a flexible-hours tardiness or undertime fact (MC 41
+§30 covers absence incurred), or another duty. A rerun charges it once a
+decision names the rule (#654).
 
 Under the vacation Leave Account lock, and in Work Date order for the Employee,
 the service computes available credits as the posted balance as of the Work

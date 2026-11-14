@@ -754,8 +754,8 @@ POSTED
 - An Attendance Deficit Charge is system-created after an Attendance Period
   Lock or Locked Attendance Adjustment, one per `TARDINESS` or `UNDERTIME`
   Attendance Payroll Fact and unique by that fact (MC41 section 34, ADR 0012).
-  It converts the fact's minutes through MC41 Table II and charges the vacation
-  Leave Account only. `ABSENCE` facts and sick leave are never charged.
+  It converts the fact's minutes through MC41 Table II on a Work Date with 480
+  expected minutes and charges the vacation Leave Account only. `ABSENCE` facts and sick leave are never charged.
 - A charge draws on the posted vacation balance as of the Work Date, or the
   current posted balance when lower, less active commitments, in Work Date
   order. The covered part is one negative Leave Ledger Entry effective on the
@@ -766,11 +766,19 @@ POSTED
   it. Only an adjustment publication replaces it, through an exact reversal of
   its ledger entry, a linked successor charge, and a linked correcting Payroll
   Input.
-- A fact stays uncharged with a recorded reason when its Work Date's expected
-  duty is not 480 minutes or when no vacation Leave Policy Version and Leave
-  Account apply (#654). No conversion is guessed. Leave reports each
-  publication's uncharged facts, and Payroll treats them as a blocking
-  exception for the Employee.
+- A fact converts only on a Work Date with 480 expected minutes. Any other fact
+  stays uncharged with a recorded reason that names its gap: a compressed-workweek
+  day of 600 minutes, a part-time day, a flexible-hours tardiness or undertime
+  fact, or no applicable vacation Leave Policy Version and Leave Account (#654).
+  No conversion is guessed. Leave reports each publication's uncharged facts,
+  and Payroll treats them as a blocking exception for the Employee.
+- A requested day on a compressed or flexible schedule takes its unit from the
+  rule for that schedule. A full day of VL or SL on a four-workday, 10-hour
+  compressed day is 1.25 credit days, and 1 day after the agency reverts to an
+  8-hour day (CSC MC No. 6, s. 2026, Policies section V.B.2.6). A flexible-hours
+  absence is charged in proportion to the hours required for that day (MC41
+  section 30). A day with no stated unit, such as part-time service, fails
+  closed (#654).
 - Commitments do not silently expire. A route interruption blocks progression
   until authorized rerouting creates a new Leave Application Version and
   recertification, unless an authoritative policy provides a different result.

@@ -747,8 +747,9 @@ with no human step, create one immutable charge for each `TARDINESS` or
 `UNDERTIME` Attendance Payroll Fact, unique by that fact. An `ABSENCE` fact
 shall never be charged (section 50).
 
-Each charge shall convert the fact's minutes to a fraction of a day through
-MC No. 41 Table II and draw on the Employee's vacation Leave Account in Work
+Each charge on a Work Date with 480 expected minutes shall convert the fact's
+minutes to a fraction of a day through MC No. 41 Table II and draw on the
+Employee's vacation Leave Account in Work
 Date order: the posted balance as of the Work Date, or the current posted
 balance when lower, less active Leave Credit Commitments. The covered part
 shall post one negative Leave Ledger Entry effective on the Work Date. The
@@ -762,11 +763,12 @@ cancellation shall not reopen it. Only an adjustment publication shall change
 it: Leave shall reverse the earlier charge's ledger entry, create a successor
 charge from the corrected minutes, and send Payroll a linked correcting input.
 
-A fact shall stay uncharged, with its reason, when its Work Date's expected
-duty is not 480 minutes or when the Employee has no applicable vacation Leave
-Policy Version and Leave Account. No authority located states the conversion
-for those days (#654). Rerunning the charge shall pick the fact up once the
-missing fact exists.
+A fact shall convert only on a Work Date with 480 expected minutes. Any other
+fact shall stay uncharged, with its reason, as shall a fact when the Employee
+has no applicable vacation Leave Policy Version and Leave Account. The primary
+texts state no conversion for a compressed-workweek day of 600 minutes, a
+part-time day, or a flexible-hours tardiness or undertime fact (#654).
+Rerunning the charge shall pick the fact up once a decision names the rule.
 
 Ordinary vacation and sick leave rules, category-specific units, transfers,
 restorations, forfeitures, and Agency configuration boundaries are documented in
@@ -813,6 +815,14 @@ accepted assessment, or route binding shall create a new Leave Application
 Version and restart evaluation, certification, and routing. Reviewer comments,
 task assignment, notification delivery, and display-only corrections remain
 Audit Events and do not create a new version.
+
+A requested day on a compressed or flexible schedule shall take its unit from
+the rule the leave research records for that schedule. A full day of VL or SL
+on a four-workday, 10-hour compressed day is 1.25 credit days, and 1 day after
+reversion to an 8-hour day (CSC MC No. 6, s. 2026, Policies section V.B.2.6). A
+flexible-hours absence is charged in proportion to the hours required for that
+day (MC No. 41, section 30). Where no unit is stated, such as for part-time
+service, submission shall fail closed (#654).
 
 Structured Leave records are authoritative. Generated and uploaded official
 forms are immutable Document Versions linked to the exact application stage.
