@@ -279,6 +279,7 @@ Create:
    certification, funding, posting, adjustment, and line tables
 10. the Terminal Leave Input assessment, snapshot, line, and handoff-outcome
     tables
+11. `attendance_deficit_charges`, once `payroll_inputs` exists (#340)
 
 Payroll Input identifiers remain application-validated until the Payroll tables
 exist. Separation source identities remain polymorphic and are validated through
@@ -286,7 +287,8 @@ the Separation application service.
 
 Attach immutable triggers to ledger entries, terminal commitments, submitted
 versions, material assessments and determinations, certifications, postings,
-applied adjustments, terminal input snapshots, and append-only handoff outcomes.
+applied adjustments, Attendance Deficit Charges, terminal input snapshots, and
+append-only handoff outcomes.
 
 ---
 

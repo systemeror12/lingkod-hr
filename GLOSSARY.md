@@ -578,6 +578,14 @@ _Avoid_: Balance field, leave application
 An immutable, source-linked posting that changes one Leave Account by a signed quantity on an effective date. Corrections use linked reversals or adjustments rather than editing an entry.
 _Avoid_: Pending reservation, editable leave balance
 
+**Attendance Deficit Charge**:
+Leave's immutable record of how one tardiness or undertime Attendance Payroll Fact was converted to vacation leave days and split between a Leave Ledger Entry and an Unpaid Deficit Remainder. An absence is never charged, and only an adjustment publication replaces a charge.
+_Avoid_: Tardiness deduction, undertime penalty, late charge
+
+**Unpaid Deficit Remainder**:
+The part of an Attendance Deficit Charge's converted days that the Employee's available vacation leave credits did not cover. Leave hands it to Payroll as a Payroll Input; it carries no rate or amount.
+_Avoid_: Leave without pay, salary deduction, uncharged minutes
+
 **Leave Credit Commitment**:
 A certified claim against a Leave Account for an unposted request. It reduces currently available credits without changing the posted ledger balance and is consumed by posting or released when its certified basis no longer authorizes the claim; an authorized partial approval may replace it only with a linked, smaller successor.
 _Avoid_: Pending ledger entry, posted deduction, submitted request hold
