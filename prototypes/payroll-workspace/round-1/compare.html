@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payroll workspace · compare A, B, C · #327</title>
+<style>
+  :root { --fg: var(--foreground, #121a26); --mut: var(--muted-foreground, #566175); --line: var(--border, #d4d9e1); --box: var(--card, #ffffff); --link: var(--primary, #1a4fa0); --r: var(--radius, 6px); }
+  body { margin: 0; color: var(--fg); font-family: var(--font-sans, 'Noto Sans', system-ui, sans-serif); font-size: 14px; line-height: 1.5; }
+  body.standalone { background: #f2f4f7; padding: 24px 16px 64px; }
+  .wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 28px; }
+  h1 { font-size: 20px; line-height: 1.25; margin: 0 0 6px; }
+  h2 { font-size: 16px; margin: 0; }
+  h3 { font-size: 13px; margin: 0 0 4px; }
+  p { margin: 0; }
+  a { color: var(--link); font-weight: 600; }
+  .mut { color: var(--mut); }
+  .small { font-size: 12.5px; }
+  .variant { display: grid; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .vhead { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+  .letter { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--fg); font-weight: 700; font-size: 13px; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  figure { margin: 0; display: grid; gap: 6px; }
+  figure img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--r); background: #fff; }
+  figcaption { font-size: 12.5px; color: var(--mut); }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  thead th { font-size: 12.5px; }
+  tbody th { font-weight: 600; width: 22%; }
+  .sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .chip { display: grid; gap: 4px; font-size: 12px; }
+  .chip i { display: block; height: 36px; border-radius: var(--r); border: 1px solid var(--line); }
+  .chip code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+  .box { background: var(--box); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 12px; }
+  .font { font-family: 'Noto Sans Variable', 'Noto Sans', var(--font-sans, sans-serif); font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+</style>
+</head>
+<body class="standalone">
+<div class="wrap">
+  <header>
+    <h1>Payroll workspace: three directions for #327</h1>
+    <p class="mut">All three keep the existing workbench theme, shell, and the Tree/Form/Kanban pattern accepted for Attendance, Leave, and Overtime. They share one sample payroll and the same screens for results, Payroll Lines, exceptions, reviews, payslips, the Payment Export, and reports. What differs is where those screens live and where each actor starts.</p>
+  </header>
+
+  <section class="variant" aria-labelledby="va">
+    <div class="vhead"><span class="letter">A</span><h2 id="va">Period file</h2><a href="a.html">Open A</a></div>
+    <p>The Payroll Period is the one record from draft to disbursement, as the Overtime Authority is. Its Form has eight tabs: Summary, Employees, Exceptions, Review, Payslips, Payment, Reports, History. An Employee result opens inside the Employees tab.</p>
+    <div class="shots">
+      <figure><img src="shots/a-1.png" alt="Variant A: the November payroll file, certified, with the stage rail and eight tabs" width="1440" height="900"><figcaption>The period file as the Budget Officer, after certification. The stage rail sits above every tab.</figcaption></figure>
+      <figure><img src="shots/a-2.png" alt="Variant A: the Employee payslip with one line expanded to show how it was reached" width="1440" height="900"><figcaption>My Payslips: a list, then a statement where each line expands to its quantity, rate, rule, and source.</figcaption></figure>
+    </div>
+    <div class="two">
+      <div><h3>Good at</h3><ul><li>One place holds the whole story of a payroll, so six actors look at the same record.</li><li>Two Payroll entries in the navigation.</li><li>Matches the accepted Overtime direction most closely.</li></ul></div>
+      <div><h3>Costs</h3><ul><li>Eight tabs, and Payslips, Payment, and Reports are empty until finalization.</li><li>No view across payrolls: one Employee over several months, or every rejected Payment Instruction.</li><li>Each actor has to open the period to learn whether it is waiting on them.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="variant" aria-labelledby="vb">
+    <div class="vhead"><span class="letter">B</span><h2 id="vb">Work desk</h2><a href="b.html">Open B</a></div>
+    <p>Each actor lands on Payroll Work: what every open payroll is waiting on, grouped by the function that holds it, with their own work first. An item opens one page with only what that step needs. The Payroll Period becomes a read-only record.</p>
+    <div class="shots">
+      <figure><img src="shots/b-1.png" alt="Variant B: the Payroll Work list as the Budget Officer, with work waiting on them listed first" width="1440" height="900"><figcaption>Payroll Work as the Budget Officer. Kanban groups the same items by function.</figcaption></figure>
+      <figure><img src="shots/b-2.png" alt="Variant B: the Employee's latest payslip on one page with a month picker" width="1440" height="900"><figcaption>My Payslip: the latest one opens straight away, with a plain sentence under each amount.</figcaption></figure>
+    </div>
+    <div class="two">
+      <div><h3>Good at</h3><ul><li>Answers "what is waiting on me?" without opening anything, which suits the four reviewers who touch a payroll once.</li><li>Shows the segregation rule directly: one column per function.</li><li>A step page is short: no tabs to hunt through.</li></ul></div>
+      <div><h3>Costs</h3><ul><li>An Agency has one open regular period at a time, so the list is usually a handful of rows.</li><li>The period's story is split between the work page and the read-only record.</li><li>"Work" is derived, not stored. It is a new concept the Overtime direction set aside.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="variant" aria-labelledby="vc">
+    <div class="vhead"><span class="letter">C</span><h2 id="vc">Linked registers</h2><a href="c.html">Open C</a></div>
+    <p>Each record type is its own register across payrolls, as Leave keeps its ledger apart from applications: Payroll Periods, Employee Results, Payroll Exceptions, Payslips, Payment Exports, Registers &amp; Reports. The period Form keeps only Summary, Review, and History, and links into each register filtered to itself.</p>
+    <div class="shots">
+      <figure><img src="shots/c-1.png" alt="Variant C: a slim period form with tiles linking to five registers" width="1440" height="900"><figcaption>The period as the Budget Officer: three tabs, and "Records of this payroll" links to each register.</figcaption></figure>
+      <figure><img src="shots/c-2.png" alt="Variant C: the Employee payslip's second tab listing every line with its source" width="1440" height="900"><figcaption>My Payslips: a plain statement, with a second tab for the full table of lines and sources.</figcaption></figure>
+    </div>
+    <div class="two">
+      <div><h3>Good at</h3><ul><li>Views across payrolls: one Employee's results by month, every open exception, every unsettled instruction.</li><li>Each register gets its own filters, Kanban, and Previous/Next.</li><li>The Cashier and the Payroll Approver each have a destination that is only theirs.</li></ul></div>
+      <div><h3>Costs</h3><ul><li>Six Payroll entries in the navigation before Inputs, Rule versions, Adjustments, and Legacy comparison are added.</li><li>Working one payroll means hopping between registers and keeping the period filter in mind.</li><li>Commands that belong to one payroll, such as releasing all its payslips, sit awkwardly in a list of many.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="variant" aria-labelledby="vt">
+    <h2 id="vt">Where each job happens</h2>
+    <div class="scroll"><table>
+      <thead><tr><th scope="col">Job from the issue</th><th scope="col">A · Period file</th><th scope="col">B · Work desk</th><th scope="col">C · Linked registers</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Period list and detail</th><td>Payroll Periods: Tree, Form, Kanban by state</td><td>Payroll Periods: Tree and a read-only Form</td><td>Payroll Periods: Tree, Form, Kanban by state</td></tr>
+        <tr><th scope="row">Employee result and Payroll Lines</th><td>Employees tab, drill-in</td><td>Inside the step page, or the period's Employees tab</td><td>Employee Results register, own Form</td></tr>
+        <tr><th scope="row">Exceptions</th><td>Exceptions tab</td><td>"Correct and recalculate" and "Certify" step pages</td><td>Payroll Exceptions register, Kanban by status</td></tr>
+        <tr><th scope="row">Certify, review, approve, finalize</th><td>Buttons on the period head; Review tab</td><td>One step page per function</td><td>Buttons on the period head; Review tab</td></tr>
+        <tr><th scope="row">Payslips</th><td>Payslips tab</td><td>"Release payslips" step page</td><td>Payslips register, Kanban by status</td></tr>
+        <tr><th scope="row">Payment Export and outcomes</th><td>Payment tab</td><td>"Record Disbursement Outcomes" step page</td><td>Payment Exports register, own Form</td></tr>
+        <tr><th scope="row">Register and reports</th><td>Reports tab</td><td>"Generate the register and reports" step page</td><td>Registers &amp; Reports</td></tr>
+        <tr><th scope="row">Employee's own payslip</th><td>List, then expandable lines</td><td>Latest payslip, month picker</td><td>List, then Payslip and "How it was reached" tabs</td></tr>
+        <tr><th scope="row">Payroll entries in the navigation</th><td>2 (+4 for later tickets)</td><td>3 (+4)</td><td>7 (+4)</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="variant" aria-labelledby="vr">
+    <h2 id="vr">The two rules, shown the same way in all three</h2>
+    <div class="two">
+      <div><h3>Calculated, certified, reviewed, approved, and finalized stay distinct</h3><p class="mut">A stage rail has one cell per stage, each with who acted, when, and the calculation it binds. Reviewed lists the Budget and Accounting reviews separately. Only Finalized is green; Certified and Approved are never styled as finished.</p></div>
+      <div><h3>Pending never reads as complete</h3><p class="mut">A stage that hasn't happened has a dashed border and says so in words: "Not certified", "1 of 2 reviews confirmed", "Calculation 2 running, no results yet". The same holds for payslips (Generating, Ready, Released), the Payment Export ("marked no one paid"), and reports.</p></div>
+    </div>
+  </section>
+
+  <section class="variant" aria-labelledby="vf">
+    <h2 id="vf">Fonts and colors</h2>
+    <p class="mut">The same for A, B, and C. Nothing new is added: every value is an existing workbench token from <code>apps/web/src/app/globals.css</code> (#231), as the Overtime prototype used.</p>
+    <div class="box" style="background:#ffffff;border-color:#d4d9e1">
+      <p class="font" style="color:#121a26">Noto Sans Variable · ₱271,722.99 · 2026-11-REG</p>
+      <p class="small" style="color:#566175">One family for headings and body, with tabular figures in tables. Page title 22px / 650, panel title 14px / 650, body 14px, small 13px, caption 12px. The variant switcher alone uses the system monospace, to keep it apart from the design.</p>
+    </div>
+    <div class="sw">
+      <div class="chip"><i style="background:#0f2240"></i><code>#0f2240</code><span class="mut">nav</span></div>
+      <div class="chip"><i style="background:#e8eef7"></i><code>#e8eef7</code><span class="mut">nav text</span></div>
+      <div class="chip"><i style="background:#93a3bd"></i><code>#93a3bd</code><span class="mut">nav muted</span></div>
+      <div class="chip"><i style="background:#6fa3ec"></i><code>#6fa3ec</code><span class="mut">nav focus</span></div>
+      <div class="chip"><i style="background:#f2f4f7"></i><code>#f2f4f7</code><span class="mut">canvas</span></div>
+      <div class="chip"><i style="background:#ffffff"></i><code>#ffffff</code><span class="mut">surface</span></div>
+      <div class="chip"><i style="background:#d4d9e1"></i><code>#d4d9e1</code><span class="mut">border</span></div>
+      <div class="chip"><i style="background:#e6e9ee"></i><code>#e6e9ee</code><span class="mut">border subtle</span></div>
+      <div class="chip"><i style="background:#121a26"></i><code>#121a26</code><span class="mut">ink</span></div>
+      <div class="chip"><i style="background:#566175"></i><code>#566175</code><span class="mut">ink muted, neutral</span></div>
+      <div class="chip"><i style="background:#1a4fa0"></i><code>#1a4fa0</code><span class="mut">primary, info, focus</span></div>
+      <div class="chip"><i style="background:#153f80"></i><code>#153f80</code><span class="mut">primary hover</span></div>
+      <div class="chip"><i style="background:#1e6b3a"></i><code>#1e6b3a</code><span class="mut">success: Finalized, Released, Settled</span></div>
+      <div class="chip"><i style="background:#9a6200"></i><code>#9a6200</code><span class="mut">warning: waiting, generating</span></div>
+      <div class="chip"><i style="background:#a4262c"></i><code>#a4262c</code><span class="mut">danger: blocking, voided, rejected</span></div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

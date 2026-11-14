@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payroll workspace · round 2 · compare A, B, C · #327</title>
+<style>
+  :root { --fg: var(--foreground, #121a26); --mut: var(--muted-foreground, #566175); --line: var(--border, #d4d9e1); --box: var(--card, #ffffff); --link: var(--primary, #1a4fa0); --r: var(--radius, 6px); }
+  body { margin: 0; color: var(--fg); font-family: var(--font-sans, 'Noto Sans', system-ui, sans-serif); font-size: 14px; line-height: 1.5; }
+  body.standalone { background: #f2f4f7; padding: 24px 16px 64px; }
+  .wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 28px; }
+  h1 { font-size: 20px; line-height: 1.25; margin: 0 0 6px; }
+  h2 { font-size: 16px; margin: 0; }
+  h3 { font-size: 13px; margin: 0 0 4px; }
+  p { margin: 0; }
+  a { color: var(--link); font-weight: 600; }
+  .mut { color: var(--mut); }
+  .small { font-size: 12.5px; }
+  section { display: grid; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .vhead { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+  .letter { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--fg); font-weight: 700; font-size: 13px; }
+  .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  figure { margin: 0; display: grid; gap: 6px; align-content: start; }
+  figure img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--r); background: #fff; }
+  figcaption { font-size: 12.5px; color: var(--mut); }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 24px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  thead th { font-size: 12.5px; }
+  tbody th { font-weight: 600; width: 24%; }
+  .sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .chip { display: grid; gap: 4px; font-size: 12px; }
+  .chip i { display: block; height: 36px; border-radius: var(--r); border: 1px solid var(--line); }
+  .chip code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+  .sample { background: #ffffff; color: #121a26; border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; display: grid; gap: 4px; }
+  .sample .big { font-family: 'Noto Sans Variable', 'Noto Sans', var(--font-sans, sans-serif); font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+  .sample .body { font-family: 'Noto Sans Variable', 'Noto Sans', var(--font-sans, sans-serif); font-size: 14px; color: #566175; }
+</style>
+</head>
+<body class="standalone">
+<div class="wrap">
+  <header>
+    <h1>Payroll workspace, round 2: list and form</h1>
+    <p class="mut">Round 1 was too heavy. This round takes the shape of your references: Employee Payslips, Salary Structures, and Salary Rules, each a list and a form, in LingkodHR’s existing theme. The four screens below are the same in A, B, and C. The variants differ in one thing only: where the payroll-wide steps sit.</p>
+  </header>
+
+  <section aria-labelledby="shared">
+    <h2 id="shared">The same in all three</h2>
+    <div class="shots">
+      <figure><img src="shots/days.png" alt="Employee Payslip form on the Worked Days and Inputs tab" width="1360" height="860"><figcaption><strong>Employee Payslip.</strong> Action row and stage bar, a field grid, two tabs, History on the right. Worked days and inputs each name where they came from.</figcaption></figure>
+      <figure><img src="shots/slip.png" alt="Salary Computation tab with the Basic salary line expanded" width="1360" height="860"><figcaption><strong>Salary Computation.</strong> One line per salary rule, with Gross and Net rows. A line opens to its rule version and source records.</figcaption></figure>
+      <figure><img src="shots/rules.png" alt="Salary Rules list" width="1360" height="860"><figcaption><strong>Salary Rules.</strong> Name, code, category, sequence, and the rule version in force.</figcaption></figure>
+      <figure><img src="shots/rule.png" alt="Salary Rule form for Overtime pay" width="1360" height="860"><figcaption><strong>Salary Rule.</strong> Conditions and computation, shown as the rule that is loaded. Read-only for the Agency.</figcaption></figure>
+      <figure><img src="shots/struct.png" alt="Salary Structure form listing its salary rules" width="1360" height="860"><figcaption><strong>Salary Structure.</strong> A named list of salary rules in sequence.</figcaption></figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="va">
+    <div class="vhead"><span class="letter">A</span><h2 id="va">Payslips only</h2><a href="a.html">Open A</a></div>
+    <p>The payslip list is the whole workspace. Payslips group by month, and the group row carries the stage and the one next step. No screen exists for the payroll run.</p>
+    <div class="shots">
+      <figure><img src="shots/a-1.png" alt="Variant A: payslips grouped by month, the November group row showing Certified and the Confirm Budget review button" width="1360" height="860"><figcaption>As the Budget Officer. The November group row holds the next step; finished months start collapsed.</figcaption></figure>
+    </div>
+    <div class="two">
+      <div><h3>Good at</h3><ul><li>Fewest screens: four entries under Payroll.</li><li>Closest to your references.</li><li>The same step is also on every payslip form, so no one hunts for it.</li></ul></div>
+      <div><h3>Costs</h3><ul><li>The run’s totals, approvals, and history have no page; they sit in a tab on each payslip.</li><li>A button on a group row acts on every payslip in the month, which is easy to miss.</li></ul></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="vb">
+    <div class="vhead"><span class="letter">B</span><h2 id="vb">Payslips and runs</h2><a href="b.html?dest=runs">Open B</a></div>
+    <p>One more list and form: Payroll Runs. The run form holds the steps, the totals, the approvals, and its payslips. Employee Payslips stays a flat list.</p>
+    <div class="shots">
+      <figure><img src="shots/b-1.png" alt="Variant B: the November payroll run form with stage bar, totals, and its payslips" width="1360" height="860"><figcaption>The run is a record like any other, with the same action row, stage bar, and History.</figcaption></figure>
+    </div>
+    <div class="two">
+      <div><h3>Good at</h3><ul><li>Payroll-wide steps sit on a payroll-wide record, so what a button affects is plain.</li><li>The run has a home for totals, approvals, and history.</li><li>Matches the data model: the stages live on the Payroll Period.</li></ul></div>
+      <div><h3>Costs</h3><ul><li>One more navigation entry and form, and it is the payslip batch you set aside for now.</li><li>From a payslip, the next step is one click away on the run.</li></ul></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="vc">
+    <div class="vhead"><span class="letter">C</span><h2 id="vc">Month bar</h2><a href="c.html">Open C</a></div>
+    <p>Employee Payslips shows one month at a time. A bar above the list picks the month and carries the stage bar and the next step.</p>
+    <div class="shots">
+      <figure><img src="shots/c-1.png" alt="Variant C: a month picker and stage bar above the month's payslips" width="1360" height="860"><figcaption>The month, its stage, its next step, and its payslips on one screen. Approvals fold open below the list.</figcaption></figure>
+    </div>
+    <div class="two">
+      <div><h3>Good at</h3><ul><li>Four entries under Payroll, as in A, and the stage bar is always in view.</li><li>The step sits beside the list it acts on.</li></ul></div>
+      <div><h3>Costs</h3><ul><li>No view across months: finding one Employee’s payslips means stepping month by month.</li><li>A list with a stage bar and action row is a new pattern beside Attendance, Leave, and Overtime.</li></ul></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="where">
+    <h2 id="where">Where each job happens</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th scope="col">Job</th><th scope="col">A · Payslips only</th><th scope="col">B · Payslips and runs</th><th scope="col">C · Month bar</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Compute, certify, review, approve, finalize</th><td>Month group row, and every payslip form</td><td>Payroll run form</td><td>Month bar</td></tr>
+          <tr><th scope="row">Who approved what, and when</th><td>Approvals tab on a payslip</td><td>Approvals tab on the run</td><td>Approvals, folded under the list</td></tr>
+          <tr><th scope="row">Run totals</th><td>Month group row (count and net)</td><td>Run form (gross, deductions, net)</td><td>Footer of the list</td></tr>
+          <tr><th scope="row">One Employee across months</th><td>Search the payslip list</td><td>Search the payslip list</td><td>Step through months</td></tr>
+          <tr><th scope="row">Hold, withhold, payment outcome</th><td colspan="3">Payslip form, the same in all three</td></tr>
+          <tr><th scope="row">Register, schedules, Payment Export</th><td colspan="3">Reports, the same in all three</td></tr>
+          <tr><th scope="row">Employee’s own payslip</th><td colspan="3">The same payslip form, released payslips only</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="diff">
+    <h2 id="diff">Where it departs from your references</h2>
+    <p class="mut">Your references allow things the decided payroll rules refuse. This round stays inside those rules; say so if any should change.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th scope="col">In the references</th><th scope="col">In this round</th><th scope="col">Why</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Salary rules are created and edited, with Python code</th><td>Rules are read-only, shown with a plain “result = …” line</td><td>No free-form formula; rule versions are loaded by the platform operator (#328)</td></tr>
+          <tr><th scope="row">“Add a line” on Worked Days, Inputs, and Computation</th><td>Lines are read-only and open to their source</td><td>No override of a calculated line; inputs come only from Leave, Overtime, and Attendance (#27, #43)</td></tr>
+          <tr><th scope="row">Each payslip moves Draft → Done on its own</th><td>The stage belongs to the month’s payroll; every payslip in it shows the same stage</td><td>Status lives on the Payroll Period, with certification, two reviews, and approval before finalization (#12)</td></tr>
+          <tr><th scope="row">No payslip batch</th><td>A hides it, C makes it a month picker, B shows it as Payroll Runs</td><td>The Payroll Period already is the batch, so it is in the spec</td></tr>
+          <tr><th scope="row">Salary Structure per contract</th><td>Three read-only structures, picked by the kind of payroll</td><td>Not in the spec; shown as an assumption</td></tr>
+          <tr><th scope="row">A “Paid” state</th><td>Payment is separate: a Payment Export, then recorded outcomes</td><td>Generating an export marks no one paid (#330)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="look">
+    <h2 id="look">Fonts and colors</h2>
+    <p class="mut">The same in A, B, and C: the existing workbench tokens from <code>apps/web/src/app/globals.css</code>. No new color or font.</p>
+    <div class="sample"><span class="big">Noto Sans Variable 650 · Employee Payslips</span><span class="body">Noto Sans Variable 400 · body text at 14px. Codes and formulas use the system monospace.</span></div>
+    <div class="sw">
+      <div class="chip"><i style="background:#0f2240"></i><span>Navigation</span><code>#0f2240</code></div>
+      <div class="chip"><i style="background:#f2f4f7"></i><span>Canvas</span><code>#f2f4f7</code></div>
+      <div class="chip"><i style="background:#ffffff"></i><span>Surface</span><code>#ffffff</code></div>
+      <div class="chip"><i style="background:#d4d9e1"></i><span>Border</span><code>#d4d9e1</code></div>
+      <div class="chip"><i style="background:#121a26"></i><span>Ink</span><code>#121a26</code></div>
+      <div class="chip"><i style="background:#566175"></i><span>Muted ink</span><code>#566175</code></div>
+      <div class="chip"><i style="background:#1a4fa0"></i><span>Primary</span><code>#1a4fa0</code></div>
+      <div class="chip"><i style="background:#1e6b3a"></i><span>Success</span><code>#1e6b3a</code></div>
+      <div class="chip"><i style="background:#9a6200"></i><span>Warning</span><code>#9a6200</code></div>
+      <div class="chip"><i style="background:#a4262c"></i><span>Danger</span><code>#a4262c</code></div>
+    </div>
+  </section>
+
+  <p class="small mut">Round 1 is kept under <a href="../round-1/compare.html">round-1/</a>.</p>
+</div>
+</body>
+</html>
