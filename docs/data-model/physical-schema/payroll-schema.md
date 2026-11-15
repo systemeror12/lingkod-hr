@@ -46,7 +46,8 @@ CREATE TABLE national_payroll_rule_versions (
   rule_kind text NOT NULL
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
                          'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
-                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA')),
+                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA',
+                         'PHILHEALTH_CONTRIBUTION','PAGIBIG_CONTRIBUTION')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -98,6 +99,15 @@ sec. 71; DBM NBC No. 593); its parameters are `ranks`, each with its `rank`,
 the eligible `positionTitles`, and the monthly `representationAllowance` and
 `transportationAllowance`, and `actualWorkSchedule`, NBC 593's bands of
 `minimumDays` and `share`, rising to a share of 1 (section 8).
+`PHILHEALTH_CONTRIBUTION` (RA No. 11223, sec. 10; PhilHealth Circular No.
+2020-0005, Rev. 1) holds `employeeRate`, `employerRate`, `monthlyIncomeFloor`,
+and `monthlyIncomeCeiling`, with the floor below the ceiling.
+`PAGIBIG_CONTRIBUTION` (RA No. 9679, sec. 7) holds `employeeRate`,
+`lowerBandEmployeeRate` for an Employee earning not more than
+`lowerBandMonthlyCompensation`, `employerRate`, and `maximumFundSalary`.
+Neither is established for 2027
+([R19, R21](../../research/national-payroll-rule-versions-2027.md)), so
+neither is loaded until its issuance is read (section 9).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -1009,13 +1019,16 @@ type (#27, #328). A special period writes a tax line for its taxable lines and
 no contribution lines.
 
 Migration 0163 creates `contribution_lines` for `GSIS` and
-`EMPLOYEES_COMPENSATION` (#348); `PHILHEALTH` and `PAGIBIG` join its type
-check with their calculators (#632). A line joins its result only in the
-transaction that writes the result, every `UPDATE` and `DELETE` is rejected,
+`EMPLOYEES_COMPENSATION` (#348); migration 0172 adds `PHILHEALTH` and
+`PAGIBIG` to its type check with their calculators (#632). A line joins its
+result only in the transaction that writes the result, every `UPDATE` and `DELETE` is rejected,
 and RLS is forced. Each share is also a Payroll Line, so the totals and the
 payslip carry it: `GSIS_PERSONAL_SHARE` is a `DEDUCTION`, and
 `GSIS_GOVERNMENT_SHARE` and `EMPLOYEES_COMPENSATION` are `EMPLOYER_SHARE`
-lines, which never reduce pay. Each line's quantity is the base and its rate
+lines, which never reduce pay. PhilHealth and Pag-IBIG write
+`PHILHEALTH_EMPLOYEE_SHARE` and `PAGIBIG_EMPLOYEE_SHARE` as `DEDUCTION` and
+`PHILHEALTH_EMPLOYER_SHARE` and `PAGIBIG_EMPLOYER_SHARE` as `EMPLOYER_SHARE`
+lines. Each line's quantity is the base and its rate
 the version's, so quantity × rate is the amount.
 
 The base is the month's `BASIC_SALARY` line, so `payroll_lines` has no
@@ -1023,14 +1036,20 @@ The base is the month's `BASIC_SALARY` line, so `payroll_lines` has no
 type, and basic salary is the only line any base rests on yet. GSIS takes the
 version's member and government rates of it. Employees' Compensation takes the
 employer rate of the monthly salary credit, the basic salary up to the
-version's ceiling. Each reads the one version of its kind that the rule
-snapshot froze for every date of the month. Neither kind is required to
-freeze a snapshot, so every case the recorded rules do not settle is a
+version's ceiling. PhilHealth takes the version's employee and employer rates
+of the basic salary held between its income floor and ceiling; the basic
+salary line is the Monthly Basic Salary, since days without pay are their own
+deduction line (Circular 2020-0005 sec. IV.F). Pag-IBIG takes them of the fund
+salary, the basic salary up to the version's Maximum Fund Salary, with the
+lower band's employee rate when the basic salary is not more than the band.
+Each reads the one version of its kind that the rule
+snapshot froze for every date of the month. No contribution kind is required
+to freeze a snapshot, so every case the recorded rules do not settle is a
 blocking exception on the Employee and no line: no version in effect on every
 date, a version that changes inside the month, service for only part of the
 month, a GSIS base above the AMC limit, where RA 8291 sets another member
 share (research open question 3), and a share that is not whole centavos.
-With no basic salary line, neither writes anything, because basic salary's
+With no basic salary line, none writes anything, because basic salary's
 own exception already blocks the Employee. A blocked result keeps no
 contribution line, as it keeps no Payroll Line (section 7).
 
@@ -1041,7 +1060,9 @@ without an employer-employee relationship, both outside the Reference Agency
 Profile (BRD PAY-001;
 `research/reference-agency-personnel-compensation-boundaries.md`). So an
 Employee with a Service Segment in the month is treated as covered, and one
-without is not in the calculation. A recorded coverage fact, when Personnel
+without is not in the calculation. PhilHealth and Pag-IBIG cover the same
+Employees, since both apply to appointed personnel through compulsory employee
+coverage (the same research file). A recorded coverage fact, when Personnel
 adds one, replaces this.
 
 Loan lines use a separate table because multiple deductions may exist.

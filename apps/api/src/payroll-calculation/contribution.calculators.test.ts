@@ -7,6 +7,8 @@ import { nationalPayrollRuleVersionFileSchema } from '../payroll-rule-versions/n
 import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
+  PagIbigContributionCalculator,
+  PhilHealthContributionCalculator,
 } from './contribution.calculators';
 import type { CalculatedLine, CalculationContext, FrozenRuleVersion } from './payroll-calculator';
 
@@ -31,6 +33,41 @@ const ecVersion = (overrides: Partial<FrozenRuleVersion> = {}): FrozenRuleVersio
   effectiveTo: null,
   successorEffectiveFrom: null,
   parameters: { employerRate: '0.01', monthlySalaryCreditCeiling: '20000' },
+  ...overrides,
+});
+
+// Test fixtures too: they follow the figures research R19 to R21 records, but
+// no PhilHealth or Pag-IBIG version is loaded until its issuance is read.
+const philHealthVersion = (overrides: Partial<FrozenRuleVersion> = {}): FrozenRuleVersion => ({
+  id: 'philhealth-a',
+  code: 'PHILHEALTH-TEST-A',
+  ruleKind: 'PHILHEALTH_CONTRIBUTION',
+  effectiveFrom: '2026-01-01',
+  effectiveTo: null,
+  successorEffectiveFrom: null,
+  parameters: {
+    employeeRate: '0.025',
+    employerRate: '0.025',
+    monthlyIncomeFloor: '10000',
+    monthlyIncomeCeiling: '100000',
+  },
+  ...overrides,
+});
+
+const pagIbigVersion = (overrides: Partial<FrozenRuleVersion> = {}): FrozenRuleVersion => ({
+  id: 'pagibig-a',
+  code: 'PAGIBIG-TEST-A',
+  ruleKind: 'PAGIBIG_CONTRIBUTION',
+  effectiveFrom: '2026-01-01',
+  effectiveTo: null,
+  successorEffectiveFrom: null,
+  parameters: {
+    employeeRate: '0.02',
+    lowerBandEmployeeRate: '0.01',
+    lowerBandMonthlyCompensation: '1500',
+    employerRate: '0.02',
+    maximumFundSalary: '10000',
+  },
   ...overrides,
 });
 
@@ -92,6 +129,8 @@ const basicSalary = (amount: string): CalculatedLine[] => [
 
 const gsis = new GsisContributionCalculator();
 const ec = new EmployeesCompensationCalculator();
+const philHealth = new PhilHealthContributionCalculator();
+const pagIbig = new PagIbigContributionCalculator();
 const types = (outcome: { exceptions: { exceptionType: string }[] }) =>
   outcome.exceptions.map((exception) => exception.exceptionType);
 
@@ -269,6 +308,229 @@ describe('EmployeesCompensationCalculator', () => {
   });
 });
 
+describe('PhilHealthContributionCalculator', () => {
+  const sharesOf = (salary: string) =>
+    philHealth.calculate(fullMonth, contextWith(philHealthVersion()), basicSalary(salary));
+
+  it("takes the version's shares of the month's basic salary as a deduction and an employer share", () => {
+    const outcome = sharesOf('30000');
+
+    expect(outcome.exceptions).toEqual([]);
+    expect(outcome.lines).toEqual([
+      expect.objectContaining({
+        componentCode: 'PHILHEALTH_EMPLOYEE_SHARE',
+        lineType: 'DEDUCTION',
+        ruleVersionId: 'philhealth-a',
+        quantity: '30000.0000',
+        rate: '0.02500000',
+        amount: '750.0000',
+      }),
+      expect.objectContaining({
+        componentCode: 'PHILHEALTH_EMPLOYER_SHARE',
+        lineType: 'EMPLOYER_SHARE',
+        ruleVersionId: 'philhealth-a',
+        rate: '0.02500000',
+        amount: '750.0000',
+      }),
+    ]);
+    expect(outcome.contributions).toEqual([
+      {
+        contributionType: 'PHILHEALTH',
+        employeeShare: '750.0000',
+        employerShare: '750.0000',
+        compensationBase: '30000.0000',
+        ruleVersionId: 'philhealth-a',
+      },
+    ]);
+  });
+
+  it('raises a basic salary below the floor to the floor', () => {
+    const outcome = sharesOf('8000');
+    expect(outcome.contributions).toEqual([
+      expect.objectContaining({
+        employeeShare: '250.0000',
+        employerShare: '250.0000',
+        compensationBase: '10000.0000',
+      }),
+    ]);
+    expect(outcome.lines[0]?.source).toMatchObject({ floorApplied: true, ceilingApplied: false });
+  });
+
+  it('holds a basic salary above the ceiling at the ceiling', () => {
+    const outcome = sharesOf('120000');
+    expect(outcome.contributions).toEqual([
+      expect.objectContaining({
+        employeeShare: '2500.0000',
+        employerShare: '2500.0000',
+        compensationBase: '100000.0000',
+      }),
+    ]);
+    expect(outcome.lines[0]?.source).toMatchObject({ floorApplied: false, ceilingApplied: true });
+    // At the ceiling exactly, the ceiling is not applied.
+    expect(sharesOf('100000').lines[0]?.source).toMatchObject({ ceilingApplied: false });
+  });
+
+  it('blocks with no version, naming one that expired before the month ended', () => {
+    expect(types(philHealth.calculate(fullMonth, contextWith(), basicSalary('30000')))).toEqual([
+      'PHILHEALTH_RULE_NOT_IN_EFFECT',
+    ]);
+    const expired = philHealth.calculate(
+      fullMonth,
+      contextWith(philHealthVersion({ effectiveTo: '2026-03-15' })),
+      basicSalary('30000'),
+    );
+    expect(expired.lines).toEqual([]);
+    expect(expired.exceptions).toEqual([
+      expect.objectContaining({
+        exceptionType: 'PHILHEALTH_RULE_NOT_IN_EFFECT',
+        severity: 'BLOCKING',
+        details: expect.objectContaining({
+          message: expect.stringContaining('PHILHEALTH-TEST-A ended on 2026-03-15'),
+        }),
+      }),
+    ]);
+  });
+
+  it('blocks a partial month, a version change inside it, and an unrounded share', () => {
+    const partial = basisOf(
+      unserved('2026-03-01', '2026-03-15'),
+      served('2026-03-16', '2026-03-31'),
+    );
+    const outcome = philHealth.calculate(
+      partial,
+      contextWith(philHealthVersion()),
+      basicSalary('30000'),
+    );
+    expect(outcome.lines).toEqual([]);
+    expect(outcome.exceptions).toEqual([
+      expect.objectContaining({
+        exceptionType: 'PHILHEALTH_PARTIAL_MONTH',
+        severity: 'BLOCKING',
+        details: expect.objectContaining({
+          unservedDates: [{ from: '2026-03-01', to: '2026-03-15' }],
+        }),
+      }),
+    ]);
+    const changing = contextWith(
+      philHealthVersion({ successorEffectiveFrom: '2026-03-16' }),
+      philHealthVersion({
+        id: 'philhealth-b',
+        code: 'PHILHEALTH-TEST-B',
+        effectiveFrom: '2026-03-16',
+      }),
+    );
+    expect(types(philHealth.calculate(fullMonth, changing, basicSalary('30000')))).toEqual([
+      'PHILHEALTH_RULE_CHANGE_IN_PERIOD',
+    ]);
+    // 2.5% of 31,705 is 792.625.
+    expect(types(sharesOf('31705'))).toEqual(['PHILHEALTH_ROUNDING_UNSETTLED']);
+  });
+
+  it('writes nothing without a basic salary line, which blocks on its own', () => {
+    expect(philHealth.calculate(fullMonth, contextWith(philHealthVersion()), [])).toEqual({
+      lines: [],
+      exceptions: [],
+    });
+  });
+});
+
+describe('PagIbigContributionCalculator', () => {
+  const sharesOf = (salary: string) =>
+    pagIbig.calculate(fullMonth, contextWith(pagIbigVersion()), basicSalary(salary));
+
+  it("takes the version's shares of the fund salary as a deduction and an employer share", () => {
+    const outcome = sharesOf('8000');
+
+    expect(outcome.exceptions).toEqual([]);
+    expect(outcome.lines).toEqual([
+      expect.objectContaining({
+        componentCode: 'PAGIBIG_EMPLOYEE_SHARE',
+        lineType: 'DEDUCTION',
+        ruleVersionId: 'pagibig-a',
+        quantity: '8000.0000',
+        rate: '0.02000000',
+        amount: '160.0000',
+      }),
+      expect.objectContaining({
+        componentCode: 'PAGIBIG_EMPLOYER_SHARE',
+        lineType: 'EMPLOYER_SHARE',
+        ruleVersionId: 'pagibig-a',
+        rate: '0.02000000',
+        amount: '160.0000',
+      }),
+    ]);
+    expect(outcome.contributions).toEqual([
+      {
+        contributionType: 'PAGIBIG',
+        employeeShare: '160.0000',
+        employerShare: '160.0000',
+        compensationBase: '8000.0000',
+        ruleVersionId: 'pagibig-a',
+      },
+    ]);
+  });
+
+  it('caps the fund salary at the Maximum Fund Salary', () => {
+    const outcome = sharesOf('31705');
+    expect(outcome.contributions).toEqual([
+      expect.objectContaining({
+        employeeShare: '200.0000',
+        employerShare: '200.0000',
+        compensationBase: '10000.0000',
+      }),
+    ]);
+    expect(outcome.lines[0]?.source).toMatchObject({ maximumFundSalaryApplied: true });
+  });
+
+  it('takes the lower employee rate at the lower band and below, and never a lower employer rate', () => {
+    const atBand = sharesOf('1500');
+    expect(atBand.lines.map((line) => [line.componentCode, line.rate, line.amount])).toEqual([
+      ['PAGIBIG_EMPLOYEE_SHARE', '0.01000000', '15.0000'],
+      ['PAGIBIG_EMPLOYER_SHARE', '0.02000000', '30.0000'],
+    ]);
+    expect(atBand.lines[0]?.source).toMatchObject({ lowerBandApplied: true });
+    expect(sharesOf('1200').contributions).toEqual([
+      expect.objectContaining({ employeeShare: '12.0000', employerShare: '24.0000' }),
+    ]);
+    // One peso above the band pays the employee rate.
+    const aboveBand = sharesOf('1501');
+    expect(aboveBand.contributions).toEqual([
+      expect.objectContaining({ employeeShare: '30.0200', employerShare: '30.0200' }),
+    ]);
+    expect(aboveBand.lines[0]?.source).toMatchObject({ lowerBandApplied: false });
+  });
+
+  it('blocks with no version or an expired one, in a partial month, and on an unrounded share', () => {
+    expect(types(pagIbig.calculate(fullMonth, contextWith(), basicSalary('8000')))).toEqual([
+      'PAGIBIG_RULE_NOT_IN_EFFECT',
+    ]);
+    // A version of another kind is no Pag-IBIG version.
+    expect(
+      types(pagIbig.calculate(fullMonth, contextWith(philHealthVersion()), basicSalary('8000'))),
+    ).toEqual(['PAGIBIG_RULE_NOT_IN_EFFECT']);
+    const expired = contextWith(pagIbigVersion({ effectiveTo: '2026-03-30' }));
+    expect(types(pagIbig.calculate(fullMonth, expired, basicSalary('8000')))).toEqual([
+      'PAGIBIG_RULE_NOT_IN_EFFECT',
+    ]);
+    const partial = basisOf(
+      served('2026-03-01', '2026-03-20'),
+      unserved('2026-03-21', '2026-03-31'),
+    );
+    const blocked = pagIbig.calculate(partial, contextWith(pagIbigVersion()), basicSalary('8000'));
+    expect(blocked.lines).toEqual([]);
+    expect(types(blocked)).toEqual(['PAGIBIG_PARTIAL_MONTH']);
+    // 2% of 1,500.25 is 30.005.
+    const line = basicSalary('1500')[0]!;
+    expect(
+      types(
+        pagIbig.calculate(fullMonth, contextWith(pagIbigVersion()), [
+          { ...line, amount: '1500.2500' },
+        ]),
+      ),
+    ).toEqual(['PAGIBIG_ROUNDING_UNSETTLED']);
+  });
+});
+
 describe('contribution rule version files', () => {
   const file = (ruleKind: string, parameters: unknown) => ({
     ruleKind,
@@ -318,5 +580,40 @@ describe('contribution rule version files', () => {
       }),
     ).toBe(false);
     expect(parses('EMPLOYEES_COMPENSATION', { employerRate: '0.01' })).toBe(false);
+  });
+
+  it('requires every PhilHealth value, with the floor below the ceiling', () => {
+    const philHealthParameters = {
+      employeeRate: '0.025',
+      employerRate: '0.025',
+      monthlyIncomeFloor: '10000',
+      monthlyIncomeCeiling: '100000',
+    };
+    expect(parses('PHILHEALTH_CONTRIBUTION', philHealthParameters)).toBe(true);
+    expect(
+      parses('PHILHEALTH_CONTRIBUTION', { ...philHealthParameters, monthlyIncomeFloor: '100000' }),
+    ).toBe(false);
+    expect(
+      parses('PHILHEALTH_CONTRIBUTION', {
+        ...philHealthParameters,
+        monthlyIncomeCeiling: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it('requires every Pag-IBIG value, the lower band and the Maximum Fund Salary among them', () => {
+    const pagIbigParameters = {
+      employeeRate: '0.02',
+      lowerBandEmployeeRate: '0.01',
+      lowerBandMonthlyCompensation: '1500',
+      employerRate: '0.02',
+      maximumFundSalary: '10000',
+    };
+    expect(parses('PAGIBIG_CONTRIBUTION', pagIbigParameters)).toBe(true);
+    for (const missing of ['maximumFundSalary', 'lowerBandEmployeeRate'] as const) {
+      expect(parses('PAGIBIG_CONTRIBUTION', { ...pagIbigParameters, [missing]: undefined })).toBe(
+        false,
+      );
+    }
   });
 });

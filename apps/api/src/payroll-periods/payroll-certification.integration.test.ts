@@ -56,6 +56,10 @@ describe.skipIf(!enabled)('Payroll certification in PostgreSQL', () => {
     nothing,
     nothing,
     nothing,
+    nothing,
+    nothing,
+    nothing,
+    nothing,
   );
   let admin: PrismaClient;
   let scheduleId: string;

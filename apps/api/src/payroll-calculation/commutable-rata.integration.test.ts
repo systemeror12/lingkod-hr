@@ -49,6 +49,8 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
     new YearEndBonusCalculator(),
     noContribution,
     new CommutableRataCalculator(),
+    noContribution,
+    noContribution,
   );
   let admin: PrismaClient;
   const tenants: PayrollTenant[] = [];

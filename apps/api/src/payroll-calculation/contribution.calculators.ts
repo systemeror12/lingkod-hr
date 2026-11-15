@@ -6,6 +6,8 @@ import {
   employeesCompensationParameters,
   gsisContributionParameters,
   type NationalPayrollRuleKind,
+  pagIbigContributionParameters,
+  philHealthContributionParameters,
 } from '../payroll-rule-versions/national-payroll-rule-versions';
 import { BASIC_SALARY_COMPONENT_CODE } from './basic-salary.calculator';
 import {
@@ -14,6 +16,7 @@ import {
   type CalculatedLine,
   type CalculationContext,
   type CalculatorOutcome,
+  type ContributionType,
   type FrozenRuleVersion,
   type PayrollCalculator,
 } from './payroll-calculator';
@@ -21,6 +24,10 @@ import {
 export const GSIS_PERSONAL_SHARE_COMPONENT_CODE = 'GSIS_PERSONAL_SHARE';
 export const GSIS_GOVERNMENT_SHARE_COMPONENT_CODE = 'GSIS_GOVERNMENT_SHARE';
 export const EMPLOYEES_COMPENSATION_COMPONENT_CODE = 'EMPLOYEES_COMPENSATION';
+export const PHILHEALTH_EMPLOYEE_SHARE_COMPONENT_CODE = 'PHILHEALTH_EMPLOYEE_SHARE';
+export const PHILHEALTH_EMPLOYER_SHARE_COMPONENT_CODE = 'PHILHEALTH_EMPLOYER_SHARE';
+export const PAGIBIG_EMPLOYEE_SHARE_COMPONENT_CODE = 'PAGIBIG_EMPLOYEE_SHARE';
+export const PAGIBIG_EMPLOYER_SHARE_COMPONENT_CODE = 'PAGIBIG_EMPLOYER_SHARE';
 
 /**
  * GSIS contributions (RA No. 8291, sec. 5(a); BRD PAY-004): the personal share
@@ -163,6 +170,154 @@ export class EmployeesCompensationCalculator implements PayrollCalculator {
   }
 }
 
+/**
+ * The PhilHealth premium (RA No. 11223, sec. 10; PhilHealth Circular No.
+ * 2020-0005, Rev. 1; research R19): the version's employee rate as a
+ * deduction and its employer rate as an employer share, each of the month's
+ * basic salary held between the version's income floor and ceiling. The
+ * basic salary line is the Monthly Basic Salary: days without pay are their
+ * own deduction line, and the circular keeps such deductions out of the base
+ * (sec. IV.F). It blocks on the same unsettled cases as GSIS, except the AMC
+ * limit.
+ */
+@Injectable()
+export class PhilHealthContributionCalculator implements PayrollCalculator {
+  calculate(
+    basis: CompensationBasis,
+    context: CalculationContext,
+    earlierLines: readonly CalculatedLine[],
+  ): CalculatorOutcome {
+    const base = contributionBase(
+      'PHILHEALTH',
+      'PHILHEALTH_CONTRIBUTION',
+      basis,
+      context,
+      earlierLines,
+    );
+    if (!('version' in base)) return base;
+    const { version, salary, basicSalary } = base;
+    const parameters = philHealthContributionParameters.parse(version.parameters);
+    const premiumBase = Prisma.Decimal.min(
+      Prisma.Decimal.max(salary, parameters.monthlyIncomeFloor),
+      parameters.monthlyIncomeCeiling,
+    );
+    const employee = shareOf(premiumBase, parameters.employeeRate);
+    const employer = shareOf(premiumBase, parameters.employerRate);
+    const unrounded = [employee, employer].filter((share) => !isWholeCentavos(share));
+    if (unrounded.length > 0) return refuseRounding('PHILHEALTH', premiumBase, unrounded);
+
+    const source = {
+      contributionType: 'PHILHEALTH',
+      basedOn: basicSalary,
+      compensationBase: premiumBase.toFixed(4),
+      floorApplied: premiumBase.gt(salary),
+      ceilingApplied: premiumBase.lt(salary),
+      ruleVersionCode: version.code,
+      parameters,
+    };
+    return {
+      lines: [
+        shareLine(
+          PHILHEALTH_EMPLOYEE_SHARE_COMPONENT_CODE,
+          'DEDUCTION',
+          version,
+          premiumBase,
+          parameters.employeeRate,
+          source,
+        ),
+        shareLine(
+          PHILHEALTH_EMPLOYER_SHARE_COMPONENT_CODE,
+          'EMPLOYER_SHARE',
+          version,
+          premiumBase,
+          parameters.employerRate,
+          source,
+        ),
+      ],
+      exceptions: [],
+      contributions: [
+        {
+          contributionType: 'PHILHEALTH',
+          employeeShare: employee.toFixed(4),
+          employerShare: employer.toFixed(4),
+          compensationBase: premiumBase.toFixed(4),
+          ruleVersionId: version.id,
+        },
+      ],
+    };
+  }
+}
+
+/**
+ * Pag-IBIG contributions (RA No. 9679, sec. 7; research R20, R21): the
+ * employee share as a deduction and the employer share, each a rate of the
+ * fund salary, the month's basic salary up to the version's Maximum Fund
+ * Salary. An Employee whose basic salary is not more than the version's lower
+ * band pays the lower band's employee rate; the employer rate is the same for
+ * every band. It blocks on the same unsettled cases as GSIS, except the AMC
+ * limit.
+ */
+@Injectable()
+export class PagIbigContributionCalculator implements PayrollCalculator {
+  calculate(
+    basis: CompensationBasis,
+    context: CalculationContext,
+    earlierLines: readonly CalculatedLine[],
+  ): CalculatorOutcome {
+    const base = contributionBase('PAGIBIG', 'PAGIBIG_CONTRIBUTION', basis, context, earlierLines);
+    if (!('version' in base)) return base;
+    const { version, salary, basicSalary } = base;
+    const parameters = pagIbigContributionParameters.parse(version.parameters);
+    const lowerBand = salary.lte(parameters.lowerBandMonthlyCompensation);
+    const employeeRate = lowerBand ? parameters.lowerBandEmployeeRate : parameters.employeeRate;
+    const fundSalary = Prisma.Decimal.min(salary, parameters.maximumFundSalary);
+    const employee = shareOf(fundSalary, employeeRate);
+    const employer = shareOf(fundSalary, parameters.employerRate);
+    const unrounded = [employee, employer].filter((share) => !isWholeCentavos(share));
+    if (unrounded.length > 0) return refuseRounding('PAGIBIG', fundSalary, unrounded);
+
+    const source = {
+      contributionType: 'PAGIBIG',
+      basedOn: basicSalary,
+      compensationBase: fundSalary.toFixed(4),
+      lowerBandApplied: lowerBand,
+      maximumFundSalaryApplied: fundSalary.lt(salary),
+      ruleVersionCode: version.code,
+      parameters,
+    };
+    return {
+      lines: [
+        shareLine(
+          PAGIBIG_EMPLOYEE_SHARE_COMPONENT_CODE,
+          'DEDUCTION',
+          version,
+          fundSalary,
+          employeeRate,
+          source,
+        ),
+        shareLine(
+          PAGIBIG_EMPLOYER_SHARE_COMPONENT_CODE,
+          'EMPLOYER_SHARE',
+          version,
+          fundSalary,
+          parameters.employerRate,
+          source,
+        ),
+      ],
+      exceptions: [],
+      contributions: [
+        {
+          contributionType: 'PAGIBIG',
+          employeeShare: employee.toFixed(4),
+          employerShare: employer.toFixed(4),
+          compensationBase: fundSalary.toFixed(4),
+          ruleVersionId: version.id,
+        },
+      ],
+    };
+  }
+}
+
 type BaseOutcome =
   | {
       version: FrozenRuleVersion;
@@ -178,13 +333,13 @@ type BaseOutcome =
  * no exception.
  */
 function contributionBase(
-  type: 'GSIS' | 'EMPLOYEES_COMPENSATION',
+  type: ContributionType,
   ruleKind: NationalPayrollRuleKind,
   basis: CompensationBasis,
   context: CalculationContext,
   earlierLines: readonly CalculatedLine[],
 ): BaseOutcome {
-  const label = type === 'GSIS' ? 'GSIS' : "Employees' Compensation";
+  const label = contributionLabel[type];
   const exceptions: CalculatedException[] = [];
   const unserved = basis.stretches.filter((stretch) => stretch.personnel === null);
   if (unserved.length > 0) {
@@ -240,6 +395,13 @@ function contributionBase(
   };
 }
 
+const contributionLabel: Record<ContributionType, string> = {
+  GSIS: 'GSIS',
+  EMPLOYEES_COMPENSATION: "Employees' Compensation",
+  PHILHEALTH: 'PhilHealth',
+  PAGIBIG: 'Pag-IBIG',
+};
+
 const shareOf = (base: Prisma.Decimal, rate: string) => base.mul(rate);
 
 const isWholeCentavos = (amount: Prisma.Decimal) => amount.equals(amount.toDecimalPlaces(2));
@@ -265,7 +427,7 @@ function shareLine(
 }
 
 function refuseRounding(
-  type: 'GSIS' | 'EMPLOYEES_COMPENSATION',
+  type: ContributionType,
   base: Prisma.Decimal,
   shares: Prisma.Decimal[],
 ): CalculatorOutcome {

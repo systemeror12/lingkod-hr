@@ -13,7 +13,9 @@ export type NationalPayrollRuleKind =
   | 'EMPLOYEES_COMPENSATION'
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
   | 'PERA'
-  | 'COMMUTABLE_RATA';
+  | 'COMMUTABLE_RATA'
+  | 'PHILHEALTH_CONTRIBUTION'
+  | 'PAGIBIG_CONTRIBUTION';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -298,6 +300,57 @@ const commutableRataFile = z
   })
   .strict();
 
+/**
+ * The PhilHealth premium rule (RA No. 11223, sec. 10; PhilHealth Circular No.
+ * 2020-0005, Rev. 1, secs. IV.F, V.A to V.C; research R19): each share's rate
+ * of the monthly basic salary, held between the income floor and ceiling.
+ */
+export const philHealthContributionParameters = z
+  .object({
+    employeeRate: shareRate,
+    employerRate: shareRate,
+    monthlyIncomeFloor: positiveAmount,
+    monthlyIncomeCeiling: positiveAmount,
+  })
+  .strict()
+  .refine(
+    ({ monthlyIncomeFloor, monthlyIncomeCeiling }) =>
+      new Prisma.Decimal(monthlyIncomeFloor).lt(monthlyIncomeCeiling),
+    { message: 'monthlyIncomeFloor is below monthlyIncomeCeiling.', path: ['monthlyIncomeFloor'] },
+  );
+
+/**
+ * The Pag-IBIG contribution rule (RA No. 9679, sec. 7; research R20, R21):
+ * the employee rate, or `lowerBandEmployeeRate` for an Employee earning not
+ * more than `lowerBandMonthlyCompensation`, and the employer rate, each of the
+ * monthly compensation up to the Maximum Fund Salary.
+ */
+export const pagIbigContributionParameters = z
+  .object({
+    employeeRate: shareRate,
+    lowerBandEmployeeRate: shareRate,
+    lowerBandMonthlyCompensation: positiveAmount,
+    employerRate: shareRate,
+    maximumFundSalary: positiveAmount,
+  })
+  .strict();
+
+const philHealthContributionFile = z
+  .object({
+    ruleKind: z.literal('PHILHEALTH_CONTRIBUTION'),
+    ...ruleVersionFields,
+    parameters: philHealthContributionParameters,
+  })
+  .strict();
+
+const pagIbigContributionFile = z
+  .object({
+    ruleKind: z.literal('PAGIBIG_CONTRIBUTION'),
+    ...ruleVersionFields,
+    parameters: pagIbigContributionParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
   .discriminatedUnion('ruleKind', [
@@ -308,6 +361,8 @@ export const nationalPayrollRuleVersionFileSchema = z
     yearEndBonusAndCashGiftFile,
     peraFile,
     commutableRataFile,
+    philHealthContributionFile,
+    pagIbigContributionFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',

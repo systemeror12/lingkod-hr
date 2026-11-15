@@ -103,7 +103,7 @@ export interface CalculatedException {
   details: { message: string } & Record<string, unknown>;
 }
 
-export type ContributionType = 'GSIS' | 'EMPLOYEES_COMPENSATION';
+export type ContributionType = 'GSIS' | 'EMPLOYEES_COMPENSATION' | 'PHILHEALTH' | 'PAGIBIG';
 
 /** One Contribution Line (payroll-schema.md §9), as canonical decimal strings. */
 export interface CalculatedContribution {
