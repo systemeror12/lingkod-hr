@@ -239,9 +239,10 @@ export class PayrollInputsService {
    * transaction.
    *
    * Payroll does not yet correct an input a live calculation uses or a
-   * finalized payroll consumed (#649), so it refuses both as retryable. Two
-   * concurrent withdrawals of different inputs under one key fail the second
-   * caller's transaction on the key's unique index.
+   * finalized payroll consumed (#649), so it refuses both as retryable;
+   * `payroll_line_sources` records which calculation version used an input.
+   * Two concurrent withdrawals of different inputs under one key fail the
+   * second caller's transaction on the key's unique index.
    */
   async withdrawInTransaction(
     transaction: Prisma.TransactionClient,

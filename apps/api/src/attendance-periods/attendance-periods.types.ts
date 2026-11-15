@@ -199,6 +199,29 @@ export interface AttendanceDeficitFactsRead {
   facts: AttendanceDeficitFact[];
 }
 
+/** One ABSENCE fact as Payroll reads it by cutoff (ADR 0014). */
+export interface AttendanceAbsenceFact {
+  id: string;
+  publicationId: string;
+  publicationType: AttendancePayrollPublicationType;
+  employeeId: string;
+  workDate: string;
+  correctedMinutes: number;
+  /** The effective earlier value on an adjustment publication; null on an original. */
+  priorMinutes: number | null;
+  /** The source Attendance Day's expected duty minutes. */
+  expectedMinutes: number;
+}
+
+/**
+ * What Payroll reads from Attendance at a cutoff: every publication published
+ * at or before it, and their ABSENCE facts.
+ */
+export interface AttendancePayrollFactsByCutoff {
+  publicationIds: string[];
+  absenceFacts: AttendanceAbsenceFact[];
+}
+
 export interface AttendancePeriodLockResult {
   version: AttendancePeriodVersionSummary;
   dtrDocumentIds: string[];

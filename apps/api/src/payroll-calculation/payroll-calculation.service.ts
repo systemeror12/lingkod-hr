@@ -1,16 +1,39 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { prisma, setDatabaseContext } from '@lingkod-hr/database';
 import { log } from '@lingkod-hr/observability';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
+import {
+  isoDateOf,
+  type NationalPayrollRuleKind,
+} from '../payroll-rule-versions/national-payroll-rule-versions';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
 import { calculationHash } from './calculation-hash';
+import {
+  EmployeesCompensationCalculator,
+  GsisContributionCalculator,
+} from './contribution.calculators';
+import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import type {
+  CalculatedContribution,
   CalculatedException,
   CalculatedLine,
   CalculationContext,
   PayrollCalculator,
 } from './payroll-calculator';
+import { PayrollSourcesReader } from './payroll-sources.reader';
+import {
+  CASH_GIFT_COMPONENT_CODE,
+  YEAR_END_BONUS_COMPONENT_CODE,
+  YearEndBonusCalculator,
+} from './year-end-bonus.calculator';
+
+/** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
+export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
+  YEAR_END_BONUS_COMPONENT_CODE,
+  CASH_GIFT_COMPONENT_CODE,
+];
 
 /** One queued calculation: a CALCULATING period and the version it started. */
 export interface CalculationJob {
@@ -38,7 +61,8 @@ interface LockedPeriod {
 
 /**
  * The calculation job of one Payroll Period version (hris-controls.md §5.20).
- * It resolves each Employee's compensation basis, runs every calculator, and
+ * It resolves each Employee's compensation basis, runs every calculator of the
+ * period's run type (a special period pays only the components it names), and
  * writes the Payroll Employee Results, their Payroll Lines, and the Payroll
  * Exceptions in one transaction with the period's next status: `FOR_REVIEW`
  * on a clean run, `DRAFT` on any blocking exception. A failure rolls that
@@ -51,13 +75,23 @@ interface LockedPeriod {
  */
 @Injectable()
 export class PayrollCalculationService {
+  /** A regular period runs these. */
   private readonly calculators: readonly PayrollCalculator[];
+  /** A special period runs these; each pays only the named components it covers. */
+  private readonly specialCalculators: readonly PayrollCalculator[];
 
   constructor(
     @Inject(CompensationBasisService) private readonly compensationBasis: CompensationBasisService,
     @Inject(BasicSalaryCalculator) basicSalary: BasicSalaryCalculator,
+    @Inject(PayrollSourcesReader) private readonly sources: PayrollSourcesReader,
+    @Inject(DaysWithoutPayCalculator) daysWithoutPay: DaysWithoutPayCalculator,
+    @Inject(GsisContributionCalculator) gsis: GsisContributionCalculator,
+    @Inject(EmployeesCompensationCalculator) employeesCompensation: EmployeesCompensationCalculator,
+    @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
   ) {
-    this.calculators = [basicSalary];
+    // Contributions read the earnings before them, so they stay last.
+    this.calculators = [basicSalary, daysWithoutPay, gsis, employeesCompensation];
+    this.specialCalculators = [yearEndBonus];
   }
 
   async run(job: CalculationJob): Promise<CalculationOutcome> {
@@ -81,9 +115,29 @@ export class PayrollCalculationService {
   ): Promise<CalculationOutcome> {
     const period = await lockCalculatingPeriod(transaction, job, 'SKIP LOCKED');
     if (!period) return { outcome: 'SKIPPED' };
-    if (period.run_type !== 'REGULAR') {
-      // Start refuses a special period; reaching this means the row was written around it.
-      throw new Error('A special Payroll Period has no calculator yet.');
+    const componentIds = new Map(
+      (await transaction.payComponent.findMany({ select: { id: true, code: true } })).map(
+        (component) => [component.code, component.id],
+      ),
+    );
+    const componentCodes = new Set<string>();
+    if (period.run_type === 'SPECIAL') {
+      const named = new Set(
+        (
+          await transaction.payrollPeriodComponent.findMany({
+            where: { agencyId: job.agencyId, payrollPeriodId: job.payrollPeriodId },
+            select: { payComponentId: true },
+          })
+        ).map((component) => component.payComponentId),
+      );
+      for (const [code, id] of componentIds) if (named.has(id)) componentCodes.add(code);
+      if (
+        componentCodes.size === 0 ||
+        [...componentCodes].some((code) => !SPECIAL_PERIOD_COMPONENT_CODES.includes(code))
+      ) {
+        // Start refuses such a period; reaching this means the row was written around it.
+        throw new Error('The special Payroll Period names a component with no calculator.');
+      }
     }
 
     const snapshot = await transaction.payrollRuleSnapshot.findUnique({
@@ -93,20 +147,51 @@ export class PayrollCalculationService {
           calculationVersion: job.calculationVersion,
         },
       },
-      select: { items: { select: { nationalPayrollRuleVersionId: true } } },
+      select: { cutoffAt: true, items: { select: { nationalPayrollRuleVersionId: true } } },
     });
     if (!snapshot) throw new Error('The calculation version has no rule snapshot.');
+    const snapshotRuleVersionIds = new Set(
+      snapshot.items.flatMap((item) => item.nationalPayrollRuleVersionId ?? []),
+    );
+    const frozen = await transaction.nationalPayrollRuleVersion.findMany({
+      where: { id: { in: [...snapshotRuleVersionIds] } },
+      orderBy: { effectiveFrom: 'asc' },
+      select: {
+        id: true,
+        code: true,
+        ruleKind: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        parameters: true,
+        supersededBy: { select: { id: true, effectiveFrom: true } },
+      },
+    });
     const context: CalculationContext = {
       periodFrom: period.period_from,
       periodTo: period.period_to,
-      snapshotRuleVersionIds: new Set(
-        snapshot.items.flatMap((item) => item.nationalPayrollRuleVersionId ?? []),
-      ),
+      snapshotRuleVersionIds,
+      // A successor loaded after the snapshot froze does not end its predecessor here.
+      snapshotRuleVersions: frozen.map((version) => ({
+        id: version.id,
+        code: version.code,
+        ruleKind: version.ruleKind as NationalPayrollRuleKind,
+        effectiveFrom: isoDateOf(version.effectiveFrom),
+        effectiveTo: version.effectiveTo ? isoDateOf(version.effectiveTo) : null,
+        successorEffectiveFrom:
+          version.supersededBy && snapshotRuleVersionIds.has(version.supersededBy.id)
+            ? isoDateOf(version.supersededBy.effectiveFrom)
+            : null,
+        parameters: version.parameters,
+      })),
+      componentCodes,
     };
-    const componentIds = new Map(
-      (await transaction.payComponent.findMany({ select: { id: true, code: true } })).map(
-        (component) => [component.code, component.id],
-      ),
+    const calculators = period.run_type === 'SPECIAL' ? this.specialCalculators : this.calculators;
+
+    // The snapshot's cutoff fixes the input set, so a recalculation takes the same sources.
+    const sources = await this.sources.readInTransaction(
+      transaction,
+      job.agencyId,
+      snapshot.cutoffAt,
     );
 
     const employees = await transaction.employee.findMany({
@@ -127,15 +212,31 @@ export class PayrollCalculationService {
       // An Employee with no Service Segment on any date of the period is not in scope.
       if (basis.stretches.every((stretch) => stretch.personnel === null)) continue;
 
-      const lines: CalculatedLine[] = [];
+      const employeeSources = sources.forEmployee(employeeId);
+      const valuationBases = await this.sources.valuationBasesInTransaction(
+        transaction,
+        job.agencyId,
+        employeeId,
+        { from: context.periodFrom, to: context.periodTo },
+        employeeSources,
+      );
+      const calculated: CalculatedLine[] = [];
       const exceptions: CalculatedException[] = [];
-      for (const calculator of this.calculators) {
-        const outcome = calculator.calculate(basis, context);
-        lines.push(...outcome.lines);
+      const calculatedContributions: CalculatedContribution[] = [];
+      for (const calculator of calculators) {
+        const outcome = calculator.calculate(basis, context, calculated, {
+          ...employeeSources,
+          valuationBases,
+        });
+        calculated.push(...outcome.lines);
         exceptions.push(...outcome.exceptions);
+        calculatedContributions.push(...(outcome.contributions ?? []));
       }
-      const totals = totalsOf(lines);
       const blocked = exceptions.filter((exception) => exception.severity === 'BLOCKING');
+      // A blocked result has zero totals and no line (payroll-schema.md §7).
+      const lines = blocked.length > 0 ? [] : calculated;
+      const contributions = blocked.length > 0 ? [] : calculatedContributions;
+      const totals = totalsOf(lines);
       const result = await transaction.payrollEmployee.create({
         data: {
           agencyId: job.agencyId,
@@ -152,18 +253,21 @@ export class PayrollCalculationService {
             compensationBasis: basis,
             lines,
             exceptions,
+            contributions,
             totals,
           }),
         },
         select: { id: true },
       });
+      const written = lines.map((line) => ({ id: randomUUID(), line }));
       await transaction.payrollLine.createMany({
-        data: lines.map((line) => {
+        data: written.map(({ id, line }) => {
           const payComponentId = componentIds.get(line.componentCode);
           if (!payComponentId) {
             throw new Error(`Pay component ${line.componentCode} is not in the catalogue.`);
           }
           return {
+            id,
             agencyId: job.agencyId,
             payrollEmployeeId: result.id,
             payComponentId,
@@ -175,6 +279,22 @@ export class PayrollCalculationService {
             sourceSnapshot: toJson(line.source),
           };
         }),
+      });
+      await transaction.payrollLineSource.createMany({
+        data: written.flatMap(({ id, line }) =>
+          (line.sourceRecords ?? []).map((record) => ({
+            agencyId: job.agencyId,
+            payrollLineId: id,
+            ...record,
+          })),
+        ),
+      });
+      await transaction.contributionLine.createMany({
+        data: contributions.map((contribution) => ({
+          agencyId: job.agencyId,
+          payrollEmployeeId: result.id,
+          ...contribution,
+        })),
       });
       await transaction.payrollException.createMany({
         data: exceptions.map((exception) => ({

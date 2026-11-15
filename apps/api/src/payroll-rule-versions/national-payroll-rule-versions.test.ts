@@ -137,6 +137,33 @@ describe('rule version file', () => {
     ).toBe(false);
   });
 
+  it('holds the year-end bonus and cash gift dates, threshold, and amounts as typed parameters', () => {
+    const parse = (parameters: unknown) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('yeb', '2030-01-01', '2030-12-31'),
+        ruleKind: 'YEAR_END_BONUS_AND_CASH_GIFT',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return nationalPayrollRuleVersionFileSchema.safeParse(file).success;
+    };
+    const valid = {
+      serviceFrom: '2030-01-01',
+      asOf: '2030-10-31',
+      minimumServiceMonths: 4,
+      bonusMonthsOfBasicSalary: 1,
+      cashGiftAmount: '5000.00',
+      grantsSeparatedBeforeAsOf: true,
+    };
+    expect(parse(valid)).toBe(true);
+    expect(parse({ ...valid, asOf: '2030-01-01' })).toBe(false);
+    expect(parse({ ...valid, cashGiftAmount: '5000.001' })).toBe(false);
+    expect(parse({ ...valid, cashGiftAmount: '0' })).toBe(false);
+    expect(parse({ ...valid, minimumServiceMonths: 0 })).toBe(false);
+    expect(parse({ ...valid, taxTreatment: 'DE_MINIMIS' })).toBe(false);
+    expect(parse({ ...valid, grantsSeparatedBeforeAsOf: undefined })).toBe(false);
+  });
+
   it('reads exactly one JSON file argument', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rule-version-'));
     const path = join(directory, 'schedule.json');

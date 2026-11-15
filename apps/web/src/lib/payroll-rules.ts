@@ -1,7 +1,12 @@
 import type { StatusDisplay } from '../components/ui/status-tag';
 import { dateLabel } from './overtime-format';
 
-export type RuleKind = 'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS';
+export type RuleKind =
+  | 'SALARY_SCHEDULE'
+  | 'AUTHORIZED_DEDUCTIONS'
+  | 'GSIS_CONTRIBUTION'
+  | 'EMPLOYEES_COMPENSATION'
+  | 'YEAR_END_BONUS_AND_CASH_GIFT';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -37,6 +42,9 @@ export interface RuleVersionDetail extends RuleVersionSummary {
 export const ruleKindLabel: Record<RuleKind, string> = {
   SALARY_SCHEDULE: 'Salary schedule',
   AUTHORIZED_DEDUCTIONS: 'Authorized deductions',
+  GSIS_CONTRIBUTION: 'GSIS contribution',
+  EMPLOYEES_COMPENSATION: "Employees' Compensation",
+  YEAR_END_BONUS_AND_CASH_GIFT: 'Year-end bonus and cash gift',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */

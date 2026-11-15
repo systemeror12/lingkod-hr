@@ -58,7 +58,9 @@ export async function cleanupPayrollTenants(admin: PrismaClient, tenants: Payrol
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     for (const { agency, persons } of tenants) {
       const where = { agencyId: agency.id };
+      await transaction.payrollLineSource.deleteMany({ where });
       await transaction.payrollLine.deleteMany({ where });
+      await transaction.contributionLine.deleteMany({ where });
       await transaction.payrollException.deleteMany({ where });
       await transaction.payrollEmployee.deleteMany({ where });
       await transaction.payrollRuleSnapshotItem.deleteMany({ where });
