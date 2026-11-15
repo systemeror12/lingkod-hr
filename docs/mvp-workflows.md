@@ -359,7 +359,7 @@ flowchart TD
 
 An ordinary daytime DTR presents semantic events through the familiar AM In, AM Out, PM In, and PM Out slots. Overnight duty remains one Work Date beginning on the local date of `TIME_IN`; its view uses duty and break labels with actual dates and times. A preview is explicitly unfinalized. Each lock creates separately retained Finalized Daily Time Records and an idempotent Attendance Payroll Publication. A locked correction produces successor Attendance Day and Attendance Period Versions, corrected DTRs, and a delta publication without changing the predecessor. Leave charges each publication's tardiness and undertime facts to vacation leave (WF-008).
 
-Complete events on a rest day create Unscheduled Service, not approved overtime or COC. Outside-schedule and statutory-night-window minutes remain separate factual candidate-hours handoffs to Phase 8. No biometric import exists in MVP.
+Complete events on a rest day create Unscheduled Service, not approved overtime or COC. Worked expected-duty minutes between 18:00 and 06:00 publish at lock as a night-duty fact. Outside-schedule minutes, night ones included, remain separate factual candidate-hours handoffs to Phase 8. No biometric import exists in MVP.
 
 ---
 

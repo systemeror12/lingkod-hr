@@ -3726,6 +3726,7 @@ model AttendanceDay {
   ctoMinutes                 Int       @default(0) @map("cto_minutes")
   outsideScheduleMinutes     Int       @default(0) @map("outside_schedule_minutes")
   statutoryNightWindowMinutes Int      @default(0) @map("statutory_night_window_minutes")
+  nightDutyMinutes           Int       @default(0) @map("night_duty_minutes")
   calculationVersion         Int       @default(1) @map("calculation_version")
   ruleSnapshot               Json      @map("rule_snapshot")
   isCurrent                  Boolean   @default(true) @map("is_current")

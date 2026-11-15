@@ -55,6 +55,7 @@ export class AttendanceDayTotalsDto {
   readonly ctoMinutes: number;
   readonly outsideScheduleMinutes: number;
   readonly statutoryNightWindowMinutes: number;
+  readonly nightDutyMinutes: number;
 
   constructor(totals: AttendanceDayTotalsSummary) {
     this.expectedMinutes = totals.expectedMinutes;
@@ -71,6 +72,7 @@ export class AttendanceDayTotalsDto {
     this.ctoMinutes = totals.ctoMinutes;
     this.outsideScheduleMinutes = totals.outsideScheduleMinutes;
     this.statutoryNightWindowMinutes = totals.statutoryNightWindowMinutes;
+    this.nightDutyMinutes = totals.nightDutyMinutes;
   }
 }
 

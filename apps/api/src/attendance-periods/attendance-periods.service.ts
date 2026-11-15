@@ -103,7 +103,7 @@ const daySelect = {
   postedLeaveMinutes: true,
   ctoMinutes: true,
   outsideScheduleMinutes: true,
-  statutoryNightWindowMinutes: true,
+  nightDutyMinutes: true,
 } as const;
 
 type DayRecord = Prisma.AttendanceDayGetPayload<{ select: typeof daySelect }>;
@@ -149,6 +149,7 @@ const DAY_COVERAGE_COLUMNS: Readonly<Record<string, keyof DayRecord>> = {
   TARDINESS: 'lateMinutes',
   UNDERTIME: 'undertimeMinutes',
   ABSENCE: 'absenceMinutes',
+  NIGHT_DUTY: 'nightDutyMinutes',
 };
 
 interface PopulationSources {
@@ -1072,7 +1073,6 @@ export class AttendancePeriodsService {
         factTypeMinutes: payroll.factTypeMinutes,
         expectedMinutes: payroll.expectedMinutes,
         excludedOutsideScheduleMinutes: payroll.excludedOutsideScheduleMinutes,
-        excludedStatutoryNightWindowMinutes: payroll.excludedStatutoryNightWindowMinutes,
       },
     };
   }
@@ -1084,7 +1084,6 @@ export class AttendancePeriodsService {
     factTypeMinutes: Record<AttendancePayrollFactType, number>;
     expectedMinutes: number;
     excludedOutsideScheduleMinutes: number;
-    excludedStatutoryNightWindowMinutes: number;
   } {
     const lines = deriveAttendancePayrollFactLines(memberships.map((row) => payrollSourceDay(row)));
     const factTypeMinutes = summarizeAttendancePayrollFactMinutes(lines);
@@ -1134,10 +1133,6 @@ export class AttendancePeriodsService {
       expectedMinutes,
       excludedOutsideScheduleMinutes: memberships.reduce(
         (total, row) => total + row.attendanceDay.outsideScheduleMinutes,
-        0,
-      ),
-      excludedStatutoryNightWindowMinutes: memberships.reduce(
-        (total, row) => total + row.attendanceDay.statutoryNightWindowMinutes,
         0,
       ),
     };
@@ -1702,6 +1697,7 @@ function payrollSourceDay(row: MembershipRecord): PayrollFactSourceDay {
     attendanceDayId: row.attendanceDayId,
     employeeId: row.attendanceDay.employeeId,
     workDate: formatDate(row.attendanceDay.workDate),
+    nightDutyMinutes: row.attendanceDay.nightDutyMinutes,
     segments: row.attendanceDay.segments.map((segment) => ({
       dutyRelation: segment.dutyRelation,
       coverageType: segment.coverageType,

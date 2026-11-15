@@ -59,7 +59,6 @@ interface Reconciliation {
     factTypeMinutes: Record<string, number>;
     expectedMinutes: number;
     excludedOutsideScheduleMinutes: number;
-    excludedStatutoryNightWindowMinutes: number;
   };
 }
 
@@ -549,8 +548,9 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
             </tbody>
           </Table>
           <p className="m-0 border-t border-border px-4 py-3 text-small text-ink-muted">
-            Outside-schedule and statutory night window minutes stay outside this publication and
-            remain a separate candidate-hours handoff.
+            Night duty is worked expected-duty time between 18:00 and 06:00. Outside-schedule
+            minutes, night ones included, stay outside this publication and remain a separate
+            candidate-hours handoff.
           </p>
         </Panel>
       ) : null}

@@ -72,6 +72,7 @@ export interface AttendanceDayTotalsSummary {
   ctoMinutes: number;
   outsideScheduleMinutes: number;
   statutoryNightWindowMinutes: number;
+  nightDutyMinutes: number;
 }
 
 export interface AttendanceDayRuleSnapshot {

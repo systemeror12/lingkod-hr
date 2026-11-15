@@ -427,6 +427,8 @@ CREATE TABLE attendance_days (
   cto_minutes integer NOT NULL DEFAULT 0 CHECK (cto_minutes >= 0),
   outside_schedule_minutes integer NOT NULL DEFAULT 0 CHECK (outside_schedule_minutes >= 0),
   statutory_night_window_minutes integer NOT NULL DEFAULT 0 CHECK (statutory_night_window_minutes >= 0),
+  night_duty_minutes integer NOT NULL DEFAULT 0
+    CHECK (night_duty_minutes >= 0 AND night_duty_minutes <= statutory_night_window_minutes),
   calculation_version integer NOT NULL DEFAULT 1 CHECK (calculation_version > 0),
   rule_snapshot jsonb NOT NULL,
   is_current boolean NOT NULL DEFAULT true,
@@ -587,6 +589,8 @@ Add a no-overlap exclusion constraint for Attendance Day Segments within one cal
 Segment boundaries are whole minutes, while Attendance Event and Attendance Context timestamps keep their seconds. Calculation counts Fully Covered Minutes (ADR 0005): a timed interval starts at the first whole minute at or after its raw start and ends at the last whole minute at or before its raw end, so no segment starts before or ends after its raw source. `rule_snapshot.minuteRule` records `FULLY_COVERED_MINUTE`, and the input fingerprint includes it.
 
 An overnight calculation remains one Attendance Day under the beginning-local-date Work Date, while each segment keeps the holiday classification of its actual local calendar date. Complete events on a rest day create `UNSCHEDULED_SERVICE` with no deficit minutes.
+
+The statutory night window runs from 18:00 to 06:00 of the next day in the Work Schedule Version's time zone (RA No. 11701; CSC-DBM-GCG JC No. 1, s. 2023). `statutory_night_window_minutes` counts every worked minute in it; `night_duty_minutes` counts only worked minutes inside expected duty, so scheduled breaks, outside-schedule service, and minutes on a Non-Working Holiday after midnight stay out. A Day with worked night-window minutes records the window in its input fingerprint, so a Day calculated under the former 22:00 start reads stale until recalculated; a Day without such minutes keeps its fingerprint (#659).
 
 A Non-Working Holiday (`REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, `LOCAL_HOLIDAY`, or `WORK_SUSPENSION`) removes expected duty for the minutes on its actual calendar date, so an overnight shift loses only the portion after midnight on the holiday. Service rendered there is recorded like rest-day service: `OUTSIDE_SCHEDULE` worked minutes and `UNSCHEDULED_SERVICE`, with no deficit, premium, overtime, or credit. `SPECIAL_WORKING` keeps ordinary duty. The rule is fixed and shared with Leave's working-day count; Work Schedule Versions carry no holiday setting (ADR 0006). A partial-day work suspension is recorded as Attendance Context, not as a `WORK_SUSPENSION` entry. Outside-schedule and statutory-night-window totals remain factual candidates, not compensation decisions.
 
@@ -812,7 +816,8 @@ CREATE TABLE attendance_payroll_facts (
   work_date date NOT NULL,
   fact_type text NOT NULL CHECK (fact_type IN (
     'EXPECTED','WORKED','OFFICIAL_BUSINESS','OFFICIAL_TRAVEL','TRAINING',
-    'APPROVED_ABSENCE','POSTED_LEAVE','CTO','TARDINESS','UNDERTIME','ABSENCE'
+    'APPROVED_ABSENCE','POSTED_LEAVE','CTO','TARDINESS','UNDERTIME','ABSENCE',
+    'NIGHT_DUTY'
   )),
   holiday_classification text,
   stable_source_key text NOT NULL,
@@ -837,7 +842,7 @@ CREATE TABLE attendance_payroll_facts (
 
 Attendance Period Lock must atomically validate Attendance Period Reconciliation, set the approved version to `LOCKED`, set an initially open stable period to `FINALIZED`, create one DTR per covered Employee, create exactly one idempotent publication, and append audit and outbox events. Any failure leaves the version `APPROVED` and creates none of those outputs.
 
-An adjustment publication contains only changed facts and records prior, corrected, and nonnegative directional difference values. It never edits or retracts the original publication, assigns money or rates, or selects the payroll period that consumes the difference. Posted leave is retained as attendance provenance while Leave owns its payroll effect. Outside-schedule and statutory-night-window minutes do not enter these publications.
+An adjustment publication contains only changed facts and records prior, corrected, and nonnegative directional difference values. It never edits or retracts the original publication, assigns money or rates, or selects the payroll period that consumes the difference. Posted leave is retained as attendance provenance while Leave owns its payroll effect. Each Attendance Day with `night_duty_minutes` publishes one `NIGHT_DUTY` fact with no holiday classification; reconciliation refuses a lock when it exceeds the Day total, and a changed night-duty quantity appears in an adjustment publication like any other fact. Outside-schedule minutes, night ones included, do not enter these publications.
 
 ---
 

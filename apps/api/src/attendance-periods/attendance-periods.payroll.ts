@@ -3,8 +3,8 @@ import { ATTENDANCE_PAYROLL_FACT_TYPES } from './attendance-periods.types';
 
 /**
  * One Attendance Day segment reduced to the facts the segment proves. Only
- * expected-duty segments participate: outside-schedule and statutory night
- * window minutes remain Phase 8 candidate-hours handoffs and never enter an
+ * expected-duty segments participate: outside-schedule minutes, night ones
+ * included, remain Phase 8 candidate-hours handoffs and never enter an
  * Attendance Payroll Publication.
  */
 export interface PayrollFactSourceSegment {
@@ -20,6 +20,8 @@ export interface PayrollFactSourceDay {
   attendanceDayId: string;
   employeeId: string;
   workDate: string;
+  /** Worked expected-duty minutes in the statutory 18:00-06:00 night window. */
+  nightDutyMinutes: number;
   segments: readonly PayrollFactSourceSegment[];
 }
 
@@ -97,7 +99,9 @@ function segmentMinutes(segment: PayrollFactSourceSegment): number {
  * Derive the exact nonnegative minute lines of one Attendance Period Version.
  * Expected duty contributes one EXPECTED line per holiday classification and
  * one coverage or deficit line per classification, so the expected minutes
- * reconcile exactly as covered-plus-uncovered.
+ * reconcile exactly as covered-plus-uncovered. A Day with night duty adds one
+ * NIGHT_DUTY line with no holiday classification; it overlaps WORKED minutes
+ * and stays outside that identity.
  */
 export function deriveAttendancePayrollFactLines(
   days: readonly PayrollFactSourceDay[],
@@ -129,6 +133,23 @@ export function deriveAttendancePayrollFactLines(
           stableSourceKey,
         });
       }
+    }
+    if (day.nightDutyMinutes > 0) {
+      const stableSourceKey = attendancePayrollFactKey({
+        employeeId: day.employeeId,
+        workDate: day.workDate,
+        factType: 'NIGHT_DUTY',
+        holidayClassification: null,
+      });
+      lines.set(stableSourceKey, {
+        employeeId: day.employeeId,
+        workDate: day.workDate,
+        attendanceDayId: day.attendanceDayId,
+        factType: 'NIGHT_DUTY',
+        holidayClassification: null,
+        minutes: day.nightDutyMinutes,
+        stableSourceKey,
+      });
     }
   }
   return [...lines.values()].sort((left, right) =>

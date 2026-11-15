@@ -278,6 +278,15 @@ it.skipIf(!enabled)(
         WORKED: 480,
       });
       expect(reconciliation.payroll.excludedOutsideScheduleMinutes).toBe(120);
+      // 18:00-19:00 is worked night-window time outside expected duty: it
+      // stays a factual Day total and never becomes night duty.
+      expect(reconciliation.payroll.factTypeMinutes.NIGHT_DUTY).toBe(0);
+      expect(
+        await admin.attendanceDay.findUniqueOrThrow({
+          where: { id: fixture.attendanceDayId },
+          select: { statutoryNightWindowMinutes: true, nightDutyMinutes: true },
+        }),
+      ).toEqual({ statutoryNightWindowMinutes: 60, nightDutyMinutes: 0 });
 
       await services.periods.approve(fixture.officerContext, submitted.version.id, {});
       const [first, second] = await Promise.all([
@@ -296,6 +305,66 @@ it.skipIf(!enabled)(
         await admin.attendancePayrollFact.count({ where: { agencyId: fixture.agencyId } }),
       ).toBe(2);
       expect(await admin.dtrDocument.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+    } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'publishes worked scheduled duty from 18:00 as one night-duty fact per Attendance Day',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture({
+      dutyTimes: ['10:00', '19:00'],
+      eventTimes: [
+        ['TIME_IN', '10:00'],
+        ['BREAK_OUT', '12:00'],
+        ['BREAK_IN', '13:00'],
+        ['TIME_OUT', '19:00'],
+      ],
+    });
+    const { admin, services } = fixture;
+    try {
+      await activateLockRoute(fixture);
+      await approveSubmission(fixture);
+      const submitted = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      const reconciliation = await services.periods.reconcile(
+        fixture.administratorContext,
+        submitted.version.id,
+      );
+      expect(reconciliation.ok).toBe(true);
+      expect(reconciliation.payroll.factCount).toBe(3);
+      expect(reconciliation.payroll.factTypeMinutes).toMatchObject({
+        EXPECTED: 480,
+        WORKED: 480,
+        NIGHT_DUTY: 60,
+      });
+
+      await services.periods.approve(fixture.officerContext, submitted.version.id, {});
+      await services.periods.lock(fixture.administratorContext, submitted.version.id);
+      const publication = await services.periods.findPublication(
+        fixture.administratorContext,
+        submitted.version.id,
+      );
+      const night = publication.facts.filter((fact) => fact.factType === 'NIGHT_DUTY');
+      expect(night).toHaveLength(1);
+      expect(night[0]).toMatchObject({
+        attendanceDayId: fixture.attendanceDayId,
+        holidayClassification: null,
+        correctedMinutes: 60,
+        priorMinutes: null,
+      });
+      const stored = await admin.attendancePayrollFact.findFirstOrThrow({
+        where: { agencyId: fixture.agencyId, factType: 'NIGHT_DUTY' },
+        select: { stableSourceKey: true, employeeId: true, workDate: true },
+      });
+      expect(stored.stableSourceKey).toBe(
+        `${stored.employeeId}|${stored.workDate.toISOString().slice(0, 10)}|NIGHT_DUTY|NONE`,
+      );
     } finally {
       await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
       await admin.$disconnect();

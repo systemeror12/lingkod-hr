@@ -73,6 +73,7 @@ export interface DtrManifestDay {
     postedLeaveMinutes: number;
     outsideScheduleMinutes: number;
     statutoryNightWindowMinutes: number;
+    nightDutyMinutes: number;
   };
   schedule: {
     dayRuleId: string | null;

@@ -25,6 +25,7 @@ const totals = {
   postedLeaveMinutes: 0,
   outsideScheduleMinutes: 0,
   statutoryNightWindowMinutes: 0,
+  nightDutyMinutes: 0,
 };
 
 const ordinaryDay: DtrManifestDay = {

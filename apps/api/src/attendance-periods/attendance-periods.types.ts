@@ -22,6 +22,7 @@ export const ATTENDANCE_PAYROLL_FACT_TYPES = [
   'TARDINESS',
   'UNDERTIME',
   'ABSENCE',
+  'NIGHT_DUTY',
 ] as const;
 export type AttendancePayrollFactType = (typeof ATTENDANCE_PAYROLL_FACT_TYPES)[number];
 
@@ -98,8 +99,8 @@ export interface AttendancePeriodReconciliation {
     factMinutes: number;
     factTypeMinutes: Record<AttendancePayrollFactType, number>;
     expectedMinutes: number;
+    /** Worked minutes outside expected duty, night ones included; never published. */
     excludedOutsideScheduleMinutes: number;
-    excludedStatutoryNightWindowMinutes: number;
   };
 }
 

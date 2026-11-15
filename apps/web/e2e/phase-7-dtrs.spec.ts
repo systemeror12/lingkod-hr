@@ -392,6 +392,11 @@ test('reviews, returns, approves, refuses a changed-source lock, and locks an At
     await expect(publication).toContainText('WORKED');
     await expect(publication).toContainText('OFFICIAL_BUSINESS');
     await expect(publication).not.toContainText('UNDERTIME');
+    // Daytime duty publishes no night-duty fact.
+    await expect(publication).not.toContainText('NIGHT_DUTY');
+    await expect(publication).toContainText(
+      'Night duty is worked expected-duty time between 18:00 and 06:00.',
+    );
   } finally {
     await reviewerContext.close();
   }
