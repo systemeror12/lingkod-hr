@@ -778,6 +778,10 @@ _Avoid_: Payroll employee, pay record, payslip
 One calculated earning, deduction, employer share, or informational amount within a Payroll Employee Result, with its component, quantity, rate, rule version, and sources. It is never overridden.
 _Avoid_: Pay item, manual line, Payment Instruction
 
+**Payroll Certification**:
+The HR Certifier's record that one calculation version of a Payroll Period, identified by the hash of its Payroll Employee Results, is certified. It is revoked with a reason, never edited or deleted, and a period has at most one in force.
+_Avoid_: Approval, sign-off, certified payroll export
+
 **Payroll Hold**:
 The Payroll Preparer's reasoned decision to leave one Employee who has a blocking exception out of a Payroll Period so the rest can proceed. It waives nothing: the Employee gets no Payroll Employee Result in that period.
 _Avoid_: Exception waiver, withheld payslip, excluded employee

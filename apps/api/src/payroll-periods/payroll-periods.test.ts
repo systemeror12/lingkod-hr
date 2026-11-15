@@ -1,6 +1,8 @@
 import type { RequestContext } from '@lingkod-hr/auth';
 import { describe, expect, it, vi } from 'vitest';
 import { REQUIRED_PERMISSIONS } from '../auth/auth.decorators';
+import { calculationHash, payrollCalculationHash } from '../payroll-calculation/calculation-hash';
+import { PayrollCertificationService } from './payroll-certification.service';
 import { ruleVersionsInEffectDuring } from './payroll-rule-snapshots';
 import { PayrollPeriodsController } from './payroll-periods.controller';
 import {
@@ -25,6 +27,24 @@ describe('a regular period month', () => {
     expect(isOneCalendarMonth('2026-03-02', '2026-04-01')).toBe(false);
     expect(isOneCalendarMonth('2026-03-01', '2026-04-30')).toBe(false);
     expect(isOneCalendarMonth('2026-03-16', '2026-03-31')).toBe(false);
+  });
+});
+
+describe('the calculation hash a certification binds', () => {
+  const a = { employeeId: '00000000-0000-4000-8000-00000000000a', calculationHash: 'a'.repeat(64) };
+  const b = { employeeId: '00000000-0000-4000-8000-00000000000b', calculationHash: 'b'.repeat(64) };
+
+  it('hashes the results in Employee order, whatever order they were read in', () => {
+    expect(payrollCalculationHash([b, a])).toBe(payrollCalculationHash([a, b]));
+    expect(payrollCalculationHash([a, b])).toBe(calculationHash([a, b]));
+  });
+
+  it('changes when any result changes, and covers an empty calculation', () => {
+    expect(payrollCalculationHash([a, { ...b, calculationHash: 'c'.repeat(64) }])).not.toBe(
+      payrollCalculationHash([a, b]),
+    );
+    expect(payrollCalculationHash([a])).not.toBe(payrollCalculationHash([a, b]));
+    expect(payrollCalculationHash([])).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -111,6 +131,40 @@ describe('the Payroll Period controller', () => {
     ).toEqual(['payroll.periods.calculate']);
   });
 
+  it('needs the §6.10 permission for the read and each review command', () => {
+    const required = (handler: keyof PayrollPeriodsController) =>
+      Reflect.getMetadata(REQUIRED_PERMISSIONS, PayrollPeriodsController.prototype[handler]);
+    expect(required('read')).toEqual(['payroll.periods.read']);
+    expect(required('certify')).toEqual(['payroll.periods.certify']);
+    expect(required('revokeCertification')).toEqual(['payroll.periods.revoke_certification']);
+    expect(required('returnForCorrection')).toEqual(['payroll.periods.return']);
+  });
+
+  it('refuses each review command without its permission held Agency-wide', async () => {
+    const service = new PayrollCertificationService();
+    const ownScope: RequestContext = {
+      ...context,
+      permissions: [
+        { code: 'payroll.periods.certify', scopePolicy: 'OWN' },
+        { code: 'payroll.periods.revoke_certification', scopePolicy: 'OWN' },
+        { code: 'payroll.periods.return', scopePolicy: 'OWN' },
+      ],
+    };
+    const forbidden = { statusCode: 403, code: 'PAYROLL_PERIOD_REVIEW_FORBIDDEN' };
+    await expect(
+      service.certify(ownScope, periodId, {
+        calculationVersion: 1,
+        calculationHash: 'a'.repeat(64),
+      }),
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      service.revokeCertification(ownScope, periodId, { reason: 'x', rowVersion: 1 }),
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      service.returnForCorrection(ownScope, periodId, { reason: 'x', rowVersion: 1 }),
+    ).rejects.toMatchObject(forbidden);
+  });
+
   it('refuses to start a calculation without payroll.periods.calculate', async () => {
     await expect(
       new PayrollPeriodsService().startCalculation(context, periodId, { rowVersion: 1 }),
@@ -119,7 +173,7 @@ describe('the Payroll Period controller', () => {
 
   it('refuses another Agency or a malformed period before calling the service', async () => {
     const service = { create: vi.fn(), moveCutoff: vi.fn(), cancelDraft: vi.fn() };
-    const controller = new PayrollPeriodsController(service as never);
+    const controller = new PayrollPeriodsController(service as never, {} as never);
     const other = '00000000-0000-4000-8000-000000000009';
 
     await expect(controller.create(other, {}, context)).rejects.toMatchObject({ status: 404 });
@@ -142,7 +196,7 @@ describe('the Payroll Period controller', () => {
           new PayrollPeriodsServiceError('Not draft.', 409, 'PAYROLL_PERIOD_NOT_DRAFT'),
         ),
     };
-    const controller = new PayrollPeriodsController(service as never);
+    const controller = new PayrollPeriodsController(service as never, {} as never);
 
     await expect(
       controller.cancelDraft(agencyId, periodId, { reason: 'x', rowVersion: 1 }, context),

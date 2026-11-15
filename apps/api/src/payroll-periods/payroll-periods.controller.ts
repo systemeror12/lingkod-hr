@@ -1,13 +1,24 @@
-import { Body, Controller, HttpException, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpException,
+  Inject,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
+import { PayrollCertificationService } from './payroll-certification.service';
 import {
   PayrollPeriodsService,
   PayrollPeriodsServiceError,
+  type PayrollPeriodDetail,
   type PayrollPeriodSummary,
 } from './payroll-periods.service';
 
@@ -16,7 +27,23 @@ const periodIdSchema = z.string().uuid();
 @Controller('agencies')
 @UseGuards(AuthGuard, PermissionGuard)
 export class PayrollPeriodsController {
-  constructor(@Inject(PayrollPeriodsService) private readonly service: PayrollPeriodsService) {}
+  constructor(
+    @Inject(PayrollPeriodsService) private readonly service: PayrollPeriodsService,
+    @Inject(PayrollCertificationService)
+    private readonly certification: PayrollCertificationService,
+  ) {}
+
+  @Get(':agencyId/payroll-periods/:periodId')
+  @RequirePermission('payroll.periods.read')
+  async read(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodDetail }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return { period: await translate(context, () => this.service.read(context, id)) };
+  }
 
   @Post(':agencyId/payroll-periods')
   @RequirePermission('payroll.periods.create')
@@ -54,6 +81,7 @@ export class PayrollPeriodsController {
     const id = parsePeriodId(periodId, context);
     return { period: await translate(context, () => this.service.cancelDraft(context, id, body)) };
   }
+
   @Post(':agencyId/payroll-periods/:periodId/calculate')
   @RequirePermission('payroll.periods.calculate')
   async startCalculation(
@@ -66,6 +94,55 @@ export class PayrollPeriodsController {
     const id = parsePeriodId(periodId, context);
     return {
       period: await translate(context, () => this.service.startCalculation(context, id, body)),
+    };
+  }
+
+  @Post(':agencyId/payroll-periods/:periodId/certify')
+  @RequirePermission('payroll.periods.certify')
+  async certify(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return {
+      period: await translate(context, () => this.certification.certify(context, id, body)),
+    };
+  }
+
+  @Post(':agencyId/payroll-periods/:periodId/revoke-certification')
+  @RequirePermission('payroll.periods.revoke_certification')
+  async revokeCertification(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return {
+      period: await translate(context, () =>
+        this.certification.revokeCertification(context, id, body),
+      ),
+    };
+  }
+
+  @Post(':agencyId/payroll-periods/:periodId/return')
+  @RequirePermission('payroll.periods.return')
+  async returnForCorrection(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return {
+      period: await translate(context, () =>
+        this.certification.returnForCorrection(context, id, body),
+      ),
     };
   }
 }

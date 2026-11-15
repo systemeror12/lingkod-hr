@@ -324,27 +324,28 @@ Create:
 5. `payroll_periods` (0153, #333), with the deferred `payroll_inputs.consumed_by_payroll_period_id` foreign key
 6. `payroll_period_components` (0153, #333)
 7. `payroll_period_actors` (0153, #333)
-8. `authorized_payroll_component_inputs` (0156, #346), and its `payroll_periods` foreign key (0157)
-9. `payroll_inputs`
-10. `deduction_obligations` (0158, #352)
-11. `payroll_rule_snapshots` (0153, #333)
-12. `payroll_rule_snapshot_items` (0153, #333), its authorized-input reference (0157, #346), and its applicability reference (0159, #618)
-13. `payroll_employees`
-14. `payroll_exceptions`
-15. `payroll_holds`
-16. `payroll_adjustments`
-17. `payroll_adjustment_causes`
-18. `payroll_lines`
-19. `payroll_line_sources`
-20. `payroll_consumed_attendance_facts`
-21. `contribution_lines`
-22. `tax_lines`
-23. `loan_deduction_lines`
-24. `payslips`
-25. `remittance_schedules`
-26. `payment_exports`
-27. `payment_instructions`
-28. `disbursement_outcomes`
+8. `payroll_certifications` (0168, #334)
+9. `authorized_payroll_component_inputs` (0156, #346), and its `payroll_periods` foreign key (0157)
+10. `payroll_inputs`
+11. `deduction_obligations` (0158, #352)
+12. `payroll_rule_snapshots` (0153, #333)
+13. `payroll_rule_snapshot_items` (0153, #333), its authorized-input reference (0157, #346), and its applicability reference (0159, #618)
+14. `payroll_employees`
+15. `payroll_exceptions`
+16. `payroll_holds`
+17. `payroll_adjustments`
+18. `payroll_adjustment_causes`
+19. `payroll_lines`
+20. `payroll_line_sources`
+21. `payroll_consumed_attendance_facts`
+22. `contribution_lines`
+23. `tax_lines`
+24. `loan_deduction_lines`
+25. `payslips`
+26. `remittance_schedules`
+27. `payment_exports`
+28. `payment_instructions`
+29. `disbursement_outcomes`
 
 The first three are platform-wide: no `agency_id`, no Agency policy, `SELECT`
 only for `hris_app`, and rows loaded by the `hris_operator` command (#328, ADR

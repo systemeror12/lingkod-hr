@@ -22,3 +22,19 @@ export function canonicalJson(value: unknown): string {
 export function calculationHash(value: unknown): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
+
+/**
+ * The hash of one calculation version as a whole: the SHA-256 of its Payroll
+ * Employee Results' hashes in Employee order. A certification binds it (#334),
+ * so what was certified is exactly the results that were reviewed. Like each
+ * result's hash, it leaves the version out.
+ */
+export function payrollCalculationHash(
+  results: readonly { employeeId: string; calculationHash: string }[],
+): string {
+  return calculationHash(
+    results
+      .map(({ employeeId, calculationHash: hash }) => ({ employeeId, calculationHash: hash }))
+      .sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0)),
+  );
+}
