@@ -22,6 +22,7 @@ import type {
   CalculationContext,
   PayrollCalculator,
 } from './payroll-calculator';
+import { runPayrollChecks } from './payroll-checks';
 import { PayrollSourcesReader } from './payroll-sources.reader';
 import {
   CASH_GIFT_COMPONENT_CODE,
@@ -64,9 +65,11 @@ interface LockedPeriod {
  * It resolves each Employee's compensation basis, runs every calculator of the
  * period's run type (a special period pays only the components it names), and
  * writes the Payroll Employee Results, their Payroll Lines, and the Payroll
- * Exceptions in one transaction with the period's next status: `FOR_REVIEW`
- * on a clean run, `DRAFT` on any blocking exception. A failure rolls that
- * back and returns the period to `DRAFT` with the reason.
+ * Exceptions, then runs the checks over what it stored (`runPayrollChecks`),
+ * in one transaction with the period's next status: `FOR_REVIEW` on a clean
+ * run, `DRAFT` on any blocking exception. A warning alone does not return the
+ * period. A failure rolls that back and returns the period to `DRAFT` with
+ * the reason.
  *
  * A retry is safe: the run locks the period row and does nothing unless the
  * period is still `CALCULATING` at the job's version, so a second or
@@ -311,6 +314,13 @@ export class PayrollCalculationService {
       results += 1;
       blockingExceptions += blocked.length;
     }
+    blockingExceptions += (
+      await runPayrollChecks(transaction, {
+        ...job,
+        runType: period.run_type,
+        periodFrom: context.periodFrom,
+      })
+    ).blocking;
 
     if (blockingExceptions > 0) {
       const reason = `${blockingExceptions} blocking exception${blockingExceptions === 1 ? '' : 's'} in calculation version ${job.calculationVersion}; correct the source or hold the Employee, then calculate again.`;

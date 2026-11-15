@@ -1072,9 +1072,12 @@ VOIDED
 | DRAFT       | Cancel draft period        | VOIDED      | Payroll Preparer                         | `payroll.periods.create`               | Reason                                                                              | Nothing was consumed; audit                                          |
 | DRAFT       | Place or lift Payroll Hold | DRAFT       | Payroll Preparer                         | `payroll.periods.calculate`            | Employee-level blocking exception; reason                                           | Employee left out; audit                                             |
 | DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                         | `payroll.periods.calculate`            | Cutoff passed; rule snapshot taken                                                  | New calculation version; queue calculation                           |
+| DRAFT       | Resolve exception          | DRAFT       | Payroll Preparer                         | `payroll.periods.calculate`            | Open exception of the current version; reason                                       | Record the actor and reason; audit                                   |
+| DRAFT       | Acknowledge warning        | DRAFT       | Payroll Preparer                         | `payroll.periods.calculate`            | Open warning of the current version; reason                                         | Record the actor and reason; audit                                   |
 | CALCULATING | Complete calculation       | FOR_REVIEW  | System                                   | Internal                               | No technical failure; results stored                                                | Run validations                                                      |
 | CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                | `payroll.periods.reopen`               | Failure or blocking setup issue                                                     | Record failure                                                       |
 | FOR_REVIEW  | Return for correction      | DRAFT       | Accounting Reviewer / HR Certifier       | `payroll.periods.return`               | Review comment required                                                             | Unlock permitted inputs                                              |
+| FOR_REVIEW  | Acknowledge warning        | FOR_REVIEW  | Payroll Preparer                         | `payroll.periods.calculate`            | Open warning of the current version; reason                                         | Record the actor and reason; audit                                   |
 | FOR_REVIEW  | Certify HR inputs          | CERTIFIED   | HR Certifying Officer                    | `payroll.periods.certify`              | Personnel, attendance, and leave checks complete; no open blocking exception        | Lock certified version                                               |
 | CERTIFIED   | Revoke certification       | FOR_REVIEW  | HR Certifying Officer / Payroll Approver | `payroll.periods.revoke_certification` | Reason                                                                              | Supersede the review export and revoke its reviews; audit            |
 | CERTIFIED   | Confirm funding review     | CERTIFIED   | Budget Officer                           | `payroll.periods.review_funding`       | Current Certified Payroll Review Export; external reference and evidence            | Immutable Payroll Export Checkpoint Review                           |
@@ -1120,6 +1123,18 @@ Exceptions (#27, #328):
 - A blocking exception prevents certification and finalization and cannot be
   waived. It ends when its cause is fixed and the period recalculated.
 - A warning is acknowledged with a reason.
+- After storing the lines, the calculation runs four checks (#623). Negative
+  net pay, missing data (a calculated result of a regular period with no
+  basic salary line), and a duplicate (two lines of one result that agree in
+  component, line type, rule version, quantity, rate, amount, and source)
+  block. A variance warns: an Employee whose net pay differs at all from their
+  result in the Agency's last `FINALIZED` regular period. With no such period,
+  or no prior result for the Employee, nothing is compared. The severities of
+  negative net pay and variance are the developer's rulings.
+- Only an exception of the period's current calculation version is decided,
+  once, from `OPEN`. Resolving records that the cause was fixed, only in
+  `DRAFT`, and lifts nothing: the next calculation checks again. Acknowledging
+  or resolving needs a reason and records the actor and an Audit Event.
 - A Payroll Hold leaves one Employee with a blocking exception out of the
   period. The Employee gets no Payroll Employee Result, stays on the exception
   report, and keeps their sources unconsumed. An exception that affects the
@@ -1163,6 +1178,9 @@ refused. There is no warning mode and no override.
 | Accounting review | Confirm or return the accounting checkpoint review                                                     |
 | Approval          | Approve, return before finalization, finalize, approve or decline void, release or withhold a Payslip  |
 | Disbursement      | Record a Disbursement Outcome on a Payment Instruction of the period                                   |
+
+Acknowledging a warning and resolving an exception are Preparation commands
+(#623).
 
 `Return for correction`, `Request void`, opening a Payroll Adjustment, and
 generating an export assign no function, because each only sends work back,
@@ -1250,7 +1268,8 @@ have at most one open adjustment, and a later cause joins it.
   schedule in force, or the FY 2027 deduction list and floor. Each blocks the
   part of #648 that needs it.
 - No authority found addresses negative net pay. A recovery never produces
-  it, because of the floor. Its severity stays the developer's ruling.
+  it, because of the floor. By the developer's ruling, it is a blocking
+  exception (#623).
 - The tax and contribution treatment of a difference is specified with #348,
   #350, and #632.
 
@@ -1801,8 +1820,9 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `payroll.disbursement.update`          |                — |            — |              — |                   C |                C |       A |        — |       R |
 | `payroll.audit.read`                   |                R |            R |              R |                   R |                R |       R |        R |       A |
 
-`payroll.periods.void` requests a void, and `payroll.periods.approve_void`
-approves or declines it. `payroll.inputs.adjust` opens a Payroll Adjustment for
+`payroll.periods.read`, held Agency-wide, reads a period's Payroll Exceptions
+(#623). `payroll.periods.void` requests a void, and
+`payroll.periods.approve_void` approves or declines it. `payroll.inputs.adjust` opens a Payroll Adjustment for
 recalculation, where it enters no amount, and records or approves an Authorized
 Payroll Component Input (#346). `payroll.compensation.read`, held
 Agency-wide, reads an Employee's compensation basis and the source of each

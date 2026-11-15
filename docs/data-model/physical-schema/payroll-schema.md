@@ -689,8 +689,9 @@ Migration 0162 creates `payroll_employees` (#621); `payroll_holds` arrives
 with the hold command. The calculation writes one result for each Employee
 with a Service Segment on any date of the period: `CALCULATED` with its lines,
 or `EXCEPTION` with a blocking exception, the frozen basis, zero totals, and no
-line. A trigger admits a result only while its period is `CALCULATING` at the
-result's version, rejects every `DELETE`, and lets an `UPDATE` change only
+line. A check's blocking exception (§10) names the Employee and leaves the
+result `CALCULATED`. A trigger admits a result only while its period is
+`CALCULATING` at the result's version, rejects every `DELETE`, and lets an `UPDATE` change only
 `status`. `calculation_hash` is the SHA-256 of the canonical JSON of what the
 calculation decided: the Employee, the period dates, the compensation basis,
 the lines, the exceptions, and the totals. Row ids, times, and the version are
@@ -1053,9 +1054,32 @@ Employee, not a result, because a blocked or held Employee may have none.
 Migration 0162 creates `payroll_exceptions` (#621). The calculation writes
 them, `OPEN`, with the cause in `details.message`; `reason` stays for an
 acknowledgement or resolution. A trigger admits one only while its period is
-`CALCULATING` at its version and rejects every `DELETE`. `hris_app` holds
-`SELECT` and `INSERT` until the acknowledge and resolve commands grant
-`UPDATE`.
+`CALCULATING` at its version and rejects every `DELETE`.
+
+After storing the lines, the calculation runs its checks (#623) in the same
+transaction and writes what they raise, so a blocking one returns the period
+to `DRAFT` and a warning alone does not:
+
+| `exception_type`         | Severity | Raised for                                                                                                             |
+| ------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `NET_PAY_NEGATIVE`       | BLOCKING | A result whose `net_amount` is below zero (the developer's ruling)                                                     |
+| `BASIC_SALARY_MISSING`   | BLOCKING | A `CALCULATED` result of a regular period with no `BASIC_SALARY` earning line                                          |
+| `PAYROLL_LINE_DUPLICATE` | BLOCKING | Two lines of one result with equal component, line type, rule version, quantity, rate, amount, and `source_snapshot`   |
+| `NET_PAY_VARIANCE`       | WARNING  | A `CALCULATED` result of a regular period whose net differs from the Employee's in the last `FINALIZED` regular period |
+
+Variance has no threshold (the developer's ruling). With no `FINALIZED`
+regular period before this one, or no result for the Employee in it, nothing
+is compared. A check's exception leaves the result's `status` and lines as
+calculated, and is not part of its `calculation_hash`.
+
+Migration 0167 adds the acknowledge and resolve commands. `hris_app` may
+update only `status`, `reason`, and `resolved_by_membership_id`, under an
+Agency policy, and a trigger allows one decision, from `OPEN`, on the
+period's current calculation version, with the period row locked `FOR SHARE`:
+`ACKNOWLEDGED` (a warning) while the period is `DRAFT` or `FOR_REVIEW`, and
+`RESOLVED` while it is `DRAFT`. A resolution lifts nothing: the next
+calculation checks the cause again. A CHECK requires a decided exception to
+carry a reason and the deciding membership, and an `OPEN` one neither.
 
 ```sql
 CREATE TABLE payroll_adjustments (

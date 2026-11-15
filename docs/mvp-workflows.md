@@ -680,6 +680,10 @@ version loaded after the snapshot blocks certification of a `FOR_REVIEW` period
 until it is recalculated, and only flags a `CERTIFIED` or `APPROVED` one
 (#328).
 
+Of the checks after the lines are stored, negative net pay, missing data, and
+duplicates block, and a variance against the last finalized regular period
+warns. hris-controls.md §5.20 defines each (#623).
+
 Budget and Accounting review are Payroll Export Checkpoint Reviews on the
 current Certified Payroll Review Export, recorded in either order while the
 period is `CERTIFIED`. A returned review sends the period back to `FOR_REVIEW`

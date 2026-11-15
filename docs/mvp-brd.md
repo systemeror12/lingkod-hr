@@ -1272,6 +1272,18 @@ stays on the exception report, and keeps their sources unconsumed. An exception
 that affects the whole period cannot be held out (#328). The held month is paid
 later as a Payroll Adjustment (PAY-008).
 
+After storing the lines, each calculation checks its results (#623):
+
+- negative net pay blocks, by the developer's ruling;
+- a variance warns, by the developer's ruling, when an Employee's net pay
+  differs at all from their result in the Agency's last `FINALIZED` regular
+  period. There is no threshold. With no such period, or no prior result for
+  the Employee, nothing is compared;
+- missing data blocks: a calculated result of a regular period with no basic
+  salary line;
+- a duplicate blocks: two lines of one result that agree in component, line
+  type, rule version, quantity, rate, amount, and source.
+
 Budget and Accounting review are not Payroll Period statuses. A Budget Officer
 and an Accounting Reviewer shall each record a Payroll Export Checkpoint Review
 against the current Certified Payroll Review Export, in either order, and
@@ -1366,9 +1378,10 @@ No authority found settles four points, and each blocks part of #648: whether
 the Employee's written consent alone allows a deduction, the date a
 COA-decreed obligation is incurred for the priority order, the installment
 schedule in force, and the FY 2027 deduction list and floor. No authority
-found addresses negative net pay; a recovery never produces it, and its
-severity stays the developer's ruling. Until #648 is built, a negative
-adjustment shall stay open and reported, and no period shall carry it.
+found addresses negative net pay; a recovery never produces it. By the
+developer's ruling, negative net pay is a blocking exception (#623). Until #648
+is built, a negative adjustment shall stay open and reported, and no period
+shall carry it.
 
 A source module corrects an effect it posted by asking Payroll to withdraw the
 Payroll Input. A pending input shall be cancelled, and a replacement is a new
