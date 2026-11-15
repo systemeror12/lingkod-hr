@@ -29,6 +29,7 @@ export interface AttendanceDayTotals {
   postedLeaveMinutes: number;
   outsideScheduleMinutes: number;
   statutoryNightWindowMinutes: number;
+  nightDutyMinutes: number;
 }
 
 export interface AttendanceDayRuleSnapshot {
@@ -868,7 +869,8 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
             ['Approved absence', totals.approvedAbsenceMinutes],
             ['Posted leave', totals.postedLeaveMinutes],
             ['Outside schedule', totals.outsideScheduleMinutes],
-            ['Night window', totals.statutoryNightWindowMinutes],
+            ['Night window (18:00–06:00)', totals.statutoryNightWindowMinutes],
+            ['Night duty', totals.nightDutyMinutes],
           ] as const
         ).map(([label, minutes]) => (
           <div className="rounded-control border border-border bg-canvas px-3 py-2" key={label}>

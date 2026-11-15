@@ -94,6 +94,8 @@ export interface AttendanceDayCalculationInput {
    * quantity. They contribute no coverage but still change the Day's inputs.
    */
   unplacedSources?: readonly { sourceType: string; sourceId: string }[] | undefined;
+  /** Whether the calculated Day has worked minutes in the statutory night window. */
+  workedInNightWindow?: boolean | undefined;
 }
 
 export interface AttendanceCalculationSegment {
@@ -120,7 +122,10 @@ export interface AttendanceCalculationTotals {
   postedLeaveMinutes: number;
   ctoMinutes: number;
   outsideScheduleMinutes: number;
+  /** Worked minutes in the statutory night window, inside or outside expected duty. */
   statutoryNightWindowMinutes: number;
+  /** Worked expected-duty minutes in the statutory night window: the night-duty fact. */
+  nightDutyMinutes: number;
 }
 
 export interface AttendanceDayCalculationResult {
@@ -146,7 +151,12 @@ interface MinuteDayRule {
 }
 
 const MINUTES_PER_DAY = 1440;
-const NIGHT_WINDOW_START_MINUTE = 22 * 60;
+/**
+ * The statutory night window of RA No. 11701 and CSC-DBM-GCG JC No. 1, s. 2023:
+ * 6:00 p.m. to 6:00 a.m. of the following day, in the Work Schedule Version's
+ * time zone.
+ */
+const NIGHT_WINDOW_START_MINUTE = 18 * 60;
 const NIGHT_WINDOW_END_MINUTE = 6 * 60;
 /** Defensive bound so malformed upstream data cannot spin over years of minutes. */
 const MAX_CALCULATED_MINUTES = 3 * MINUTES_PER_DAY;
@@ -175,6 +185,14 @@ export const ATTENDANCE_MINUTE_RULE = 'FULLY_COVERED_MINUTE';
  * Fixed Day Rules keep their whole duty window and do not carry it.
  */
 export const ATTENDANCE_EXPECTED_END_RULE = 'REQUIRED_MINUTES';
+
+/**
+ * The statutory night window, recorded in the input fingerprint of a Day with
+ * worked night-window minutes so a Day calculated under the former 22:00 start
+ * reads stale. A Day without such minutes keeps its fingerprint: its stored
+ * night totals are zero under either window.
+ */
+export const ATTENDANCE_NIGHT_WINDOW_RULE = '18:00-06:00';
 
 /** The whole minute a boundary falls in; minutes are the ledger's unit of account. */
 function minuteOf(value: Date): number {
@@ -490,20 +508,16 @@ function classifyDeficits(segments: PendingSegment[]): void {
   }
 }
 
+/**
+ * The statutory night windows a Work Date's worked time can reach: the night
+ * that began the evening before, which holds duty starting before 06:00, the
+ * night of the Work Date, and the next night for duty that runs past it.
+ */
 function nightWindowIntervals(workDate: string, timezone: string): Interval[] {
-  const today = dayBoundary(workDate, timezone);
-  const tomorrow = dayBoundary(addDateValueDays(workDate, 1), timezone);
-  const dayAfter = dayBoundary(addDateValueDays(workDate, 2), timezone);
-  const intervals: Interval[] = [
-    { start: today + NIGHT_WINDOW_START_MINUTE, end: tomorrow + NIGHT_WINDOW_END_MINUTE },
-  ];
-  if (dayAfter - tomorrow === MINUTES_PER_DAY) {
-    intervals.push({
-      start: tomorrow + NIGHT_WINDOW_START_MINUTE,
-      end: dayAfter + NIGHT_WINDOW_END_MINUTE,
-    });
-  }
-  return intervals;
+  return [-1, 0, 1].map((offset) => ({
+    start: dayBoundary(addDateValueDays(workDate, offset), timezone) + NIGHT_WINDOW_START_MINUTE,
+    end: dayBoundary(addDateValueDays(workDate, offset + 1), timezone) + NIGHT_WINDOW_END_MINUTE,
+  }));
 }
 
 function splitByCalendarDate(
@@ -567,7 +581,9 @@ function sequenceException(issue: {
  * `workedMinutes` and `outsideScheduleMinutes` also include worked time outside
  * expected duty. Deficits only classify uncovered expected duty. Minutes on a
  * Non-Working Holiday date are never expected duty, so service on them is
- * outside the schedule.
+ * outside the schedule. `statutoryNightWindowMinutes` counts all worked minutes
+ * in the statutory night window; `nightDutyMinutes` counts only those inside
+ * expected duty.
  */
 export function calculateAttendanceDay(
   input: AttendanceDayCalculationInput,
@@ -590,6 +606,7 @@ export function calculateAttendanceDay(
     ctoMinutes: 0,
     outsideScheduleMinutes: 0,
     statutoryNightWindowMinutes: 0,
+    nightDutyMinutes: 0,
   };
 
   for (const issue of evaluateAttendanceSequence(
@@ -605,7 +622,8 @@ export function calculateAttendanceDay(
     coverageType: 'WORKED' as const,
     sources: input.events.map((event) => ({ sourceType: 'ATTENDANCE_EVENT', id: event.id })),
   }));
-  const nightMinutes = totalMinutes(intersect(nightWindowIntervals(workDate, timezone), worked));
+  const nightWindow = nightWindowIntervals(workDate, timezone);
+  const nightMinutes = totalMinutes(intersect(nightWindow, worked));
 
   const contextCoverage: Array<
     Interval & {
@@ -675,6 +693,7 @@ export function calculateAttendanceDay(
       .map(({ start, end }) => ({ start, end }));
   }
   totals.expectedMinutes = totalMinutes(expected);
+  const nightDutyMinutes = totalMinutes(intersect(nightWindow, intersect(worked, expected)));
 
   const coverageByMinute = new Map<
     number,
@@ -798,6 +817,7 @@ export function calculateAttendanceDay(
   }
 
   totals.statutoryNightWindowMinutes = nightMinutes;
+  totals.nightDutyMinutes = nightDutyMinutes;
 
   const outputSegments: AttendanceCalculationSegment[] = [];
   for (const segment of segments) {
@@ -954,6 +974,7 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
             .sort((left, right) => left.sourceId.localeCompare(right.sourceId)),
         }
       : {}),
+    ...(input.workedInNightWindow ? { nightWindow: ATTENDANCE_NIGHT_WINDOW_RULE } : {}),
   });
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }

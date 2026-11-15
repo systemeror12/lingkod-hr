@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest';
 import type { WorkScheduleDayRuleSummary } from '../attendance-configuration/work-schedules.service';
 import {
   ATTENDANCE_EXPECTED_END_RULE,
+  ATTENDANCE_NIGHT_WINDOW_RULE,
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
   unplacedCtoInputIds,
@@ -393,6 +394,9 @@ it('removes expected duty only for the overnight minutes on the holiday date', (
     absenceMinutes: 0,
     undertimeMinutes: 0,
     statutoryNightWindowMinutes: 480,
+    // Only 22:00-24:00 is still expected duty; the holiday minutes after
+    // midnight are outside-schedule night service, not night duty.
+    nightDutyMinutes: 120,
   });
   expect(
     worked.segments.map((segment) => [segment.dutyRelation, segment.holidayClassification]),
@@ -644,6 +648,55 @@ it('places a fixed overnight break on the next calendar day', () => {
     absenceMinutes: 0,
     outsideScheduleMinutes: 0,
   });
+});
+
+it('counts night duty from 18:00 across midnight and leaves the break out', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        dutyStartTime: '16:00',
+        dutyEndTime: '01:00',
+        endNextCalendarDay: true,
+        requiredMinutes: 480,
+        breaks: [{ ...lunchBreak, breakStartTime: '20:00', breakEndTime: '21:00' }],
+      }),
+      events: [at('16:00', 'TIME_IN'), at('01:00', 'TIME_OUT', 'TIME_OUT-next', 1)],
+    }),
+  );
+
+  expect(result.exceptions).toEqual([]);
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    workedMinutes: 480,
+    outsideScheduleMinutes: 0,
+    // 18:00-01:00 is 420 minutes; the 20:00-21:00 break is not worked.
+    statutoryNightWindowMinutes: 360,
+    nightDutyMinutes: 360,
+  });
+});
+
+it('keeps outside-schedule night minutes out of night duty', () => {
+  const result = calculateAttendanceDay(
+    input({ events: [at('08:00', 'TIME_IN'), at('20:30', 'TIME_OUT')] }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 540,
+    outsideScheduleMinutes: 210,
+    statutoryNightWindowMinutes: 150,
+    nightDutyMinutes: 0,
+  });
+});
+
+it('counts scheduled duty that ends at 06:00 inside the night window', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({ dutyStartTime: '04:00', dutyEndTime: '12:00', requiredMinutes: 480 }),
+      events: [at('04:00', 'TIME_IN'), at('12:00', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({ statutoryNightWindowMinutes: 120, nightDutyMinutes: 120 });
 });
 
 it('anchors a flexible day on its latest permitted start when nothing qualifies', () => {
@@ -1075,6 +1128,23 @@ it('forces a flexible Day recalculation without moving a fixed Day fingerprint',
   const fixedPayload = hashedPayloads[0]!;
   expect(fingerprintDayRule(fixedPayload)).not.toHaveProperty('expectedEnd');
   expect(fixedFingerprint).toBe(digestOf(fixedPayload));
+});
+
+it('forces a Day with night-window service to recalculate without moving a daytime Day', () => {
+  hashedPayloads.length = 0;
+  const night = fingerprintAttendanceDayInput(input({ workedInNightWindow: true }));
+  const nightPayload = JSON.parse(hashedPayloads[0]!) as Record<string, unknown>;
+  expect(nightPayload.nightWindow).toBe(ATTENDANCE_NIGHT_WINDOW_RULE);
+
+  // Without the marker the canonical input is what a Day calculated under the
+  // 22:00 window stored, so its fingerprint no longer matches.
+  delete nightPayload.nightWindow;
+  expect(night).not.toBe(digestOf(JSON.stringify(nightPayload)));
+
+  hashedPayloads.length = 0;
+  const daytime = fingerprintAttendanceDayInput(input({ workedInNightWindow: false }));
+  expect(JSON.parse(hashedPayloads[0]!)).not.toHaveProperty('nightWindow');
+  expect(daytime).toBe(fingerprintAttendanceDayInput(input()));
 });
 
 it('fingerprints a new effective governing version even when its rules are identical', () => {

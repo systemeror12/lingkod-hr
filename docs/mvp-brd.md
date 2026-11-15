@@ -639,7 +639,8 @@ The system shall calculate:
 - official business, official travel, training, approved non-leave absence, and posted-leave coverage;
 - incomplete, duplicate, out-of-order, unmatched, and ambiguous time events as blocking Attendance Exceptions;
 - holiday and work-arrangement classification from the exact effective versions;
-- factual outside-schedule and statutory-night-window minutes without treating them as authorized overtime, COC, night differential, or compensation.
+- factual outside-schedule minutes and statutory-night-window minutes, the 6:00 p.m. to 6:00 a.m. window of RA No. 11701, without treating them as authorized overtime, COC, night differential, or compensation;
+- night-duty minutes: worked expected-duty minutes inside that window, which Attendance Period Lock publishes as the approved night hours Payroll prices.
 
 Calculations shall use exact whole minutes without a default grace period or timestamp rounding. One immutable Attendance Day calculation version shall preserve its governing service applicability, Schedule Assignment, Work Schedule Version, Work Arrangement Version, Holiday Calendar Version, source records, rules, and non-overlapping Attendance Day Segments. Missing or conflicting authoritative input shall fail closed as an Attendance Exception.
 
@@ -661,9 +662,9 @@ Submitting an Attendance Period for review shall create an immutable Attendance 
 
 An HR Officer shall approve an Attendance Period Version, and a different HR Administrator shall lock it. Lock shall fail closed unless Attendance Period Reconciliation proves complete applicability, current approved submissions and Attendance Day versions, no unresolved exceptions or corrections, unchanged source bindings, valid routed authority, and matching DTR and payroll-publication counts and minute totals.
 
-Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects, and Leave charges tardiness and undertime facts through Attendance Deficit Charges.
+Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects, and Leave charges tardiness and undertime facts through Attendance Deficit Charges. Each Attendance Day with night-duty minutes publishes one night-duty fact; a Day without them publishes none.
 
-A Locked Attendance Adjustment shall create and lock a complete successor Attendance Period Version rather than reopen its predecessor. Its adjustment publication shall link the predecessor, omit unchanged facts, and state each changed fact's prior value, corrected value, and nonnegative `INCREASE` or `DECREASE` difference. Outside-schedule and statutory-night-window minutes shall remain separate factual candidate-hours handoffs to Overtime and COC processing.
+A Locked Attendance Adjustment shall create and lock a complete successor Attendance Period Version rather than reopen its predecessor. Its adjustment publication shall link the predecessor, omit unchanged facts, and state each changed fact's prior value, corrected value, and nonnegative `INCREASE` or `DECREASE` difference. A changed night-duty quantity shall publish as such a difference. Outside-schedule minutes, including those in the night window, shall remain separate factual candidate-hours handoffs to Overtime and COC processing.
 
 ---
 

@@ -98,6 +98,7 @@ const daySelect = {
   ctoMinutes: true,
   outsideScheduleMinutes: true,
   statutoryNightWindowMinutes: true,
+  nightDutyMinutes: true,
   calculationVersion: true,
   ruleSnapshot: true,
   isCurrent: true,
@@ -241,6 +242,7 @@ function daySummary(record: AttendanceDayRecord): AttendanceDaySummary {
       ctoMinutes: record.ctoMinutes,
       outsideScheduleMinutes: record.outsideScheduleMinutes,
       statutoryNightWindowMinutes: record.statutoryNightWindowMinutes,
+      nightDutyMinutes: record.nightDutyMinutes,
     },
     openExceptionCount: record.exceptions.length,
     calculatedAt: record.calculatedAt ? record.calculatedAt.toISOString() : null,
@@ -1323,6 +1325,7 @@ export class AttendanceDaysService {
           .map((entry) => ({ sourceType: 'POSTED_LEAVE', sourceId: entry.inputId })),
         ...unplacedCto.map((sourceId) => ({ sourceType: 'CTO_INPUT', sourceId })),
       ],
+      workedInNightWindow: result.totals.statutoryNightWindowMinutes > 0,
     });
     return {
       fingerprint,
@@ -1397,6 +1400,7 @@ export class AttendanceDaysService {
         ctoMinutes: 0,
         outsideScheduleMinutes: 0,
         statutoryNightWindowMinutes: 0,
+        nightDutyMinutes: 0,
       },
       segments: [],
       exceptions: [

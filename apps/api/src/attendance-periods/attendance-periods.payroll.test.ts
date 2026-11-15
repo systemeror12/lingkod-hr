@@ -27,8 +27,15 @@ function segment(
 function day(
   attendanceDayId: string,
   segments: readonly PayrollFactSourceSegment[],
+  nightDutyMinutes = 0,
 ): PayrollFactSourceDay {
-  return { attendanceDayId, employeeId: 'employee-1', workDate: WORK_DATE, segments };
+  return {
+    attendanceDayId,
+    employeeId: 'employee-1',
+    workDate: WORK_DATE,
+    nightDutyMinutes,
+    segments,
+  };
 }
 
 describe('deriveAttendancePayrollFactLines', () => {
@@ -90,7 +97,7 @@ describe('deriveAttendancePayrollFactLines', () => {
     ).toBe(totals.EXPECTED);
   });
 
-  it('leaves outside-schedule and statutory night window minutes out of the publication', () => {
+  it('leaves outside-schedule minutes, night ones included, out of the publication', () => {
     const lines = deriveAttendancePayrollFactLines([
       day('day-1', [
         segment({ minutes: 480, coverageType: 'WORKED' }),
@@ -99,6 +106,33 @@ describe('deriveAttendancePayrollFactLines', () => {
     ]);
     expect(lines.filter((line) => line.factType === 'WORKED')[0]?.minutes).toBe(480);
     expect(summarizeAttendancePayrollFactMinutes(lines).EXPECTED).toBe(480);
+    expect(lines.some((line) => line.factType === 'NIGHT_DUTY')).toBe(false);
+  });
+
+  it('publishes one night-duty fact per Day with night duty under a stable key', () => {
+    const lines = deriveAttendancePayrollFactLines([
+      day('day-1', [segment({ minutes: 480, coverageType: 'WORKED' })], 360),
+      {
+        ...day('day-2', [segment({ minutes: 480, coverageType: 'WORKED' })]),
+        workDate: '2026-06-16',
+      },
+    ]);
+
+    const night = lines.filter((line) => line.factType === 'NIGHT_DUTY');
+    expect(night).toEqual([
+      {
+        employeeId: 'employee-1',
+        workDate: WORK_DATE,
+        attendanceDayId: 'day-1',
+        factType: 'NIGHT_DUTY',
+        holidayClassification: null,
+        minutes: 360,
+        stableSourceKey: `employee-1|${WORK_DATE}|NIGHT_DUTY|NONE`,
+      },
+    ]);
+    const totals = summarizeAttendancePayrollFactMinutes(lines);
+    expect(totals.NIGHT_DUTY).toBe(360);
+    expect(totals.EXPECTED).toBe(960);
   });
 
   it('keeps posted leave as retained attendance provenance', () => {
@@ -169,6 +203,35 @@ describe('buildAttendancePayrollAdjustmentLines', () => {
       differenceDirection: 'DECREASE',
       differenceMinutes: 480,
     });
+  });
+
+  it('publishes a changed night-duty quantity as a delta', () => {
+    const worked = [segment({ minutes: 480, coverageType: 'WORKED' })];
+    const prior = deriveAttendancePayrollFactLines([day('day-3', worked, 120)]);
+    const successor = deriveAttendancePayrollFactLines([day('day-3', worked, 360)]);
+
+    expect(buildAttendancePayrollAdjustmentLines(prior, successor)).toEqual([
+      expect.objectContaining({
+        factType: 'NIGHT_DUTY',
+        priorMinutes: 120,
+        minutes: 360,
+        differenceDirection: 'INCREASE',
+        differenceMinutes: 240,
+      }),
+    ]);
+    const removed = buildAttendancePayrollAdjustmentLines(
+      prior,
+      deriveAttendancePayrollFactLines([day('day-3', worked)]),
+    );
+    expect(removed).toEqual([
+      expect.objectContaining({
+        factType: 'NIGHT_DUTY',
+        priorMinutes: 120,
+        minutes: 0,
+        differenceDirection: 'DECREASE',
+        differenceMinutes: 120,
+      }),
+    ]);
   });
 
   it('emits nothing when the successor matches the predecessor exactly', () => {

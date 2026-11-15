@@ -98,6 +98,9 @@ test('calculates an Attendance Day from captured events and inspects its record'
   await expect(total('Late')).toContainText('1m');
   await expect(total('Undertime')).toContainText('0m');
   await expect(total('Absence')).toContainText('0m');
+  // A daytime Day has no worked minutes in the 18:00-06:00 statutory night window.
+  await expect(total('Night window (18:00–06:00)')).toContainText('0m');
+  await expect(total('Night duty')).toContainText('0m');
   const segments = record.getByRole('table', { name: 'Segments' }).locator('tbody tr');
   await expect(segments).toHaveCount(3);
   await expect(segments.nth(0)).toContainText(/8:00\s?AM – 8:01\s?AM.*Tardiness/i);

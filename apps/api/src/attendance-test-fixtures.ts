@@ -123,14 +123,17 @@ export const attendanceEmployeePermissions: RequestContext['permissions'] = [
   { code: 'attendance.reports.read', scopePolicy: 'OWN' },
 ];
 
-function dayRules(collectionAfterMinutes = 0) {
+function dayRules(
+  collectionAfterMinutes = 0,
+  [dutyStartTime, dutyEndTime]: readonly [string, string] = ['08:00', '17:00'],
+) {
   return [1, 2, 3, 4, 5, 6, 7].map((weekday) =>
     weekday <= 5
       ? {
           weekday,
           ruleType: 'FIXED' as const,
-          dutyStartTime: '08:00',
-          dutyEndTime: '17:00',
+          dutyStartTime,
+          dutyEndTime,
           requiredMinutes: 480,
           eventPattern: 'WITH_BREAK_EVENTS' as const,
           collectionBeforeMinutes: 0,
@@ -281,6 +284,8 @@ export async function createAttendanceWorkflowFixture(
       readonly ['TIME_IN' | 'BREAK_OUT' | 'BREAK_IN' | 'TIME_OUT', string]
     >;
     collectionAfterMinutes?: number;
+    /** Same-day weekday duty start and end; the 12:00-13:00 break stays. */
+    dutyTimes?: readonly [string, string];
     assignment?: boolean;
   } = {},
 ): Promise<AttendanceWorkflowFixture> {
@@ -444,7 +449,7 @@ export async function createAttendanceWorkflowFixture(
     name: 'Ordinary Work Schedule',
     scheduleType: 'REGULAR',
     effectiveDate: effectiveFrom,
-    dayRules: dayRules(options.collectionAfterMinutes ?? 0),
+    dayRules: dayRules(options.collectionAfterMinutes ?? 0, options.dutyTimes),
   });
   const scheduleActive = await services.schedules.activate(
     administratorContext,

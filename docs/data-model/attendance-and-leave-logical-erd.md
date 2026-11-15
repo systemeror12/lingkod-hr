@@ -316,6 +316,8 @@ Immutable idempotent original or adjustment batch created by an Attendance Perio
 
 One exact nonnegative minute quantity by publication, Employee, Work Date, attendance classification, source Attendance Day version, and holiday classification. Adjustment facts preserve prior value, corrected value, and a nonnegative `INCREASE` or `DECREASE` difference; they contain no rate, money, deduction, or target payroll-period decision.
 
+A `NIGHT_DUTY` fact carries one Attendance Day's `night_duty_minutes`: worked scheduled-duty minutes between 18:00 and 06:00 of the next day, in the Work Schedule Version's time zone (RA No. 11701; CSC-DBM-GCG JC No. 1, s. 2023). Its stable source key is Employee, Work Date, `NIGHT_DUTY`, and no holiday classification, so a Day publishes at most one, and a Day with none publishes none. It is the approved night hours Payroll prices for the night-shift differential; the rate and eligibility stay in Payroll (#328). Outside-schedule minutes in the window are never in it.
+
 ## `attendance_events`
 
 Immutable raw manual or web-clock event
@@ -372,7 +374,8 @@ Calculated daily attendance result
 | approved_absence_minutes       | integer      | No    |                              | Approved non-leave absence               |
 | posted_leave_minutes           | integer      | No    |                              | Leave-owned coverage                     |
 | outside_schedule_minutes       | integer      | No    |                              | Factual unscheduled service              |
-| statutory_night_window_minutes | integer      | No    |                              | Factual night-window service             |
+| statutory_night_window_minutes | integer      | No    |                              | Worked minutes 18:00-06:00, any relation |
+| night_duty_minutes             | integer      | No    |                              | Worked expected duty 18:00-06:00         |
 | calculation_version            | integer      | No    |                              | Recalculation version                    |
 | rule_snapshot                  | json         | No    |                              | Applied rules                            |
 
@@ -380,6 +383,7 @@ Calculated daily attendance result
 
 - Unique `(attendance_period_id, employee_id, work_date, calculation_version)`; one current version.
 - Negative minute values prohibited.
+- `night_duty_minutes` never exceeds `statutory_night_window_minutes`; the difference is outside-schedule night service.
 
 **Deletion behavior:** Retain all versions.
 

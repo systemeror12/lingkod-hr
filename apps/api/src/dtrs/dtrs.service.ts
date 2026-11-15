@@ -94,6 +94,7 @@ const daySelect = {
   postedLeaveMinutes: true,
   outsideScheduleMinutes: true,
   statutoryNightWindowMinutes: true,
+  nightDutyMinutes: true,
   calculationVersion: true,
   ruleSnapshot: true,
   isCurrent: true,
@@ -357,6 +358,7 @@ function manifestDay(
       postedLeaveMinutes: record.postedLeaveMinutes,
       outsideScheduleMinutes: record.outsideScheduleMinutes,
       statutoryNightWindowMinutes: record.statutoryNightWindowMinutes,
+      nightDutyMinutes: record.nightDutyMinutes,
     },
     schedule: {
       dayRuleId: dayRule?.id ?? null,
