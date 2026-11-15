@@ -40,6 +40,7 @@ import { CocAccountsModule } from './coc-accounts/coc-accounts.module';
 import { OvertimeServiceRecordsModule } from './overtime-service-records/overtime-service-records.module';
 import { CocEarnedCertificatesModule } from './coc-earned-certificates/coc-earned-certificates.module';
 import { CtoRequestsModule } from './cto-requests/cto-requests.module';
+import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/attendance-deficit-charges.module';
 
 @Module({
   imports: [
@@ -83,6 +84,7 @@ import { CtoRequestsModule } from './cto-requests/cto-requests.module';
     OvertimeServiceRecordsModule,
     CocEarnedCertificatesModule,
     CtoRequestsModule,
+    AttendanceDeficitChargesModule,
   ],
   controllers: [HealthController],
 })

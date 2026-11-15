@@ -29,6 +29,7 @@ import {
   ATTENDANCE_PERIOD_LOCK_ROUTE_CODE,
   ATTENDANCE_PERIOD_RECONCILIATION_SOURCE,
   AttendancePeriodServiceError,
+  type AttendanceDeficitFactsRead,
   type AttendancePayrollFactSummary,
   type AttendancePayrollFactType,
   type AttendancePayrollPublicationDetail,
@@ -1391,6 +1392,113 @@ export class AttendancePeriodsService {
         minutes.get(record.id) ?? 0,
       ),
       reconciliation: parseReconciliation(record.reconciliation),
+    };
+  }
+
+  /**
+   * Leave's read of one publication's TARDINESS and UNDERTIME facts, inside the
+   * caller's Agency transaction (ADR 0012). Each fact carries its Work Date's
+   * expected duty and schedule kind, the earlier facts of the same stable key,
+   * and whether a later publication superseded it. Null when the publication
+   * is not in the Agency.
+   */
+  async deficitFactsInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    publicationId: string,
+  ): Promise<AttendanceDeficitFactsRead | null> {
+    const publication = await transaction.attendancePayrollPublication.findFirst({
+      where: { agencyId, id: publicationId },
+      select: { id: true, publicationType: true },
+    });
+    if (!publication) return null;
+    const facts = await transaction.attendancePayrollFact.findMany({
+      where: {
+        agencyId,
+        attendancePayrollPublicationId: publication.id,
+        factType: { in: ['TARDINESS', 'UNDERTIME'] },
+      },
+      orderBy: [{ employeeId: 'asc' }, { workDate: 'asc' }, { stableSourceKey: 'asc' }],
+      select: {
+        id: true,
+        employeeId: true,
+        workDate: true,
+        factType: true,
+        holidayClassification: true,
+        stableSourceKey: true,
+        correctedMinutes: true,
+        priorMinutes: true,
+        attendanceDayId: true,
+        createdAt: true,
+      },
+    });
+    const related = facts.length
+      ? await transaction.attendancePayrollFact.findMany({
+          where: {
+            agencyId,
+            stableSourceKey: { in: [...new Set(facts.map((fact) => fact.stableSourceKey))] },
+            attendancePayrollPublicationId: { not: publication.id },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: { id: true, stableSourceKey: true, createdAt: true },
+        })
+      : [];
+    const days = await transaction.attendanceDay.findMany({
+      where: { agencyId, id: { in: [...new Set(facts.map((fact) => fact.attendanceDayId))] } },
+      select: { id: true, expectedMinutes: true, workScheduleVersionId: true, ruleSnapshot: true },
+    });
+    const dayRuleIdOf = (snapshot: Prisma.JsonValue): string | null => {
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+      const value = snapshot.dayRuleId;
+      return typeof value === 'string' ? value : null;
+    };
+    const scheduleIds = days.flatMap((day) =>
+      day.workScheduleVersionId ? [day.workScheduleVersionId] : [],
+    );
+    const dayRuleIds = days.flatMap((day) => {
+      const id = dayRuleIdOf(day.ruleSnapshot);
+      return id ? [id] : [];
+    });
+    const [schedules, dayRules] = await Promise.all([
+      transaction.workScheduleVersion.findMany({
+        where: { agencyId, id: { in: scheduleIds } },
+        select: { id: true, scheduleType: true },
+      }),
+      transaction.workScheduleDayRule.findMany({
+        where: { agencyId, id: { in: dayRuleIds } },
+        select: { id: true, ruleType: true },
+      }),
+    ]);
+    const dayById = new Map(days.map((day) => [day.id, day]));
+    const scheduleTypeById = new Map(schedules.map((row) => [row.id, row.scheduleType]));
+    const ruleTypeById = new Map(dayRules.map((row) => [row.id, row.ruleType]));
+    return {
+      publicationId: publication.id,
+      publicationType: publication.publicationType as AttendancePayrollPublicationType,
+      facts: facts.map((fact) => {
+        const day = dayById.get(fact.attendanceDayId);
+        const dayRuleId = day ? dayRuleIdOf(day.ruleSnapshot) : null;
+        const sameKey = related.filter((row) => row.stableSourceKey === fact.stableSourceKey);
+        return {
+          id: fact.id,
+          employeeId: fact.employeeId,
+          workDate: formatDate(fact.workDate),
+          factType: fact.factType as 'TARDINESS' | 'UNDERTIME',
+          holidayClassification: fact.holidayClassification,
+          stableSourceKey: fact.stableSourceKey,
+          correctedMinutes: fact.correctedMinutes,
+          priorMinutes: fact.priorMinutes,
+          expectedMinutes: day?.expectedMinutes ?? 0,
+          scheduleType: day?.workScheduleVersionId
+            ? (scheduleTypeById.get(day.workScheduleVersionId) ?? null)
+            : null,
+          dayRuleType: dayRuleId ? (ruleTypeById.get(dayRuleId) ?? null) : null,
+          earlierFactIds: sameKey
+            .filter((row) => row.createdAt < fact.createdAt)
+            .map((row) => row.id),
+          supersededByLaterFact: sameKey.some((row) => row.createdAt > fact.createdAt),
+        };
+      }),
     };
   }
 

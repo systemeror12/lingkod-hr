@@ -279,7 +279,7 @@ Create:
    certification, funding, posting, adjustment, and line tables
 10. the Terminal Leave Input assessment, snapshot, line, and handoff-outcome
     tables
-11. `attendance_deficit_charges`, once `payroll_inputs` exists (#340)
+11. `attendance_deficit_charges`, once `payroll_inputs` exists (#340, migration 0155)
 
 Payroll Input identifiers remain application-validated until the Payroll tables
 exist. Separation source identities remain polymorphic and are validated through

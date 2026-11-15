@@ -5570,3 +5570,34 @@ model PayrollInput {
   @@index([agencyId, sourceModule, status, acceptedAt], map: "payroll_inputs_source_status_idx")
   @@map("payroll_inputs")
 }
+
+// #340 Attendance Deficit Charges. Foreign keys, the successor and immutable
+// guards, and RLS live in migration 0155; the model keeps scalars only.
+
+/// Leave's immutable conversion and charge of one TARDINESS or UNDERTIME
+/// Attendance Payroll Fact through MC41 Table II (ADR 0012).
+model AttendanceDeficitCharge {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  employeeId              String   @map("employee_id") @db.Uuid
+  attendancePayrollFactId String   @map("attendance_payroll_fact_id") @db.Uuid
+  workDate                DateTime @map("work_date") @db.Date
+  deficitType             String   @map("deficit_type")
+  deficitMinutes          Int      @map("deficit_minutes")
+  expectedMinutes         Int      @map("expected_minutes")
+  leaveAccountId          String   @map("leave_account_id") @db.Uuid
+  policyVersionId         String   @map("policy_version_id") @db.Uuid
+  convertedQuantity       Decimal  @map("converted_quantity") @db.Decimal(12, 4)
+  chargedQuantity         Decimal  @map("charged_quantity") @db.Decimal(12, 4)
+  unpaidQuantity          Decimal  @map("unpaid_quantity") @db.Decimal(12, 4)
+  leaveLedgerEntryId      String?  @map("leave_ledger_entry_id") @db.Uuid
+  payrollInputId          String?  @map("payroll_input_id") @db.Uuid
+  supersedesChargeId      String?  @map("supersedes_charge_id") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, attendancePayrollFactId], map: "attendance_deficit_charges_fact_key")
+  @@unique([agencyId, supersedesChargeId], map: "attendance_deficit_charges_supersedes_key")
+  @@unique([agencyId, id], map: "attendance_deficit_charges_agency_id_id_key")
+  @@index([agencyId, employeeId, workDate], map: "attendance_deficit_charges_employee_date_idx")
+  @@map("attendance_deficit_charges")
+}

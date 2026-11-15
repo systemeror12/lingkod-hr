@@ -46,6 +46,8 @@ export const payrollInputSubmissionSchema = z
     quantity: quantity.nullish(),
     /** The approved source snapshot Payroll freezes with the input. */
     payload: z.record(z.string(), z.json()),
+    /** The withdrawn input this one replaces, from the same source effect chain. */
+    replacesPayrollInputId: z.string().uuid().nullish(),
   })
   .strict()
   .refine(
@@ -54,6 +56,13 @@ export const payrollInputSubmissionSchema = z
   );
 
 export type PayrollInputSubmission = z.input<typeof payrollInputSubmissionSchema>;
+
+/** A source module's request to withdraw an input it posted (payroll-schema.md §4). */
+export interface PayrollInputWithdrawal {
+  agencyId: string;
+  sourceModule: PayrollInputSourceModule;
+  payrollInputId: string;
+}
 
 export const payrollInputListFiltersSchema = z
   .object({
