@@ -254,6 +254,26 @@ const destinations: readonly (Destination & {
     permission: 'payroll.inputs.read',
   },
   {
+    href: '/compensation',
+    label: 'Compensation',
+    stage: 'Payroll',
+    permission: 'payroll.compensation.read',
+  },
+  {
+    href: '/payroll-applicability',
+    label: 'Payroll Applicability',
+    stage: 'Payroll',
+    visible: (session) =>
+      hasPermission(session, 'payroll.compensation.read') ||
+      hasPermission(session, 'payroll.compensation.manage'),
+  },
+  {
+    href: '/salary-rules',
+    label: 'Salary Rules',
+    stage: 'Payroll',
+    permission: 'payroll.compensation.read',
+  },
+  {
     href: '/users-access',
     label: 'Users & Access',
     stage: 'Oversight',

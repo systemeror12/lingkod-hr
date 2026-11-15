@@ -4,6 +4,8 @@ import type { z } from 'zod';
 import type { ApplicabilityScope } from './agency-payroll-applicabilities.schemas';
 
 export const MANAGE_PERMISSION = 'payroll.compensation.manage';
+/** Compensation access (hris-controls.md §6.10), which also reads these records. */
+export const READ_PERMISSION = 'payroll.compensation.read';
 
 export class ApplicabilityServiceError extends Error {
   constructor(

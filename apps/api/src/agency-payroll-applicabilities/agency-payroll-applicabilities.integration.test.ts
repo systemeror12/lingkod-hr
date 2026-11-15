@@ -6,6 +6,7 @@ import { DocumentsService } from '../documents/documents.service';
 import { findAgencyPayrollApplicability } from './agency-payroll-applicabilities.records';
 import type { RecordApplicability } from './agency-payroll-applicabilities.schemas';
 import { EndAgencyPayrollApplicabilityService } from './end-agency-payroll-applicability.service';
+import { ListAgencyPayrollApplicabilitiesService } from './list-agency-payroll-applicabilities.service';
 import { RecordAgencyPayrollApplicabilityService } from './record-agency-payroll-applicability.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -129,6 +130,7 @@ describe.skipIf(!enabled)('Agency Payroll Applicability in PostgreSQL', () => {
     new DocumentsService({} as never, {} as never),
   );
   const end = new EndAgencyPayrollApplicabilityService();
+  const list = new ListAgencyPayrollApplicabilitiesService();
 
   beforeAll(async () => {
     admin = new PrismaClient({ datasources: { db: { url: adminUrl() } } });
@@ -525,6 +527,46 @@ describe.skipIf(!enabled)('Agency Payroll Applicability in PostgreSQL', () => {
     await expect(
       admin.agencyPayrollApplicability.findUniqueOrThrow({ where: { id: homeRecord.id } }),
     ).resolves.toMatchObject({ effectiveTo: new Date('2070-12-31') });
+  });
+
+  it("lists the Agency's records with their names to a reader, never another Agency's", async () => {
+    const listed = await record.execute(
+      contextOf(home),
+      submission({
+        scope: 'EMPLOYEE',
+        employeeId: home.employee.id,
+        effectiveFrom: '2090-01-01',
+        effectiveTo: '2090-12-31',
+      }),
+    );
+    for (const permissions of [
+      [{ code: 'payroll.compensation.read', scopePolicy: 'AGENCY' as const }],
+      [{ code: 'payroll.compensation.manage', scopePolicy: 'AGENCY' as const }],
+    ]) {
+      const { applicabilities, payComponents } = await list.execute(contextOf(home, permissions));
+      expect(applicabilities[0]).toEqual({
+        ...listed,
+        payComponentCode: `${prefix}CONDITIONAL-${suffix}`,
+        payComponentName: 'Test component CONDITIONAL',
+        authorityDocumentNo: null,
+        recordedByName: 'Applicability A',
+      });
+      expect(await homeCount()).toBe(applicabilities.length);
+      // Only conditional components can be named, the GAA-revalidated one flagged.
+      const offered = payComponents.filter((component) => component.code.endsWith(suffix));
+      expect(offered.map(({ code, isGaaRevalidated }) => [code, isGaaRevalidated])).toEqual([
+        [`${prefix}CONDITIONAL-${suffix}`, false],
+        [`${prefix}GAA-${suffix}`, true],
+      ]);
+    }
+
+    const { applicabilities: foreignRows } = await list.execute(
+      contextOf(foreign, [{ code: 'payroll.compensation.read', scopePolicy: 'AGENCY' }]),
+    );
+    expect(foreignRows.some((row) => row.id === listed.id)).toBe(false);
+    await expect(
+      list.execute(contextOf(home, [{ code: 'payroll.inputs.read', scopePolicy: 'AGENCY' }])),
+    ).rejects.toMatchObject({ code: 'APPLICABILITY_READ_FORBIDDEN' });
   });
 
   function homeRow() {
