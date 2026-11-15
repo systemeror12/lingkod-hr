@@ -153,6 +153,7 @@ describe.skipIf(!enabled)('Payroll rule snapshots in PostgreSQL', () => {
       const where = { agencyId: home.agency.id };
       await transaction.payrollRuleSnapshotItem.deleteMany({ where });
       await transaction.authorizedPayrollComponentInput.deleteMany({ where });
+      await transaction.agencyPayrollApplicability.deleteMany({ where });
       await transaction.documentVersion.deleteMany({ where });
       await transaction.document.deleteMany({ where });
       await transaction.employee.deleteMany({ where });
@@ -308,6 +309,49 @@ describe.skipIf(!enabled)('Payroll rule snapshots in PostgreSQL', () => {
         [endsOnFirstDay, null],
         [startsOnLastDay, null],
       ].sort(),
+    );
+  });
+
+  it('references every applicability record whose period overlaps the payroll period', async () => {
+    const applicability = async (
+      effectiveFrom: string,
+      effectiveTo: string | null,
+      employee = false,
+    ) =>
+      (
+        await admin.agencyPayrollApplicability.create({
+          data: {
+            agencyId: home.agency.id,
+            payComponentId: inputComponentId,
+            scope: employee ? 'EMPLOYEE' : 'AGENCY',
+            employeeId: employee ? employeeId : null,
+            authorityDocumentVersionId: authorityId,
+            fundingReference: 'Test fixture, not an allotment',
+            effectiveFrom: new Date(effectiveFrom),
+            effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+            recordedByMembershipId: home.persons[0]!.membership.id,
+          },
+        })
+      ).id;
+    // Overlapping on the first and on the last day; the others fall outside.
+    await applicability('2801-07-02', '2801-07-31');
+    const onFirstDay = await applicability('2801-08-01', '2801-08-01');
+    await applicability('2801-09-01', '2801-09-30');
+    const fromLastDay = await applicability('2801-08-31', null, true);
+
+    const august = await special('SP-APPLICABILITY', '2801-08-01', '2801-08-31');
+    const frozen = await startCalculation(august.id);
+    expect([...frozen.agencyPayrollApplicabilityIds].sort()).toEqual(
+      [onFirstDay, fromLastDay].sort(),
+    );
+    const items = await admin.payrollRuleSnapshotItem.findMany({
+      where: {
+        payrollRuleSnapshotId: frozen.snapshotId,
+        agencyPayrollApplicabilityId: { not: null },
+      },
+    });
+    expect(items.map((item) => item.agencyPayrollApplicabilityId).sort()).toEqual(
+      [onFirstDay, fromLastDay].sort(),
     );
   });
 

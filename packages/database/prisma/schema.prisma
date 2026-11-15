@@ -5605,6 +5605,28 @@ model DeductionObligation {
 // #346 Authorized Payroll Component Inputs. Foreign keys, the mutation guard,
 // and RLS live in migrations 0156 and 0157; the model keeps scalars only.
 
+/// An Agency Payroll Applicability (payroll-schema.md §3): the Agency's
+/// evidence-backed record that a conditional component applies to the whole
+/// Agency or to one named Employee. Migration 0159 holds its overlap
+/// exclusion, foreign keys, and the guard that lets only `effective_to` move
+/// earlier.
+model AgencyPayrollApplicability {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  payComponentId             String    @map("pay_component_id") @db.Uuid
+  scope                      String
+  employeeId                 String?   @map("employee_id") @db.Uuid
+  authorityDocumentVersionId String    @map("authority_document_version_id") @db.Uuid
+  fundingReference           String    @map("funding_reference")
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  recordedByMembershipId     String    @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                 DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id])
+  @@map("agency_payroll_applicabilities")
+}
+
 /// An Authorized Payroll Component Input (payroll-schema.md §3): an approved,
 /// effective-dated amount, rate, or quantity for a component that accepts one.
 /// It is not a Payroll Input. An approved input is never edited.
@@ -5718,12 +5740,15 @@ model PayrollRuleSnapshotItem {
   agencyId                          String  @map("agency_id") @db.Uuid
   payrollRuleSnapshotId             String  @map("payroll_rule_snapshot_id") @db.Uuid
   nationalPayrollRuleVersionId      String? @map("national_payroll_rule_version_id") @db.Uuid
+  /// #618: its foreign key to agency_payroll_applicabilities is in migration 0159.
+  agencyPayrollApplicabilityId      String? @map("agency_payroll_applicability_id") @db.Uuid
   /// #346: its foreign key to authorized_payroll_component_inputs is in migration 0157.
   authorizedPayrollComponentInputId String? @map("authorized_payroll_component_input_id") @db.Uuid
 
   snapshot PayrollRuleSnapshot @relation(fields: [agencyId, payrollRuleSnapshotId], references: [agencyId, id], onDelete: Restrict, map: "payroll_rule_snapshot_items_snapshot_fkey")
 
   @@unique([payrollRuleSnapshotId, nationalPayrollRuleVersionId], map: "payroll_rule_snapshot_items_rule_version_key")
+  @@unique([payrollRuleSnapshotId, agencyPayrollApplicabilityId], map: "payroll_rule_snapshot_items_applicability_key")
   @@unique([payrollRuleSnapshotId, authorizedPayrollComponentInputId], map: "payroll_rule_snapshot_items_authorized_input_key")
   @@map("payroll_rule_snapshot_items")
 }

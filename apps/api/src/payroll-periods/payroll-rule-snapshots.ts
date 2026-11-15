@@ -125,6 +125,7 @@ export type PayrollRuleSnapshotResult =
       calculationVersion: number;
       nationalPayrollRuleVersionIds: string[];
       authorizedPayrollComponentInputIds: string[];
+      agencyPayrollApplicabilityIds: string[];
     }
   | { outcome: 'REFUSED'; code: 'PAYROLL_RULE_NOT_IN_EFFECT'; reason: string };
 
@@ -134,8 +135,8 @@ export type PayrollRuleSnapshotResult =
  * database context. Advance `calculation_version` first: one snapshot exists
  * per version. Items reference every National Payroll Rule Version, of every
  * kind, in effect on any date of the period, and every APPROVED Authorized
- * Payroll Component Input of the Agency whose effective period overlaps the
- * period; they copy no values. Whether an input is paid is the calculation's
+ * Payroll Component Input and every Agency Payroll Applicability of the Agency
+ * whose effective period overlaps the period; they copy no values. Whether an input is paid is the calculation's
  * (#626). A required rule missing or expired on any date refuses the snapshot
  * and writes nothing.
  */
@@ -177,17 +178,23 @@ export async function freezePayrollRuleSnapshot(
   }
   const nationalPayrollRuleVersionIds = coverage.ruleVersionIds;
 
+  const overlapsPeriod = {
+    agencyId: input.agencyId,
+    effectiveFrom: { lte: period.periodTo },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: period.periodFrom } }],
+  };
   const authorizedInputs = await transaction.authorizedPayrollComponentInput.findMany({
-    where: {
-      agencyId: input.agencyId,
-      status: 'APPROVED',
-      effectiveFrom: { lte: period.periodTo },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gte: period.periodFrom } }],
-    },
+    where: { ...overlapsPeriod, status: 'APPROVED' },
     orderBy: { id: 'asc' },
     select: { id: true },
   });
   const authorizedPayrollComponentInputIds = authorizedInputs.map((row) => row.id);
+  const applicabilities = await transaction.agencyPayrollApplicability.findMany({
+    where: overlapsPeriod,
+    orderBy: { id: 'asc' },
+    select: { id: true },
+  });
+  const agencyPayrollApplicabilityIds = applicabilities.map((row) => row.id);
 
   const snapshot = await transaction.payrollRuleSnapshot.create({
     data: {
@@ -198,7 +205,6 @@ export async function freezePayrollRuleSnapshot(
     },
     select: { id: true },
   });
-  // Agency Payroll Applicability references join here with their table (#618).
   const item = { agencyId: input.agencyId, payrollRuleSnapshotId: snapshot.id };
   await transaction.payrollRuleSnapshotItem.createMany({
     data: [
@@ -210,6 +216,10 @@ export async function freezePayrollRuleSnapshot(
         ...item,
         authorizedPayrollComponentInputId,
       })),
+      ...agencyPayrollApplicabilityIds.map((agencyPayrollApplicabilityId) => ({
+        ...item,
+        agencyPayrollApplicabilityId,
+      })),
     ],
   });
   return {
@@ -218,5 +228,6 @@ export async function freezePayrollRuleSnapshot(
     calculationVersion: period.calculationVersion,
     nationalPayrollRuleVersionIds,
     authorizedPayrollComponentInputIds,
+    agencyPayrollApplicabilityIds,
   };
 }
