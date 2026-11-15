@@ -15,6 +15,7 @@ import {
   GsisContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { PeraCalculator } from './pera.calculator';
 import type {
   CalculatedContribution,
   CalculatedException,
@@ -91,9 +92,11 @@ export class PayrollCalculationService {
     @Inject(GsisContributionCalculator) gsis: GsisContributionCalculator,
     @Inject(EmployeesCompensationCalculator) employeesCompensation: EmployeesCompensationCalculator,
     @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
+    @Inject(PeraCalculator) pera: PeraCalculator,
   ) {
-    // Contributions read the earnings before them, so they stay last.
-    this.calculators = [basicSalary, daysWithoutPay, gsis, employeesCompensation];
+    // Contributions read the earnings before them, so they stay last. PERA
+    // reads basic salary and the days without pay.
+    this.calculators = [basicSalary, daysWithoutPay, pera, gsis, employeesCompensation];
     this.specialCalculators = [yearEndBonus];
   }
 

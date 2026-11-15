@@ -28,9 +28,10 @@ export const YEAR_END_BONUS_RULE_KIND = 'YEAR_END_BONUS_AND_CASH_GIFT';
  * bonus counts toward the yearly exclusion for 13th-month pay and other
  * benefits (RR No. 11-2018 sec. 2.78.1(B)(11); research register R26). The
  * cash gift is a de minimis benefit, as #344 decides (RR No. 29-2025 sec.
- * 2.78.1(A)(3)(i); register open question 8).
+ * 2.78.1(A)(3)(i); register open question 8). PERA is not subject to income
+ * tax (RR No. 11-2018 sec. 2.79(B)).
  */
-export type TaxTreatment = 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS' | 'DE_MINIMIS';
+export type TaxTreatment = 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS' | 'DE_MINIMIS' | 'NON_TAXABLE';
 
 type ServedStretch = CompensationBasisStretch & { personnel: PersonnelFacts };
 type ServiceRun = { from: string; to: string };

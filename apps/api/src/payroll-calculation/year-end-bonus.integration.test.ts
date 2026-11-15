@@ -21,6 +21,7 @@ import {
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.test-fixtures';
+import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -44,6 +45,7 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
     new GsisContributionCalculator(),
     new EmployeesCompensationCalculator(),
     new YearEndBonusCalculator(),
+    new PeraCalculator(),
   );
   let admin: PrismaClient;
   let ruleId: string;
