@@ -46,7 +46,7 @@ CREATE TABLE national_payroll_rule_versions (
   rule_kind text NOT NULL
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
                          'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
-                         'YEAR_END_BONUS_AND_CASH_GIFT')),
+                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -90,7 +90,9 @@ neither is loaded until its issuance is read (section 9).
 `YEAR_END_BONUS_AND_CASH_GIFT` is one fiscal year's year-end bonus and cash
 gift rule (FY 2026 GAA sec. 75); its parameters are `serviceFrom`, `asOf`,
 `minimumServiceMonths`, `bonusMonthsOfBasicSalary`, `cashGiftAmount`, and
-`grantsSeparatedBeforeAsOf` (section 8).
+`grantsSeparatedBeforeAsOf` (section 8). `PERA` is one fiscal year's PERA rule
+(FY 2026 GAA sec. 63; DBM BC No. 2009-3 as amended); its parameters are
+`monthlyAmount` and the circular's `dailyAmount` (section 8).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -854,6 +856,22 @@ because no rule on record prorates the bonus and the record does not show a
 separation from government service rather than a transfer, a part-time cash
 gift, a casual daily wage bonus, an `INDETERMINATE` basis on October 31, and a
 schedule the snapshot did not freeze.
+
+The `PERA` component, which migration 0168 adds to the catalogue with the
+`PERA` rule kind (#342), is unconditional, revalidated against each year's GAA,
+and paid in a regular period after basic salary and salary for days without
+pay ([authorities](../../research/pera-authorities.md)). It writes one
+`EARNING` line with the PERA version as `rule_version_id`: the monthly amount
+for a full month of full-time service; `22 − days without pay` days at the
+daily amount when the period's month has days without pay, resting on the same
+sources as that month's `DAYS_WITHOUT_PAY` line; or the monthly amount times
+the employment fraction for part-time service. With no basic salary line, or
+no day with basic pay, it writes nothing (BC No. 2009-3 item 5.1).
+`source_snapshot.taxTreatment` is `NON_TAXABLE` (RR No. 11-2018
+sec. 2.79(B)). It blocks and writes no line for no version in effect on every
+date of the month or a version that changes inside it, a partial month, days
+without pay dated in another month, part-time service with days without pay, a
+casual daily wage, and an amount that is not whole centavos.
 
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line

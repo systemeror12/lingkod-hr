@@ -164,6 +164,25 @@ describe('rule version file', () => {
     expect(parse({ ...valid, grantsSeparatedBeforeAsOf: undefined })).toBe(false);
   });
 
+  it('holds the PERA monthly and daily amounts as typed parameters', () => {
+    const pera = (parameters: unknown) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('pera', '2030-01-01', '2030-12-31'),
+        ruleKind: 'PERA',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return nationalPayrollRuleVersionFileSchema.safeParse(file).success;
+    };
+    const valid = { monthlyAmount: '2000.00', dailyAmount: '90.91' };
+    expect(pera(valid)).toBe(true);
+    expect(pera({ ...valid, dailyAmount: '90.909' })).toBe(false);
+    expect(pera({ ...valid, dailyAmount: '2000.00' })).toBe(false);
+    expect(pera({ ...valid, monthlyAmount: '0' })).toBe(false);
+    expect(pera({ monthlyAmount: '2000.00' })).toBe(false);
+    expect(pera({ ...valid, taxTreatment: 'NON_TAXABLE' })).toBe(false);
+  });
+
   it('reads exactly one JSON file argument', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rule-version-'));
     const path = join(directory, 'schedule.json');

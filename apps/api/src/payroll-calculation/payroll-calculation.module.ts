@@ -11,6 +11,7 @@ import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationJob } from './payroll-calculation.job';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PayrollSourcesReader } from './payroll-sources.reader';
+import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
 @Module({
@@ -21,6 +22,7 @@ import { YearEndBonusCalculator } from './year-end-bonus.calculator';
     GsisContributionCalculator,
     EmployeesCompensationCalculator,
     YearEndBonusCalculator,
+    PeraCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

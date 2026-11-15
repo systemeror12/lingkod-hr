@@ -11,7 +11,8 @@ export type NationalPayrollRuleKind =
   | 'AUTHORIZED_DEDUCTIONS'
   | 'GSIS_CONTRIBUTION'
   | 'EMPLOYEES_COMPENSATION'
-  | 'YEAR_END_BONUS_AND_CASH_GIFT';
+  | 'YEAR_END_BONUS_AND_CASH_GIFT'
+  | 'PERA';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -201,6 +202,35 @@ const employeesCompensationFile = z
   })
   .strict();
 
+/**
+ * The PERA rule of one fiscal year (FY 2026 GAA sec. 63; DBM BC No. 2009-3,
+ * items 5.2 and 5.4, as amended by BC No. 2011-2; research
+ * docs/research/pera-authorities.md): the monthly amount for full-time
+ * service and the daily amount the circular states for a month with absences
+ * without pay. The circular states the daily amount rounded, so the file
+ * carries it as written rather than the calculator dividing.
+ */
+export const peraParameters = z
+  .object({
+    monthlyAmount: pesoAmount,
+    dailyAmount: pesoAmount,
+  })
+  .strict()
+  .refine(({ monthlyAmount, dailyAmount }) => new Prisma.Decimal(dailyAmount).lt(monthlyAmount), {
+    message: 'dailyAmount is less than monthlyAmount.',
+    path: ['dailyAmount'],
+  });
+
+export type PeraParameters = z.infer<typeof peraParameters>;
+
+const peraFile = z
+  .object({
+    ruleKind: z.literal('PERA'),
+    ...ruleVersionFields,
+    parameters: peraParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
   .discriminatedUnion('ruleKind', [
@@ -209,6 +239,7 @@ export const nationalPayrollRuleVersionFileSchema = z
     gsisContributionFile,
     employeesCompensationFile,
     yearEndBonusAndCashGiftFile,
+    peraFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',
