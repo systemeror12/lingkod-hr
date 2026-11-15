@@ -6,6 +6,7 @@ import { DocumentsService } from '../documents/documents.service';
 import { ApproveAuthorizedPayrollComponentInputService } from './approve-authorized-payroll-component-input.service';
 import { REIMBURSABLE_RATA_COMPONENT_CODE } from './authorized-payroll-component-inputs.records';
 import type { RecordAuthorizedInput } from './authorized-payroll-component-inputs.schemas';
+import { ListAuthorizedPayrollComponentInputsService } from './list-authorized-payroll-component-inputs.service';
 import { RecordAuthorizedPayrollComponentInputService } from './record-authorized-payroll-component-input.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -148,6 +149,7 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
     new DocumentsService({} as never, {} as never),
   );
   const approve = new ApproveAuthorizedPayrollComponentInputService();
+  const list = new ListAuthorizedPayrollComponentInputsService();
 
   async function cleanup(): Promise<void> {
     await admin.$transaction(async (transaction) => {
@@ -506,5 +508,43 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
     await expect(admin.authorizedPayrollComponentInput.delete({ where })).rejects.toThrow(
       /cannot be deleted/,
     );
+  });
+
+  it("lists the Agency's inputs with their names, and the components that accept one", async () => {
+    const reader = [{ code: 'payroll.inputs.read', scopePolicy: 'AGENCY' as const }];
+    const recorded = await record.execute(
+      contextOf(home, home.recorder),
+      submission({ sourceReference: 'Listed Office Order' }),
+    );
+    await approve.execute(contextOf(home, home.approver), recorded.id);
+    const foreignInput = await record.execute(contextOf(foreign, foreign.recorder), {
+      ...submission(),
+      authorityDocumentVersionId: foreign.authority.id,
+    });
+
+    const listed = await list.execute(contextOf(home, home.recorder, reader));
+    expect(listed.inputs.map(({ id }) => id)).toContain(recorded.id);
+    expect(listed.inputs.map(({ id }) => id)).not.toContain(foreignInput.id);
+    expect(listed.inputs.find(({ id }) => id === recorded.id)).toMatchObject({
+      status: 'APPROVED',
+      sourceReference: 'Listed Office Order',
+      payComponentCode: `${prefix}HONORARIA-${suffix}`,
+      payComponentName: `Test component ${prefix}HONORARIA-${suffix}`,
+      recordedByName: home.recorder.user.displayName,
+      approvedByName: home.approver.user.displayName,
+    });
+    const componentIds = listed.payComponents.map(({ id }) => id);
+    expect(componentIds).toContain(components.honoraria);
+    expect(componentIds).not.toContain(components.basic);
+
+    for (const permissions of [
+      [],
+      [{ code: 'payroll.inputs.adjust', scopePolicy: 'AGENCY' as const }],
+      [{ code: 'payroll.inputs.read', scopePolicy: 'OWN' as const }],
+    ]) {
+      await expect(list.execute(contextOf(home, home.recorder, permissions))).rejects.toMatchObject(
+        { code: 'AUTHORIZED_INPUT_READ_FORBIDDEN' },
+      );
+    }
   });
 });

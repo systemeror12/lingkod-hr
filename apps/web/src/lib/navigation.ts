@@ -11,6 +11,7 @@ export const lifecycleStages = [
   'Time & attendance',
   'Leave',
   'Overtime',
+  'Payroll',
   'Oversight',
 ] as const;
 
@@ -239,6 +240,18 @@ const destinations: readonly (Destination & {
     label: 'CTO Requests',
     stage: 'Overtime',
     permission: 'overtime.coc.read',
+  },
+  {
+    href: '/payroll-inputs',
+    label: 'Payroll Inputs',
+    stage: 'Payroll',
+    permission: 'payroll.inputs.read',
+  },
+  {
+    href: '/authorized-payroll-component-inputs',
+    label: 'Authorized Component Inputs',
+    stage: 'Payroll',
+    permission: 'payroll.inputs.read',
   },
   {
     href: '/users-access',

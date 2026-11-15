@@ -25,6 +25,15 @@ it('needs payroll.inputs.adjust to record and to approve', () => {
   ]);
 });
 
+it('needs payroll.inputs.read to list', () => {
+  expect(
+    Reflect.getMetadata(
+      REQUIRED_PERMISSIONS,
+      AuthorizedPayrollComponentInputsController.prototype.list,
+    ),
+  ).toEqual(['payroll.inputs.read']);
+});
+
 it('acts only in the acting Agency and maps service refusals to their status', async () => {
   const recordService = {
     execute: vi
@@ -34,9 +43,11 @@ it('acts only in the acting Agency and maps service refusals to their status', a
       ),
   };
   const approveService = { execute: vi.fn().mockResolvedValue({ id: inputId }) };
+  const listService = { execute: vi.fn().mockResolvedValue({ inputs: [], payComponents: [] }) };
   const controller = new AuthorizedPayrollComponentInputsController(
     recordService as never,
     approveService as never,
+    listService as never,
   );
 
   await expect(controller.record(agencyId, {} as never, context)).rejects.toMatchObject({
@@ -53,6 +64,12 @@ it('acts only in the acting Agency and maps service refusals to their status', a
   await expect(controller.approve(agencyId, 'not-an-id', context)).rejects.toMatchObject({
     status: 404,
   });
+  await expect(controller.list(agencyId, context)).resolves.toEqual({
+    inputs: [],
+    payComponents: [],
+  });
+  await expect(controller.list(otherAgency, context)).rejects.toMatchObject({ status: 404 });
+  expect(listService.execute).toHaveBeenCalledTimes(1);
   expect(recordService.execute).toHaveBeenCalledTimes(1);
   expect(approveService.execute).toHaveBeenCalledTimes(1);
 });

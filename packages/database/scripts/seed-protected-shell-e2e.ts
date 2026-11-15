@@ -1064,6 +1064,9 @@ async function seed(): Promise<void> {
     await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });
     await transaction.governmentIdentifier.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollBankAccount.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.authorizedPayrollComponentInput.deleteMany({
+      where: { agencyId: agency.id },
+    });
     await transaction.salnComplianceRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.employeeDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsOutputArtifact.deleteMany({ where: { agencyId: agency.id } });
@@ -1169,6 +1172,7 @@ async function seed(): Promise<void> {
               'E2E-LEAVE-NATIONAL-RULE',
               'E2E-LEAVE-AGENCY-CONFIG',
               'E2E-SENSITIVE-EVIDENCE',
+              'E2E-PAYROLL-AUTHORITY',
             ],
           },
         },
@@ -1210,6 +1214,7 @@ async function seed(): Promise<void> {
             'E2E-LEAVE-NATIONAL-RULE',
             'E2E-LEAVE-AGENCY-CONFIG',
             'E2E-SENSITIVE-EVIDENCE',
+            'E2E-PAYROLL-AUTHORITY',
           ],
         },
       },
@@ -1288,6 +1293,22 @@ async function seed(): Promise<void> {
       sensitiveEvidenceDocumentId,
       'HIGHLY_SENSITIVE',
     );
+    // The authority an Authorized Payroll Component Input names (payroll-inputs.spec.ts).
+    await evidence('E2E-PAYROLL-AUTHORITY', 'AGENCY_ISSUANCE', undefined, 'INTERNAL');
+    // A synthetic catalogue row that accepts an Authorized Payroll Component Input. It is not a
+    // national pay component and carries no rule.
+    await transaction.payComponent.upsert({
+      where: { code: 'E2E-AUTHORIZED-COMPONENT' },
+      update: {},
+      create: {
+        code: 'E2E-AUTHORIZED-COMPONENT',
+        name: 'E2E synthetic authorized component',
+        category: 'EARNING',
+        isConditional: true,
+        isGaaRevalidated: false,
+        acceptsAuthorizedInput: true,
+      },
+    });
     const standard = await transaction.qualificationStandard.create({
       data: {
         agencyId: agency.id,
