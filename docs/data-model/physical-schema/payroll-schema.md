@@ -320,8 +320,32 @@ immutable `payload_snapshot` must bind the exact Monetization Posting, approved
 per-account credit quantities, stable effect key, valuation date, fixed
 calculator and authority-bound factor, policy and authority Document Versions,
 funding determination, Approval Decisions, resolved salary source and value,
-calculation steps, and evidence-backed rounding rule and result. The live
-`payroll_monetization_earning_inputs` table folds into this one in #339.
+calculation steps, and evidence-backed rounding rule and result.
+
+Leave posts it with `source_key` the posting key, `source_type`
+`MONETIZATION_POSTING`, `source_id` the Leave Monetization Request Version, and
+`effective_date` the valuation date. Payroll adds its valuation to the payload
+under `payrollValuation`; `payload_hash` stays the hash of Leave's request, so
+a retry replays without valuing again. The calculator is S × credits ×
+0.0481927, the published constant for monetization and terminal leave alike
+(CSC MC No. 2, s. 2016; DBM BC No. 2016-2, sec. 3.1), and Payroll rejects any
+other calculator or factor. The authority's S is the highest monthly salary
+received; no recorded rule says which compensation-basis value that is, so
+Payroll names `AUTHORITATIVE_SALARY_SOURCE` until one is recorded (#614). Once
+a salary rule is recorded, Payroll reads the salary through the compensation
+basis (#332) and still names it while the basis does not resolve. No authority
+settles the valuation date or centavo rounding (#614, questions 1 and 4), so
+Payroll answers `RETRYABLE_FAILURE` naming `VALUATION_DATE_RULE` and
+`ROUNDING_RULE` too. A Monetization Adjustment fails closed until it binds to
+withdrawal (#357).
+
+Migration 0161 moved the phase-local `payroll_monetization_earning_inputs` rows
+here with their identifiers and dropped the table (#339). A superseded row is
+`CANCELLED`, and its successor names it in `replaces_payroll_input_id`. Each
+row's old status and the columns this table lacks stay in `payload_snapshot`
+under `movedFrom` and `payrollValuation`. `payroll_monetization_adjustment_outcomes`
+keeps its rows, its foreign keys now on this table, and has no writer until
+#357.
 
 For leave without pay, `payload_snapshot` holds the day quantity for each Work
 Date of the allocation line. Payroll values each calendar month's days at the

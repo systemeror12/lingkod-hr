@@ -156,7 +156,6 @@ model Agency {
   monetizationPostings          MonetizationPosting[]
   monetizationAdjustments       MonetizationAdjustment[]
   monetizationAdjustmentLines   MonetizationAdjustmentLine[]
-  payrollMonetizationInputs     PayrollMonetizationEarningInput[]
   payrollMonetizationOutcomes   PayrollMonetizationAdjustmentOutcome[]
   terminalLeaveInputAssessments TerminalLeaveInputAssessment[]
   terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
@@ -467,7 +466,6 @@ model AgencyMembership {
   certifiedMonetizationCredits            MonetizationCreditCertification[]    @relation("MonetizationCertificationCertifier")
   reviewedMonetizationFunding             MonetizationFundingDetermination[]   @relation("MonetizationFundingReviewer")
   postedMonetizationPostings              MonetizationPosting[]                @relation("MonetizationPostingPoster")
-  createdPayrollMonetizationInputs        PayrollMonetizationEarningInput[]    @relation("PayrollMonetizationEarningInputCreator")
   recordedPayrollMonetizationOutcomes     PayrollMonetizationAdjustmentOutcome[] @relation("PayrollMonetizationAdjustmentOutcomeRecorder")
   assessedTerminalLeaveInputs            TerminalLeaveInputAssessment[]       @relation("TerminalLeaveInputAssessmentAssessor")
 
@@ -2076,7 +2074,6 @@ model Employee {
   dtrDocuments           DtrDocument[]           @relation("DtrDocumentEmployee")
   attendancePayrollFacts AttendancePayrollFact[]  @relation("AttendancePayrollFactEmployee")
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
-  monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   payrollInputs          PayrollInput[]          @relation("PayrollInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
   mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
@@ -4692,47 +4689,10 @@ model MonetizationAdjustmentLine {
   @@map("monetization_adjustment_lines")
 }
 
-/// Phase-local Payroll-owned input store. Superseded by the Payroll module's
-/// payroll_inputs table; the production Payroll port remains fail-closed until
-/// that module owns monetization inputs.
-model PayrollMonetizationEarningInput {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agencyId              String   @map("agency_id") @db.Uuid
-  employeeId            String   @map("employee_id") @db.Uuid
-  sourceType            String   @map("source_type") @db.Citext
-  sourceId              String   @map("source_id") @db.Uuid
-  sourceVersionKey      String   @map("source_version_key") @db.Citext
-  status                String
-  quantity              Decimal  @map("quantity") @db.Decimal(12, 4)
-  amount                Decimal  @map("amount") @db.Decimal(19, 4)
-  effectiveDate         DateTime @map("effective_date") @db.Date
-  valuationDate         DateTime @map("valuation_date") @db.Date
-  calculatorKind        String   @map("calculator_kind") @db.Citext
-  factor                Decimal  @db.Decimal(12, 7)
-  salarySourceSnapshot  Json     @map("salary_source_snapshot")
-  roundingSnapshot      Json     @map("rounding_snapshot")
-  calculationSnapshot   Json     @map("calculation_snapshot")
-  payloadSnapshot       Json     @map("payload_snapshot")
-  supersedesInputId     String?  @map("supersedes_input_id") @db.Uuid
-  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  agency       Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  employee     Employee                        @relation("PayrollMonetizationEarningInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
-  createdBy    AgencyMembership                @relation("PayrollMonetizationEarningInputCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  supersedes   PayrollMonetizationEarningInput? @relation("PayrollMonetizationEarningInputSuccession", fields: [agencyId, supersedesInputId], references: [agencyId, id], onDelete: Restrict)
-  supersededBy PayrollMonetizationEarningInput? @relation("PayrollMonetizationEarningInputSuccession")
-  outcomes     PayrollMonetizationAdjustmentOutcome[]
-
-  @@unique([agencyId, sourceType, sourceId, sourceVersionKey])
-  @@unique([agencyId, supersedesInputId])
-  @@unique([agencyId, id])
-  @@index([agencyId, employeeId, status])
-  @@map("payroll_monetization_earning_inputs")
-}
-
-/// Phase-local Payroll-owned accepted linkage for corrections against consumed
-/// inputs. Immutable once recorded.
+/// Payroll's recorded outcome of a Monetization Adjustment against a
+/// Monetization Earning Input. Immutable. `earningInputId` and `linkedInputId`
+/// name `payroll_inputs` rows by foreign key (0161); nothing writes here until
+/// Monetization Adjustment binds to the inbox (#357).
 model PayrollMonetizationAdjustmentOutcome {
   id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                  String   @map("agency_id") @db.Uuid
@@ -4744,9 +4704,8 @@ model PayrollMonetizationAdjustmentOutcome {
   recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
   recordedAt                DateTime @map("recorded_at") @db.Timestamptz(6)
 
-  agency      Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  earningInput PayrollMonetizationEarningInput @relation(fields: [agencyId, earningInputId], references: [agencyId, id], onDelete: Restrict)
-  recordedBy  AgencyMembership               @relation("PayrollMonetizationAdjustmentOutcomeRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  recordedBy AgencyMembership @relation("PayrollMonetizationAdjustmentOutcomeRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([agencyId, id])
   @@map("payroll_monetization_adjustment_outcomes")

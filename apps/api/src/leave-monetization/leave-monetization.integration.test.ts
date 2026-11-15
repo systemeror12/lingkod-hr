@@ -16,11 +16,16 @@ import {
   leavePolicyAuditWriter,
   LeavePoliciesService,
 } from '../leave-policies/leave-policies.service';
-import { FailClosedPayrollMonetizationProvider } from './payroll-monetization.fail-closed';
+import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 import {
-  LocalPayrollMonetizationAdapter,
-  type MonetizationSalarySource,
-} from './payroll-monetization.local-adapter';
+  PayrollMonetizationCalculator,
+  unresolvedMonetizationValuationRules,
+  type MonetizationCompensationBasis,
+  type MonetizationValuationRules,
+} from '../payroll-monetization/payroll-monetization.calculator';
+import { PersonnelSalaryFactsService } from '../personnel-salary-facts/personnel-salary-facts.service';
+import { PayrollInboxMonetizationAdapter } from './payroll-monetization.adapter';
 import {
   LEAVE_MONETIZATION_ADJUSTMENT_ROUTE_CODE,
   LEAVE_MONETIZATION_ROUTE_CODE,
@@ -126,16 +131,52 @@ async function createDocumentVersion(
   return { documentId: document.id, versionId: version.id };
 }
 
-const salarySource: MonetizationSalarySource = {
-  async resolve() {
+// Test fixtures only. Personnel records no pay basis yet (#619), so a real
+// compensation basis never resolves; and no recorded rule settles the salary,
+// the valuation date, or centavo rounding (#614), so these stand in for them.
+const resolvedBasis: MonetizationCompensationBasis = {
+  async resolveInTransaction(_transaction, _agencyId, employeeId, from, to) {
     return {
-      monthlySalary: '30000.00',
-      sourceReference: 'INTEGRATION-SALARY-001',
-      salarySourceSnapshot: { source: 'integration-test', monthlySalary: '30000.00' },
-      rounding: { kind: 'HALF_UP_2DP', snapshot: { kind: 'HALF_UP_2DP' } },
+      employeeId,
+      from,
+      to,
+      status: 'RESOLVED',
+      stretches: [
+        {
+          status: 'RESOLVED',
+          from,
+          to,
+          personnel: {
+            serviceSegmentId: '00000000-0000-4000-8000-000000000339',
+            salaryGrade: 11,
+            salaryStep: 1,
+            payBasis: 'MONTHLY_FULL_TIME',
+            employmentFraction: '1',
+          },
+          salarySchedule: {
+            ruleVersionId: '00000000-0000-4000-8000-000000000331',
+            ruleVersionCode: 'TEST-339-SCHEDULE',
+            monthlyRate: '30000',
+          },
+          rate: { monthlyRate: '30000', dailyRate: '1363.63636363', derivation: 'test fixture' },
+        },
+      ],
     };
   },
 };
+const testRules: MonetizationValuationRules = {
+  async resolve() {
+    return {
+      salaryRule: { fixture: 'integration-test' },
+      valuationDateRule: { fixture: 'integration-test', rule: 'AUTHORITY_SNAPSHOT_DATE' },
+      rounding: { kind: 'HALF_UP_2DP', authority: { fixture: 'integration-test' } },
+    };
+  },
+};
+const payrollBinding = (basis: MonetizationCompensationBasis, rules: MonetizationValuationRules) =>
+  new PayrollInboxMonetizationAdapter(
+    new PayrollInputsService(new PayrollMonetizationCalculator(basis, rules)),
+  );
 
 it.skipIf(!enabled)(
   'runs the Leave Monetization lifecycle through Payroll posting and adjustments',
@@ -222,7 +263,7 @@ it.skipIf(!enabled)(
     const service = new LeaveMonetizationService(
       approvals,
       registry,
-      new LocalPayrollMonetizationAdapter(salarySource),
+      payrollBinding(resolvedBasis, testRules),
       new DocumentsService({} as never, documentAuditWriter),
       new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
@@ -428,7 +469,7 @@ it.skipIf(!enabled)(
           employeeId: employee.id,
           leaveTypeId: vacation.id,
           effectiveDate: manilaDate(-5),
-          openingQuantity: 20,
+          openingQuantity: 30,
           evidenceDocumentId: accountEvidence.documentId,
           reason: 'Opening vacation-leave balance.',
         },
@@ -522,12 +563,31 @@ it.skipIf(!enabled)(
       const replay = await service.post(posterContext, created.id);
       expect(replay).toMatchObject({ outcome: 'ALREADY_POSTED', posting: { id: postingId } });
 
-      const payrollInput = await admin.payrollMonetizationEarningInput.findFirstOrThrow({
+      // Payroll valued the input in its inbox: 30,000 × 10 × 0.0481927.
+      const payrollInput = await admin.payrollInput.findFirstOrThrow({
         where: { agencyId: agency.id, id: posted.posting!.payrollInputId },
       });
-      expect(payrollInput.status).toBe('PENDING');
-      expect(payrollInput.quantity.toFixed(4)).toBe('10.0000');
-      expect(payrollInput.amount.toFixed(2)).toBe('14457.81');
+      expect(payrollInput).toMatchObject({
+        sourceModule: 'LEAVE',
+        inputKind: 'MONETIZATION_EARNING',
+        sourceKey: `MONETIZATION:${certified.request.currentVersionId}`,
+        sourceId: certified.request.currentVersionId,
+        status: 'PENDING',
+        payloadSnapshot: {
+          valuationDate: manilaDate(),
+          payrollValuation: {
+            salary: { source: 'COMPENSATION_BASIS', monthlySalary: '30000' },
+            calculation: { unrounded: '14457.81', rounded: '14457.81' },
+          },
+        },
+      });
+      expect(payrollInput.quantity?.toFixed(4)).toBe('10.0000');
+      expect(payrollInput.amount?.toFixed(2)).toBe('14457.81');
+      await expect(
+        admin.monetizationPosting.findFirstOrThrow({
+          where: { agencyId: agency.id, id: postingId },
+        }),
+      ).resolves.toMatchObject({ payrollResult: { kind: 'ACCEPTED', amount: '14457.81' } });
 
       const postingEntry = await admin.leaveLedgerEntry.findFirstOrThrow({
         where: {
@@ -546,51 +606,32 @@ it.skipIf(!enabled)(
       expect(adjustment.status).toBe('DRAFT');
       const adjustmentForApproval = await service.submitAdjustment(posterContext, adjustment.id);
       expect(adjustmentForApproval.status).toBe('FOR_APPROVAL');
+      // Monetization Adjustment binds to the inbox in #357; until then Payroll
+      // answers fail-closed and Leave writes no reversal.
       const decidedAdjustment = await service.decideAdjustment(approverContext, adjustment.id, {
         decision: 'APPROVE',
         comments: 'Adjustment approved.',
       });
-      expect(decidedAdjustment.adjustment.status).toBe('APPLIED');
+      expect(decidedAdjustment.adjustment.status).toBe('BLOCKED');
+      expect(decidedAdjustment.ownerResult).toMatchObject({
+        code: 'PAYROLL_MONETIZATION_AUTHORITY_MISSING',
+        missingFacts: ['LINKED_PAYROLL_ADJUSTMENT_CONTRACT'],
+      });
       expect(decidedAdjustment.adjustment.lines[0]).toMatchObject({
-        retainedQuantity: '4.0000',
-        reversalLedgerEntryId: expect.any(String),
-        replacementLedgerEntryId: expect.any(String),
+        reversalLedgerEntryId: null,
+        replacementLedgerEntryId: null,
       });
-
-      const reversal = await admin.leaveLedgerEntry.findFirstOrThrow({
-        where: {
-          agencyId: agency.id,
-          id: decidedAdjustment.adjustment.lines[0]!.reversalLedgerEntryId!,
-        },
-      });
-      expect(reversal).toMatchObject({ reversesEntryId: postingEntry.id });
-      expect(reversal.quantity.toFixed(4)).toBe('10.0000');
-      const replacement = await admin.leaveLedgerEntry.findFirstOrThrow({
-        where: {
-          agencyId: agency.id,
-          id: decidedAdjustment.adjustment.lines[0]!.replacementLedgerEntryId!,
-        },
-      });
-      expect(replacement.quantity.toFixed(4)).toBe('-4.0000');
-      const settledPayrollInput = await admin.payrollMonetizationEarningInput.findFirstOrThrow({
-        where: { agencyId: agency.id, id: posted.posting!.payrollInputId },
-      });
-      expect(settledPayrollInput.status).toBe('SUPERSEDED');
-      const linkedPayrollInput = await admin.payrollMonetizationEarningInput.findFirstOrThrow({
-        where: {
-          agencyId: agency.id,
-          sourceType: 'MONETIZATION_ADJUSTMENT',
-          sourceId: adjustment.id,
-        },
-      });
-      expect(linkedPayrollInput.quantity.toFixed(4)).toBe('4.0000');
-      expect(linkedPayrollInput.amount.toFixed(2)).toBe('5783.12');
+      await expect(
+        admin.payrollInput.findFirstOrThrow({
+          where: { agencyId: agency.id, id: posted.posting!.payrollInputId },
+        }),
+      ).resolves.toMatchObject({ status: 'PENDING' });
 
       const ledgerBalance = await admin.leaveLedgerEntry.aggregate({
         where: { agencyId: agency.id, leaveAccountId: vacationAccount.id },
         _sum: { quantity: true },
       });
-      expect(ledgerBalance._sum.quantity?.toFixed(4)).toBe('16.0000');
+      expect(ledgerBalance._sum.quantity?.toFixed(4)).toBe('20.0000');
       const commitments = await admin.leaveCreditCommitment.findMany({
         where: { agencyId: agency.id, leaveAccountId: vacationAccount.id },
         orderBy: { id: 'asc' },
@@ -744,10 +785,14 @@ it.skipIf(!enabled)(
         'RELEASED',
       ]);
 
+      // The production binding: the real compensation basis and no recorded rules.
       const failClosedService = new LeaveMonetizationService(
         approvals,
         registry,
-        new FailClosedPayrollMonetizationProvider(),
+        payrollBinding(
+          new CompensationBasisService(new PersonnelSalaryFactsService()),
+          unresolvedMonetizationValuationRules,
+        ),
         new DocumentsService({} as never, documentAuditWriter),
         new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
       );
@@ -793,12 +838,13 @@ it.skipIf(!enabled)(
       await expect(failClosedService.post(posterContext, specialRequest.id)).rejects.toMatchObject({
         statusCode: 503,
         code: 'PAYROLL_MONETIZATION_AUTHORITY_MISSING',
+        reasons: ['AUTHORITATIVE_SALARY_SOURCE', 'ROUNDING_RULE', 'VALUATION_DATE_RULE'],
       });
       expect(
         (await failClosedService.findById(adminContext, specialRequest.id))?.request.status,
       ).toBe('APPROVED');
       expect(
-        await admin.payrollMonetizationEarningInput.count({
+        await admin.payrollInput.count({
           where: {
             agencyId: agency.id,
             sourceType: 'MONETIZATION_POSTING',

@@ -2038,6 +2038,13 @@ table belongs to the Payroll schema. Missing authority for valuation date,
 allocation, salary components, or rounding blocks posting rather than invoking a
 default.
 
+Payroll's owning service is the Payroll Input inbox: Leave posts one
+`MONETIZATION_EARNING` input keyed by the posting key, with the approved
+quantities and provenance only, and Payroll values it (payroll-schema.md §4,
+#339). `monetization_postings.payroll_input_id` names that `payroll_inputs`
+row. Until Monetization Adjustment binds to the inbox's withdrawal (#357),
+Payroll's answer to an adjustment fails closed and the adjustment is `BLOCKED`.
+
 An applied Monetization Adjustment must receive Payroll's accepted cancellation,
 replacement, or linked adjustment before it writes exact ledger reversals and
 any partial retained replacements. Consumed Payroll Inputs and finalized Payroll
