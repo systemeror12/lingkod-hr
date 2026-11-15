@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { REQUIRED_PERMISSIONS } from '../auth/auth.decorators';
 import { ruleVersionsInEffectDuring } from './payroll-rule-snapshots';
 import { PayrollPeriodsController } from './payroll-periods.controller';
-import { isOneCalendarMonth, PayrollPeriodsServiceError } from './payroll-periods.service';
+import {
+  isOneCalendarMonth,
+  PayrollPeriodsService,
+  PayrollPeriodsServiceError,
+} from './payroll-periods.service';
 
 const version = (
   id: string,
@@ -93,12 +97,24 @@ describe('the Payroll Period controller', () => {
     permissions: [{ code: 'payroll.periods.create', scopePolicy: 'AGENCY' }],
   };
 
-  it('needs payroll.periods.create for every command', () => {
+  it('needs payroll.periods.create for every draft command, and calculate to start', () => {
     for (const handler of ['create', 'moveCutoff', 'cancelDraft'] as const) {
       expect(
         Reflect.getMetadata(REQUIRED_PERMISSIONS, PayrollPeriodsController.prototype[handler]),
       ).toEqual(['payroll.periods.create']);
     }
+    expect(
+      Reflect.getMetadata(
+        REQUIRED_PERMISSIONS,
+        PayrollPeriodsController.prototype.startCalculation,
+      ),
+    ).toEqual(['payroll.periods.calculate']);
+  });
+
+  it('refuses to start a calculation without payroll.periods.calculate', async () => {
+    await expect(
+      new PayrollPeriodsService().startCalculation(context, periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject({ statusCode: 403, code: 'PAYROLL_PERIOD_CALCULATE_FORBIDDEN' });
   });
 
   it('refuses another Agency or a malformed period before calling the service', async () => {

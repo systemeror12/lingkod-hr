@@ -54,6 +54,20 @@ export class PayrollPeriodsController {
     const id = parsePeriodId(periodId, context);
     return { period: await translate(context, () => this.service.cancelDraft(context, id, body)) };
   }
+  @Post(':agencyId/payroll-periods/:periodId/calculate')
+  @RequirePermission('payroll.periods.calculate')
+  async startCalculation(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return {
+      period: await translate(context, () => this.service.startCalculation(context, id, body)),
+    };
+  }
 }
 
 function failure(context: RequestContext, status: number, code: string, message: string) {

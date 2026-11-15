@@ -5,7 +5,9 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import type { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
 import { claimPayrollFunction } from './payroll-period-actors';
+import { freezePayrollRuleSnapshot } from './payroll-rule-snapshots';
 import {
+  payrollPeriodCalculationStartSchema,
   payrollPeriodCancelSchema,
   payrollPeriodCreateSchema,
   payrollPeriodCutoffMoveSchema,
@@ -72,8 +74,9 @@ export function isOneCalendarMonth(periodFrom: string, periodTo: string): boolea
 
 /**
  * Payroll Period commands of the Payroll Preparer (hris-controls.md §5.20):
- * create a period, move its cutoff, and cancel it while it is DRAFT. Each
- * command claims the actor's PREPARATION function on the period.
+ * create a period, move its cutoff, cancel it, and start its calculation
+ * while it is DRAFT. Each command claims the actor's PREPARATION function on
+ * the period.
  */
 @Injectable()
 export class PayrollPeriodsService {
@@ -232,6 +235,72 @@ export class PayrollPeriodsService {
       return after;
     });
   }
+
+  /**
+   * Start calculation: the cutoff has passed, so the period moves to
+   * CALCULATING at its next calculation version and freezes that version's
+   * rule snapshot, in one transaction. The committed CALCULATING period is the
+   * queued job `PayrollCalculationJob` runs. A missing required rule refuses
+   * the start and changes nothing. A concurrent second start finds the period
+   * no longer DRAFT at its row version and is refused.
+   */
+  async startCalculation(
+    context: RequestContext,
+    periodId: string,
+    rawInput: unknown,
+  ): Promise<PayrollPeriodSummary> {
+    if (!holdsAgencyWide(context, 'payroll.periods.calculate')) {
+      throw new PayrollPeriodsServiceError(
+        'Starting a calculation needs the payroll.periods.calculate permission for the whole Agency.',
+        403,
+        'PAYROLL_PERIOD_CALCULATE_FORBIDDEN',
+      );
+    }
+    const input = parse(payrollPeriodCalculationStartSchema, rawInput);
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const before = await findDraftForCommand(transaction, context, periodId, input.rowVersion);
+      if (before.runType !== 'REGULAR') {
+        throw new PayrollPeriodsServiceError(
+          'A special Payroll Period pays only the components it names, and none of them has a calculator yet.',
+          409,
+          'PAYROLL_PERIOD_SPECIAL_NOT_CALCULABLE',
+        );
+      }
+      if (Date.now() < before.cutoffAt.getTime()) {
+        throw new PayrollPeriodsServiceError(
+          `The cutoff ${before.cutoffAt.toISOString()} has not passed; calculation starts at or after it.`,
+          409,
+          'PAYROLL_PERIOD_CUTOFF_NOT_PASSED',
+        );
+      }
+      const after = await updateDraft(transaction, context, periodId, input.rowVersion, {
+        status: 'CALCULATING',
+        calculationVersion: { increment: 1 },
+      });
+      const snapshot = await freezePayrollRuleSnapshot(transaction, {
+        agencyId: context.agencyId,
+        payrollPeriodId: periodId,
+      });
+      if (snapshot.outcome === 'REFUSED') {
+        // Throwing rolls back the version and status the update just took.
+        throw new PayrollPeriodsServiceError(snapshot.reason, 409, snapshot.code);
+      }
+      await transaction.auditEvent.create({
+        data: auditEvent(context, {
+          action: 'PAYROLL_PERIOD_CALCULATION_STARTED',
+          entityId: periodId,
+          previousStatus: 'DRAFT',
+          newStatus: 'CALCULATING',
+          reason: null,
+          metadata: {
+            calculationVersion: after.calculationVersion,
+            payrollRuleSnapshotId: snapshot.snapshotId,
+          },
+        }),
+      });
+      return after;
+    });
+  }
 }
 
 function requireCreatePermission(context: RequestContext): void {
@@ -318,7 +387,7 @@ async function findDraftForCommand(
 ) {
   const period = await transaction.payrollPeriod.findUnique({
     where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
-    select: { status: true, rowVersion: true, cutoffAt: true },
+    select: { status: true, rowVersion: true, cutoffAt: true, runType: true },
   });
   if (!period) {
     throw new PayrollPeriodsServiceError(
