@@ -11,6 +11,7 @@ import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationJob } from './payroll-calculation.job';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PayrollSourcesReader } from './payroll-sources.reader';
+import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
 @Module({
   imports: [CompensationBasisModule, AttendancePeriodsModule, AttendanceDeficitChargesModule],
@@ -19,6 +20,7 @@ import { PayrollSourcesReader } from './payroll-sources.reader';
     DaysWithoutPayCalculator,
     GsisContributionCalculator,
     EmployeesCompensationCalculator,
+    YearEndBonusCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

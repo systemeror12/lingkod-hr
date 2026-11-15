@@ -24,6 +24,8 @@ export interface CalculationContext {
   snapshotRuleVersionIds: ReadonlySet<string>;
   /** The same versions, with their kind, effectivity, and parameters. */
   snapshotRuleVersions: readonly FrozenRuleVersion[];
+  /** The pay component codes a special period names; empty for a regular period. */
+  componentCodes: ReadonlySet<string>;
 }
 
 /** A `PENDING` Payroll Input accepted at or before the cutoff. */

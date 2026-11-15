@@ -19,6 +19,7 @@ import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
 } from './contribution.calculators';
+import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { dueCalculations } from './payroll-calculation.job';
 import { type CalculationJob, PayrollCalculationService } from './payroll-calculation.service';
 
@@ -68,6 +69,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     payrollSourcesReader(basis),
     new DaysWithoutPayCalculator(),
     ...contributions,
+    new YearEndBonusCalculator(),
   );
   let admin: PrismaClient;
   let scheduleId: string;
@@ -528,6 +530,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       payrollSourcesReader(basis),
       new DaysWithoutPayCalculator(),
       ...contributions,
+      new YearEndBonusCalculator(),
     );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({

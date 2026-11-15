@@ -39,6 +39,7 @@ const contextWith = (...versions: FrozenRuleVersion[]): CalculationContext => ({
   periodTo: '2026-03-31',
   snapshotRuleVersionIds: new Set(versions.map((version) => version.id)),
   snapshotRuleVersions: versions,
+  componentCodes: new Set<string>(),
 });
 
 const served = (from: string, to: string): CompensationBasisStretch => ({

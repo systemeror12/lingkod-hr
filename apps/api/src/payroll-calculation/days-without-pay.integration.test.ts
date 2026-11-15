@@ -18,6 +18,7 @@ import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { type CalculationJob, PayrollCalculationService } from './payroll-calculation.service';
 import { attendanceAndLeave, RecordedPayBases } from './payroll-calculation.test-fixtures';
 import { PayrollSourcesReader } from './payroll-sources.reader';
+import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
@@ -52,6 +53,7 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
     new DaysWithoutPayCalculator(),
     noContribution,
     noContribution,
+    new YearEndBonusCalculator(),
   );
   let admin: PrismaClient;
   let scheduleId: string;

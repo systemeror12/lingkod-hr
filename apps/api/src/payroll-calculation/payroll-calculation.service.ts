@@ -23,6 +23,17 @@ import type {
   PayrollCalculator,
 } from './payroll-calculator';
 import { PayrollSourcesReader } from './payroll-sources.reader';
+import {
+  CASH_GIFT_COMPONENT_CODE,
+  YEAR_END_BONUS_COMPONENT_CODE,
+  YearEndBonusCalculator,
+} from './year-end-bonus.calculator';
+
+/** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
+export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
+  YEAR_END_BONUS_COMPONENT_CODE,
+  CASH_GIFT_COMPONENT_CODE,
+];
 
 /** One queued calculation: a CALCULATING period and the version it started. */
 export interface CalculationJob {
@@ -50,7 +61,8 @@ interface LockedPeriod {
 
 /**
  * The calculation job of one Payroll Period version (hris-controls.md §5.20).
- * It resolves each Employee's compensation basis, runs every calculator, and
+ * It resolves each Employee's compensation basis, runs every calculator of the
+ * period's run type (a special period pays only the components it names), and
  * writes the Payroll Employee Results, their Payroll Lines, and the Payroll
  * Exceptions in one transaction with the period's next status: `FOR_REVIEW`
  * on a clean run, `DRAFT` on any blocking exception. A failure rolls that
@@ -63,7 +75,10 @@ interface LockedPeriod {
  */
 @Injectable()
 export class PayrollCalculationService {
+  /** A regular period runs these. */
   private readonly calculators: readonly PayrollCalculator[];
+  /** A special period runs these; each pays only the named components it covers. */
+  private readonly specialCalculators: readonly PayrollCalculator[];
 
   constructor(
     @Inject(CompensationBasisService) private readonly compensationBasis: CompensationBasisService,
@@ -72,9 +87,11 @@ export class PayrollCalculationService {
     @Inject(DaysWithoutPayCalculator) daysWithoutPay: DaysWithoutPayCalculator,
     @Inject(GsisContributionCalculator) gsis: GsisContributionCalculator,
     @Inject(EmployeesCompensationCalculator) employeesCompensation: EmployeesCompensationCalculator,
+    @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last.
     this.calculators = [basicSalary, daysWithoutPay, gsis, employeesCompensation];
+    this.specialCalculators = [yearEndBonus];
   }
 
   async run(job: CalculationJob): Promise<CalculationOutcome> {
@@ -98,9 +115,29 @@ export class PayrollCalculationService {
   ): Promise<CalculationOutcome> {
     const period = await lockCalculatingPeriod(transaction, job, 'SKIP LOCKED');
     if (!period) return { outcome: 'SKIPPED' };
-    if (period.run_type !== 'REGULAR') {
-      // Start refuses a special period; reaching this means the row was written around it.
-      throw new Error('A special Payroll Period has no calculator yet.');
+    const componentIds = new Map(
+      (await transaction.payComponent.findMany({ select: { id: true, code: true } })).map(
+        (component) => [component.code, component.id],
+      ),
+    );
+    const componentCodes = new Set<string>();
+    if (period.run_type === 'SPECIAL') {
+      const named = new Set(
+        (
+          await transaction.payrollPeriodComponent.findMany({
+            where: { agencyId: job.agencyId, payrollPeriodId: job.payrollPeriodId },
+            select: { payComponentId: true },
+          })
+        ).map((component) => component.payComponentId),
+      );
+      for (const [code, id] of componentIds) if (named.has(id)) componentCodes.add(code);
+      if (
+        componentCodes.size === 0 ||
+        [...componentCodes].some((code) => !SPECIAL_PERIOD_COMPONENT_CODES.includes(code))
+      ) {
+        // Start refuses such a period; reaching this means the row was written around it.
+        throw new Error('The special Payroll Period names a component with no calculator.');
+      }
     }
 
     const snapshot = await transaction.payrollRuleSnapshot.findUnique({
@@ -146,12 +183,9 @@ export class PayrollCalculationService {
             : null,
         parameters: version.parameters,
       })),
+      componentCodes,
     };
-    const componentIds = new Map(
-      (await transaction.payComponent.findMany({ select: { id: true, code: true } })).map(
-        (component) => [component.code, component.id],
-      ),
-    );
+    const calculators = period.run_type === 'SPECIAL' ? this.specialCalculators : this.calculators;
 
     // The snapshot's cutoff fixes the input set, so a recalculation takes the same sources.
     const sources = await this.sources.readInTransaction(
@@ -189,7 +223,7 @@ export class PayrollCalculationService {
       const calculated: CalculatedLine[] = [];
       const exceptions: CalculatedException[] = [];
       const calculatedContributions: CalculatedContribution[] = [];
-      for (const calculator of this.calculators) {
+      for (const calculator of calculators) {
         const outcome = calculator.calculate(basis, context, calculated, {
           ...employeeSources,
           valuationBases,
