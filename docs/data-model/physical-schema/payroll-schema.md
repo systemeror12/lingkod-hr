@@ -46,7 +46,8 @@ CREATE TABLE national_payroll_rule_versions (
   rule_kind text NOT NULL
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
                          'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
-                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA')),
+                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA',
+                         'CLOTHING_ALLOWANCE')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -98,6 +99,10 @@ sec. 71; DBM NBC No. 593); its parameters are `ranks`, each with its `rank`,
 the eligible `positionTitles`, and the monthly `representationAllowance` and
 `transportationAllowance`, and `actualWorkSchedule`, NBC 593's bands of
 `minimumDays` and `share`, rising to a share of 1 (section 8).
+`CLOTHING_ALLOWANCE` is one fiscal year's cash uniform/clothing allowance rule
+(FY 2026 GAA sec. 64; DBM BC No. 2024-1); its parameters are the
+`annualAmount` for full-time service and the `minimumServiceDays` of service
+in the fiscal year, 180 for six months (section 8).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -243,6 +248,13 @@ is the assignment's Document Version (#343). Migration 0169 adds it to the
 catalogue as conditional, so it takes a record, `INFORMATIONAL`, so it writes
 no line, and not GAA-revalidated. It still needs a funding reference, which an
 assignment does not have.
+
+A cash uniform/clothing allowance grant is an applicability record of the
+`CLOTHING_ALLOWANCE` component for the whole Agency or one named Employee,
+whose authority is the Agency's internal guideline on the grant's form,
+qualification, and payment schedule (BC No. 2024-1 item 12.1; #631). Migration
+0171 adds it to the catalogue as a conditional, GAA-revalidated `EARNING`. An
+Agency that procures uniforms records none.
 
 Migration 0156 creates `authorized_payroll_component_inputs` (#346), and
 migration 0157 adds the `consumed_by_payroll_period_id` foreign key to
@@ -956,6 +968,27 @@ that day, a day partly on leave, absent, or on CTO, and a date no published
 Attendance Period covers yet; a vehicle assignment for part of the month; and
 an amount that is not whole centavos. With no version in effect, every Employee
 blocks, since eligibility comes from the version.
+
+The `CLOTHING_ALLOWANCE` component, which migration 0171 adds with the
+`CLOTHING_ALLOWANCE` rule kind (#631), pays the cash uniform/clothing
+allowance in a special period that names it and covers one fiscal year,
+January 1 to December 31 ([authorities](../../research/clothing-allowance-authorities.md)).
+It pays only an Employee covered by a `CLOTHING_ALLOWANCE` applicability
+record in effect on the period's payment date, the Employee's own preferred
+over the Agency-wide one; with none, it writes nothing. An Employee whose
+Service Segments cover at least `minimumServiceDays` calendar days of the
+fiscal year, counting days still to come, gets one `EARNING` line:
+`quantity` 1, or the employment fraction for part-time service, `rate` the
+annual amount, the applicability record in `source_snapshot`, and
+`source_snapshot.taxTreatment` `DE_MINIMIS` (RR No. 29-2025 sec.
+2.78.1(A)(3)(e)). Under the minimum there is no line. Service that starts
+after January 1 counts only under an `ORIGINAL` appointment, which Personnel
+supplies. Every case no recorded rule settles blocks and writes no line: a
+period that is not one fiscal year; no version in effect on every date of the
+year, or one that changes in it; an entry after January 1 by transfer, or
+under another appointment or none; a casual daily wage; a pay basis or
+employment fraction that changes in the year, or none recorded; and an amount
+that is not whole centavos.
 
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line

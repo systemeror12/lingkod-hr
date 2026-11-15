@@ -14,6 +14,7 @@ import { PayrollSourcesReader } from './payroll-sources.reader';
 import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
+import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
 
 @Module({
   imports: [CompensationBasisModule, AttendancePeriodsModule, AttendanceDeficitChargesModule],
@@ -25,6 +26,7 @@ import { CommutableRataCalculator } from './commutable-rata.calculator';
     YearEndBonusCalculator,
     PeraCalculator,
     CommutableRataCalculator,
+    ClothingAllowanceCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

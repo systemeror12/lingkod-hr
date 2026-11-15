@@ -183,6 +183,26 @@ describe('rule version file', () => {
     expect(pera({ ...valid, taxTreatment: 'NON_TAXABLE' })).toBe(false);
   });
 
+  it('holds the clothing allowance annual amount and minimum service days as typed parameters', () => {
+    const clothing = (parameters: unknown) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('clothing', '2030-01-01', '2030-12-31'),
+        ruleKind: 'CLOTHING_ALLOWANCE',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return nationalPayrollRuleVersionFileSchema.safeParse(file).success;
+    };
+    const valid = { annualAmount: '7000.00', minimumServiceDays: 180 };
+    expect(clothing(valid)).toBe(true);
+    expect(clothing({ ...valid, annualAmount: '7000.001' })).toBe(false);
+    expect(clothing({ ...valid, annualAmount: '0' })).toBe(false);
+    expect(clothing({ ...valid, minimumServiceDays: 180.5 })).toBe(false);
+    expect(clothing({ ...valid, minimumServiceDays: 0 })).toBe(false);
+    expect(clothing({ annualAmount: '7000.00' })).toBe(false);
+    expect(clothing({ ...valid, taxTreatment: 'DE_MINIMIS' })).toBe(false);
+  });
+
   it('reads exactly one JSON file argument', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rule-version-'));
     const path = join(directory, 'schedule.json');

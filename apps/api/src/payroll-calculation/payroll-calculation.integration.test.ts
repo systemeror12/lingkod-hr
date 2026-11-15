@@ -20,6 +20,7 @@ import {
   GsisContributionCalculator,
 } from './contribution.calculators';
 import { PeraCalculator } from './pera.calculator';
+import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { dueCalculations } from './payroll-calculation.job';
 import { type CalculationJob, PayrollCalculationService } from './payroll-calculation.service';
@@ -76,6 +77,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     new YearEndBonusCalculator(),
     new PeraCalculator(),
     noRata,
+    new ClothingAllowanceCalculator(),
   );
   let admin: PrismaClient;
   let scheduleId: string;
@@ -568,6 +570,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       new YearEndBonusCalculator(),
       new PeraCalculator(),
       noRata,
+      new ClothingAllowanceCalculator(),
     );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({

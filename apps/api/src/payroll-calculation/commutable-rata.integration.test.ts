@@ -21,6 +21,7 @@ import {
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.test-fixtures';
+import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -49,6 +50,7 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
     new YearEndBonusCalculator(),
     noContribution,
     new CommutableRataCalculator(),
+    new ClothingAllowanceCalculator(),
   );
   let admin: PrismaClient;
   const tenants: PayrollTenant[] = [];
