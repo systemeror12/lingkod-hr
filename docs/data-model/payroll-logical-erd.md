@@ -355,17 +355,21 @@ day quantity for each Work Date. Payroll groups the days by calendar month and
 values each month's days at the monthly salary in effect on those Work Dates,
 ÷ 22 (CSC MC No. 8, s. 2014; #328).
 
-For an accepted Monetization Posting, `source_type` identifies the posting,
-`source_id` is the Monetization Posting, `quantity` is the approved total
-credit quantity, and `amount` is calculated by Payroll rather than supplied by
-Leave. `payload_snapshot` freezes the per-account allocations, stable effect
-key, valuation date, fixed calculator and factor, applicable policy and
-authority Document Versions, funding determination, Approval Decisions,
-resolved highest-monthly-salary source and value, calculation steps, rounding
-authority and result, and owner-service outcome. Missing authoritative
-valuation, salary-component, allocation, or rounding facts reject the input.
-The temporary `payroll_monetization_earning_inputs` table folds into this one
-(#339).
+For a Monetization Posting, `source_key` is the posting key, `source_type` is
+`MONETIZATION_POSTING`, `source_id` is the Leave Monetization Request Version
+the posting settles, `quantity` is the approved total credit quantity, and
+`amount` is calculated by Payroll at acceptance rather than supplied by Leave.
+`payload_snapshot` freezes Leave's per-account allocations, stable effect key,
+valuation date, calculator and factor, policy and authority snapshots, funding
+determination, and Approval Request, and beside them Payroll's
+`payrollValuation`: the salary, its rule, and its compensation-basis source,
+the factor and its authority, the valuation-date and rounding rules, and the
+calculation steps. The authority's S is the highest monthly salary received,
+and no recorded rule says which compensation-basis value that is. A missing
+salary rule, valuation-date rule, rounding rule, or resolved salary fails the
+input closed with a retryable answer that names each missing fact (#614).
+Migration 0161 moved the temporary `payroll_monetization_earning_inputs` rows
+into this table with their identifiers and dropped it (#339).
 
 For an Unpaid Deficit Remainder, `source_id` is the Attendance Deficit Charge,
 and `quantity` is the remainder in days. `payload_snapshot` freezes the

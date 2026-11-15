@@ -9,8 +9,11 @@ import { Prisma } from '@prisma/client';
  * from an agency authority snapshot; the catalogue reports INDETERMINATE
  * instead of filling them with defaults.
  */
-export const MONETIZATION_CALCULATOR_KIND = 'MCL_FIXED_FACTOR_0_0481927';
-export const MONETIZATION_FACTOR = '0.0481927';
+// Payroll owns the calculator and factor; Leave names them as provenance.
+export {
+  MONETIZATION_CALCULATOR_KIND,
+  MONETIZATION_FACTOR,
+} from '../payroll-monetization/payroll-monetization.calculator';
 export const REGULAR_MONETIZATION_CITATION =
   'CSC MC No. 41, s. 1998, s. 22 (VL only, at least 15 days, minimum 10 days, retain 5, maximum 30 a year)';
 export const SPECIAL_MONETIZATION_CITATION =

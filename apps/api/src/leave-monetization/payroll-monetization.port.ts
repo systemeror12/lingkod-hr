@@ -3,8 +3,7 @@
  *
  * Leave supplies authority-bound quantities and provenance only. Payroll owns
  * salary resolution, the fixed calculation, rounding, and the immutable
- * Monetization Earning Input. The production binding must fail closed until
- * the Payroll module owns this contract.
+ * Monetization Earning Input in its inbox (`PayrollInboxMonetizationAdapter`).
  */
 export interface MonetizationPortActor {
   agencyId: string;

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { PayrollMonetizationCalculator } from '../payroll-monetization/payroll-monetization.calculator';
 import {
   payrollInputSubmissionSchema,
   type PayrollInputKind,
@@ -17,11 +18,18 @@ import {
 /**
  * Payroll's answer to a source module. `REJECTED` will not change on retry;
  * `RETRYABLE_FAILURE` means Payroll cannot accept the input yet and the same
- * request may succeed later. Neither creates a Payroll Input.
+ * request may succeed later. Neither creates a Payroll Input. A monetization
+ * earning's answer carries the amount Payroll computed, and a refusal for a
+ * missing authority or salary fact names it in `missingFacts`.
  */
 export type PayrollInputAcceptance =
-  | { outcome: 'ACCEPTED' | 'ALREADY_ACCEPTED'; payrollInputId: string }
-  | { outcome: 'REJECTED' | 'RETRYABLE_FAILURE'; code: string; reason: string };
+  | { outcome: 'ACCEPTED' | 'ALREADY_ACCEPTED'; payrollInputId: string; amount?: string }
+  | {
+      outcome: 'REJECTED' | 'RETRYABLE_FAILURE';
+      code: string;
+      reason: string;
+      missingFacts?: string[];
+    };
 
 /** Payroll's answer to a withdrawal, with the same failure meanings as acceptance. */
 export type PayrollInputWithdrawalAnswer =
@@ -82,6 +90,15 @@ const summarySelect = {
 @Injectable()
 export class PayrollInputsService {
   /**
+   * Without a calculator, as in tests of sources that post no monetization,
+   * a monetization earning fails closed.
+   */
+  constructor(
+    @Inject(PayrollMonetizationCalculator)
+    private readonly monetization?: PayrollMonetizationCalculator,
+  ) {}
+
+  /**
    * Accept one source effect inside the caller's transaction, which must carry
    * the caller's Agency database context. The input commits or rolls back with
    * that transaction. A retry with the same source key and payload returns the
@@ -127,16 +144,6 @@ export class PayrollInputsService {
     const existing = await findByKey(transaction, key);
     if (existing) return replay(existing, payloadHash);
 
-    // Payroll computes a monetization amount from Personnel salary facts, which
-    // #339 binds. Until then Payroll cannot value the input, so it accepts none.
-    if (request.inputKind === 'MONETIZATION_EARNING') {
-      return {
-        outcome: 'RETRYABLE_FAILURE',
-        code: 'PAYROLL_INPUT_VALUATION_UNAVAILABLE',
-        reason: 'Payroll cannot yet value a monetization earning from its salary source.',
-      };
-    }
-
     // Under RLS this also refuses an Agency other than the caller's context.
     const employee = await transaction.employee.findFirst({
       where: { agencyId: request.agencyId, id: request.employeeId },
@@ -144,6 +151,31 @@ export class PayrollInputsService {
     });
     if (!employee) {
       return rejected('PAYROLL_INPUT_EMPLOYEE_NOT_FOUND', 'The Employee is not in this Agency.');
+    }
+
+    // Payroll computes a monetization amount itself and freezes how beside the
+    // source's payload; the hash stays the source's request (#161).
+    let amount: string | null = null;
+    let payloadSnapshot = request.payload as Prisma.InputJsonObject;
+    if (request.inputKind === 'MONETIZATION_EARNING') {
+      if (!this.monetization) {
+        return {
+          outcome: 'RETRYABLE_FAILURE',
+          code: 'PAYROLL_INPUT_VALUATION_UNAVAILABLE',
+          reason: 'Payroll has no monetization calculator bound.',
+        };
+      }
+      const valued = await this.monetization.valueInTransaction(transaction, request);
+      if (!valued.ok) {
+        return {
+          outcome: valued.outcome,
+          code: valued.code,
+          reason: valued.reason,
+          missingFacts: valued.missingFacts,
+        };
+      }
+      amount = valued.amount;
+      payloadSnapshot = { ...payloadSnapshot, payrollValuation: valued.valuation };
     }
 
     // A replacement names a withdrawn input of the same source, Employee, and kind.
@@ -182,8 +214,9 @@ export class PayrollInputsService {
         sourceId: request.sourceId,
         effectiveDate: new Date(`${request.effectiveDate}T00:00:00.000Z`),
         quantity,
+        amount: amount === null ? null : new Prisma.Decimal(amount),
         status: 'PENDING',
-        payloadSnapshot: request.payload as Prisma.InputJsonObject,
+        payloadSnapshot,
         payloadHash,
         replacesPayrollInputId: request.replacesPayrollInputId ?? null,
       },
@@ -192,7 +225,7 @@ export class PayrollInputsService {
     const stored = await findByKey(transaction, key);
     if (!stored) throw new Error('The accepted Payroll Input could not be read back.');
     return count === 1
-      ? { outcome: 'ACCEPTED', payrollInputId: stored.id }
+      ? { outcome: 'ACCEPTED', payrollInputId: stored.id, ...amountOf(stored) }
       : replay(stored, payloadHash);
   }
 
@@ -279,20 +312,25 @@ function findByKey(
 ) {
   return transaction.payrollInput.findUnique({
     where: { agencyId_sourceModule_sourceKey: key },
-    select: { id: true, payloadHash: true },
+    select: { id: true, payloadHash: true, amount: true },
   });
 }
 
 function replay(
-  existing: { id: string; payloadHash: string },
+  existing: { id: string; payloadHash: string; amount: Prisma.Decimal | null },
   payloadHash: string,
 ): PayrollInputAcceptance {
   return existing.payloadHash === payloadHash
-    ? { outcome: 'ALREADY_ACCEPTED', payrollInputId: existing.id }
+    ? { outcome: 'ALREADY_ACCEPTED', payrollInputId: existing.id, ...amountOf(existing) }
     : rejected(
         'PAYROLL_INPUT_SOURCE_KEY_CONFLICT',
         'The source key already names a Payroll Input with a different payload.',
       );
+}
+
+/** Only a monetization earning has an amount, so other answers keep their shape. */
+function amountOf(input: { amount: Prisma.Decimal | null }): { amount?: string } {
+  return input.amount === null ? {} : { amount: input.amount.toFixed(2) };
 }
 
 function rejected(

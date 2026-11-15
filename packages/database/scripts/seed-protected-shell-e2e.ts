@@ -931,8 +931,8 @@ async function seed(): Promise<void> {
     await transaction.payrollMonetizationAdjustmentOutcome.deleteMany({
       where: { agencyId: agency.id },
     });
-    await transaction.payrollMonetizationEarningInput.deleteMany({
-      where: { agencyId: agency.id },
+    await transaction.payrollInput.deleteMany({
+      where: { agencyId: agency.id, inputKind: 'MONETIZATION_EARNING' },
     });
     await transaction.monetizationAdjustmentLine.deleteMany({ where: { agencyId: agency.id } });
     await transaction.monetizationAdjustment.deleteMany({ where: { agencyId: agency.id } });
