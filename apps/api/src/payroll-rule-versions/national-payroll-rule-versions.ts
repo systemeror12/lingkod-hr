@@ -6,7 +6,8 @@ import { z } from 'zod';
  * (ADR 0013). Each rule kind has one calculator in code; a version carries
  * only that kind's typed parameters, validated here at load.
  */
-export type NationalPayrollRuleKind = 'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS';
+export type NationalPayrollRuleKind =
+  'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS' | 'YEAR_END_BONUS_AND_CASH_GIFT';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -104,9 +105,52 @@ const authorizedDeductionsFile = z
   })
   .strict();
 
+const pesoAmount = z
+  .string()
+  .regex(/^\d{1,15}(\.\d{1,2})?$/, 'An amount is a decimal string of whole centavos.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'An amount is greater than zero.');
+
+/**
+ * The year-end bonus and cash gift rule of one fiscal year: one month's basic
+ * salary as of `asOf` and the cash gift, for service of at least
+ * `minimumServiceMonths` from `serviceFrom` through `asOf` (RA No. 6686 sec. 1
+ * as amended by RA No. 8441; FY 2026 GAA sec. 75(a); research register R9,
+ * R10). `grantsSeparatedBeforeAsOf` records whether the GAA also grants the
+ * case of personnel who retired or were separated before `asOf` after that
+ * service (FY 2026 GAA sec. 75(b); R11), which no statute on file grants.
+ */
+export const yearEndBonusAndCashGiftParameters = z
+  .object({
+    serviceFrom: isoDate,
+    asOf: isoDate,
+    minimumServiceMonths: z.int().positive(),
+    bonusMonthsOfBasicSalary: z.int().positive(),
+    cashGiftAmount: pesoAmount,
+    grantsSeparatedBeforeAsOf: z.boolean(),
+  })
+  .strict()
+  .refine(({ serviceFrom, asOf }) => serviceFrom < asOf, {
+    message: 'serviceFrom is before asOf.',
+    path: ['asOf'],
+  });
+
+export type YearEndBonusAndCashGiftParameters = z.infer<typeof yearEndBonusAndCashGiftParameters>;
+
+const yearEndBonusAndCashGiftFile = z
+  .object({
+    ruleKind: z.literal('YEAR_END_BONUS_AND_CASH_GIFT'),
+    ...ruleVersionFields,
+    parameters: yearEndBonusAndCashGiftParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
-  .discriminatedUnion('ruleKind', [salaryScheduleFile, authorizedDeductionsFile])
+  .discriminatedUnion('ruleKind', [
+    salaryScheduleFile,
+    authorizedDeductionsFile,
+    yearEndBonusAndCashGiftFile,
+  ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',
     path: ['effectiveTo'],

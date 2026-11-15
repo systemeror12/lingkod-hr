@@ -13,6 +13,7 @@ import {
   type PayrollTenant,
 } from '../payroll-periods/payroll-periods.test-fixtures';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
+import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { dueCalculations } from './payroll-calculation.job';
 import { type CalculationJob, PayrollCalculationService } from './payroll-calculation.service';
 
@@ -52,6 +53,7 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
   const calculation = new PayrollCalculationService(
     new CompensationBasisService(facts),
     new BasicSalaryCalculator(),
+    new YearEndBonusCalculator(),
   );
   let admin: PrismaClient;
   let scheduleId: string;
@@ -396,11 +398,15 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
     };
 
     // Version 1: a technical failure returns the period to DRAFT with the reason and writes nothing.
-    const broken = new PayrollCalculationService(new CompensationBasisService(facts), {
-      calculate: () => {
-        throw new Error('calculator unavailable');
+    const broken = new PayrollCalculationService(
+      new CompensationBasisService(facts),
+      {
+        calculate: () => {
+          throw new Error('calculator unavailable');
+        },
       },
-    });
+      new YearEndBonusCalculator(),
+    );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({
       outcome: 'FAILED',

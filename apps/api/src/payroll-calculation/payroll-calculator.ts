@@ -1,11 +1,24 @@
 import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
 
+/** A National Payroll Rule Version the period's rule snapshot froze, with its parameters. */
+export interface SnapshotRuleVersion {
+  id: string;
+  code: string;
+  ruleKind: string;
+  /** As loaded; the calculator of the kind parses them with the kind's schema. */
+  parameters: unknown;
+}
+
 /** What every calculator reads besides the Employee's compensation basis. */
 export interface CalculationContext {
   periodFrom: string;
   periodTo: string;
   /** The National Payroll Rule Versions the period's rule snapshot froze. */
   snapshotRuleVersionIds: ReadonlySet<string>;
+  /** The same versions with their kinds and parameters. */
+  snapshotRuleVersions: readonly SnapshotRuleVersion[];
+  /** The pay component codes a special period names; empty for a regular period. */
+  componentCodes: ReadonlySet<string>;
 }
 
 export type LineType = 'EARNING' | 'DEDUCTION' | 'EMPLOYER_SHARE' | 'INFORMATIONAL';

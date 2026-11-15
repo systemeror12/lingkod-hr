@@ -4,6 +4,7 @@ import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import type { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
+import { SPECIAL_PERIOD_COMPONENT_CODES } from '../payroll-calculation/payroll-calculation.service';
 import { claimPayrollFunction } from './payroll-period-actors';
 import { freezePayrollRuleSnapshot } from './payroll-rule-snapshots';
 import {
@@ -260,11 +261,25 @@ export class PayrollPeriodsService {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const before = await findDraftForCommand(transaction, context, periodId, input.rowVersion);
       if (before.runType !== 'REGULAR') {
-        throw new PayrollPeriodsServiceError(
-          'A special Payroll Period pays only the components it names, and none of them has a calculator yet.',
-          409,
-          'PAYROLL_PERIOD_SPECIAL_NOT_CALCULABLE',
-        );
+        const named = await transaction.payComponent.findMany({
+          where: { id: { in: before.components.map((component) => component.payComponentId) } },
+          orderBy: { code: 'asc' },
+          select: { code: true },
+        });
+        const uncalculated = named
+          .map((component) => component.code)
+          .filter((code) => !SPECIAL_PERIOD_COMPONENT_CODES.includes(code));
+        if (named.length === 0 || uncalculated.length > 0) {
+          throw new PayrollPeriodsServiceError(
+            `A special Payroll Period pays only the components it names, and ${
+              named.length === 0
+                ? 'it names none'
+                : `${uncalculated.join(', ')} ${uncalculated.length === 1 ? 'has' : 'have'} no calculator yet`
+            }.`,
+            409,
+            'PAYROLL_PERIOD_SPECIAL_NOT_CALCULABLE',
+          );
+        }
       }
       if (Date.now() < before.cutoffAt.getTime()) {
         throw new PayrollPeriodsServiceError(
@@ -387,7 +402,13 @@ async function findDraftForCommand(
 ) {
   const period = await transaction.payrollPeriod.findUnique({
     where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
-    select: { status: true, rowVersion: true, cutoffAt: true, runType: true },
+    select: {
+      status: true,
+      rowVersion: true,
+      cutoffAt: true,
+      runType: true,
+      components: { select: { payComponentId: true } },
+    },
   });
   if (!period) {
     throw new PayrollPeriodsServiceError(

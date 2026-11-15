@@ -44,7 +44,8 @@ calculated line (#27, #43).
 CREATE TABLE national_payroll_rule_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_kind text NOT NULL
-    CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS')),
+    CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
+                         'YEAR_END_BONUS_AND_CASH_GIFT')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -78,6 +79,10 @@ against that schema. `SALARY_SCHEDULE` has empty parameters, because its rates
 are rows. `AUTHORIZED_DEDUCTIONS` is the GAA's authorized-deductions provision
 (FY 2026 GAA sec. 62); its parameters list `allowedPayeeCategories`, drawn
 from the categories that section names (section 9).
+`YEAR_END_BONUS_AND_CASH_GIFT` is one fiscal year's year-end bonus and cash
+gift rule (FY 2026 GAA sec. 75); its parameters are `serviceFrom`, `asOf`,
+`minimumServiceMonths`, `bonusMonthsOfBasicSalary`, `cashGiftAmount`, and
+`grantsSeparatedBeforeAsOf` (section 8).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -443,8 +448,9 @@ Starting a calculation needs `payroll.periods.calculate` and claims the
 Payroll Preparer's `PREPARATION` function (#621). In one transaction it moves
 the period from `DRAFT` to `CALCULATING`, advances `calculation_version`, and
 freezes that version's rule snapshot (section 6); a missing required rule
-refuses the start and changes nothing. A special period is refused until a
-calculator exists for a component it names. A second start at the same
+refuses the start and changes nothing. A special period is refused unless it
+names a component and a calculator exists for each one it names; it runs only
+those calculators. A second start at the same
 `row_version` finds the period moved and is refused.
 
 The committed `CALCULATING` period is the queued job. The calculation job
@@ -752,6 +758,28 @@ basis, a partial month (PAY-002, until #622), a casual daily wage, whose paid
 days in a month no recorded rule fixes, a rate, pay basis, or schedule that
 changes inside the month, such as a step increment, an amount that is not
 whole centavos, and a schedule the snapshot did not freeze.
+
+The `YEAR_END_BONUS` and `CASH_GIFT` components, which migration 0165 adds to
+the catalogue with the `YEAR_END_BONUS_AND_CASH_GIFT` rule kind (#344), are
+paid in a special period that names them and covers its rule version's service
+window, January 1 to October 31. The version's parameters hold that window,
+the minimum months of service, the months of basic salary, the cash gift
+amount, and whether the GAA grants the case of personnel who left before
+October 31 (FY 2026 GAA sec. 75). An Employee in service on October 31 with
+the minimum months, counted in whole calendar months across their Service
+Segments in the window, gets one `EARNING` line of one month's basic salary as
+of that day, with the version as `rule_version_id` and the salary schedule in
+`source_snapshot`, and one cash gift line. Under the minimum there is no
+bonus. `source_snapshot.taxTreatment` marks the bonus
+`THIRTEENTH_MONTH_AND_OTHER_BENEFITS`, counting toward the ₱90,000 exclusion
+(#351), and the cash gift `DE_MINIMIS`. Every case no recorded rule settles
+blocks the component and writes no line: no version with the period's window,
+service months that turn on leftover days or a month end, a reduced cash gift
+under the minimum, a separated Employee where the version grants that case,
+because no rule on record prorates the bonus and the record does not show a
+separation from government service rather than a transfer, a part-time cash
+gift, a casual daily wage bonus, an `INDETERMINATE` basis on October 31, and a
+schedule the snapshot did not freeze.
 
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line
