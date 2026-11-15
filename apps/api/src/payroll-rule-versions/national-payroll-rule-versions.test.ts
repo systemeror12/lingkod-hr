@@ -115,6 +115,27 @@ describe('rule version file', () => {
     expect(parse(withoutEffectiveTo)).toBe(false);
   });
 
+  it('accepts authorized deductions that list known payee categories once', () => {
+    const deductions = (parameters: unknown, extra: Record<string, unknown> = {}) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('ad', '2030-01-01', null),
+        ruleKind: 'AUTHORIZED_DEDUCTIONS',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return { ...file, ...extra };
+    };
+    expect(parse(deductions({ allowedPayeeCategories: ['BIR', 'GSIS'] }))).toBe(true);
+    expect(parse(deductions({ allowedPayeeCategories: [] }))).toBe(false);
+    expect(parse(deductions({ allowedPayeeCategories: ['GSIS', 'GSIS'] }))).toBe(false);
+    expect(parse(deductions({ allowedPayeeCategories: ['PAWNSHOP'] }))).toBe(false);
+    expect(parse(deductions({}))).toBe(false);
+    const rates = [{ salaryGrade: 1, salaryStep: 1, monthlyRate: '1000' }];
+    expect(
+      parse(deductions({ allowedPayeeCategories: ['BIR'] }, { salaryGradeRates: rates })),
+    ).toBe(false);
+  });
+
   it('reads exactly one JSON file argument', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rule-version-'));
     const path = join(directory, 'schedule.json');

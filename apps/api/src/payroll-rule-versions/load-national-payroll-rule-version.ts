@@ -125,14 +125,18 @@ export async function loadNationalPayrollRuleVersion(
         },
         select: { id: true },
       });
-      const rates = await transaction.salaryGradeRate.createMany({
-        data: file.salaryGradeRates.map((rate) => ({
-          ruleVersionId: version.id,
-          salaryGrade: rate.salaryGrade,
-          salaryStep: rate.salaryStep,
-          monthlyRate: new Prisma.Decimal(rate.monthlyRate),
-        })),
-      });
+      // Only a salary schedule carries rows beside its parameters.
+      const rates =
+        file.ruleKind === 'SALARY_SCHEDULE'
+          ? await transaction.salaryGradeRate.createMany({
+              data: file.salaryGradeRates.map((rate) => ({
+                ruleVersionId: version.id,
+                salaryGrade: rate.salaryGrade,
+                salaryStep: rate.salaryStep,
+                monthlyRate: new Prisma.Decimal(rate.monthlyRate),
+              })),
+            })
+          : { count: 0 };
 
       return {
         id: version.id,

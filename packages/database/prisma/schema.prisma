@@ -5570,3 +5570,34 @@ model PayrollInput {
   @@index([agencyId, sourceModule, status, acceptedAt], map: "payroll_inputs_source_status_idx")
   @@map("payroll_inputs")
 }
+
+/// An Employee's issuer-validated loan or deduction obligation (#352). A change
+/// supersedes the row with a successor; ending sets `effectiveTo`. Its foreign
+/// keys live in migration 0153.
+model DeductionObligation {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  employeeId                 String    @map("employee_id") @db.Uuid
+  payeeCategory              String    @map("payee_category")
+  payeeName                  String    @map("payee_name") @db.Citext
+  issuerReference            String    @map("issuer_reference") @db.Citext
+  incurredOn                 DateTime  @map("incurred_on") @db.Date
+  outstandingBalance         Decimal   @map("outstanding_balance") @db.Decimal(19, 4)
+  scheduledAmount            Decimal   @map("scheduled_amount") @db.Decimal(19, 4)
+  authorityDocumentVersionId String    @map("authority_document_version_id") @db.Uuid
+  payeeRuleVersionId         String    @map("payee_rule_version_id") @db.Uuid
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  status                     String
+  supersedesObligationId     String?   @unique(map: "deduction_obligations_supersedes_key") @map("supersedes_obligation_id") @db.Uuid
+  changeReason               String?   @map("change_reason")
+  endReason                  String?   @map("end_reason")
+  recordedByMembershipId     String    @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                 DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  endedByMembershipId        String?   @map("ended_by_membership_id") @db.Uuid
+  endedAt                    DateTime? @map("ended_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "deduction_obligations_agency_id_id_key")
+  @@index([agencyId, employeeId, status, incurredOn], map: "deduction_obligations_employee_idx")
+  @@map("deduction_obligations")
+}

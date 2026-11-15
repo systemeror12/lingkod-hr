@@ -1793,7 +1793,9 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 
 `payroll.periods.void` requests a void, and `payroll.periods.approve_void`
 approves or declines it. `payroll.inputs.adjust` opens a Payroll Adjustment for
-recalculation; it enters no amount. There is no `payroll.payslips.supersede`:
+recalculation; it enters no amount. `payroll.deductions.manage`, held
+Agency-wide, records, changes, and ends an Employee's Deduction Obligations
+(payroll-schema.md §9). There is no `payroll.payslips.supersede`:
 the system supersedes a Payslip when its payroll is voided (§5.21).
 
 Holding a permission is not enough. On one Payroll Period a person acts in at

@@ -16,6 +16,7 @@ import { GovernmentIdentifiersModule } from './government-identifiers/government
 import { PersonnelActionsModule } from './personnel-actions/personnel-actions.module';
 import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
 import { PayrollInputsModule } from './payroll-inputs/payroll-inputs.module';
+import { DeductionObligationsModule } from './deduction-obligations/deduction-obligations.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
@@ -59,6 +60,7 @@ import { CtoRequestsModule } from './cto-requests/cto-requests.module';
     PersonnelActionsModule,
     PayrollBankAccountsModule,
     PayrollInputsModule,
+    DeductionObligationsModule,
     SalnComplianceModule,
     ServiceRecordsModule,
     ApprovalModule,

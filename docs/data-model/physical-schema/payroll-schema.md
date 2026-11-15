@@ -44,7 +44,7 @@ calculated line (#27, #43).
 CREATE TABLE national_payroll_rule_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_kind text NOT NULL
-    CHECK (rule_kind IN ('SALARY_SCHEDULE')),
+    CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -75,7 +75,9 @@ CREATE TABLE salary_grade_rates (
 Each ticket that adds a rule kind adds its value to the `rule_kind` check and
 its calculator and parameter schema in code. The load validates `parameters`
 against that schema. `SALARY_SCHEDULE` has empty parameters, because its rates
-are rows.
+are rows. `AUTHORIZED_DEDUCTIONS` is the GAA's authorized-deductions provision
+(FY 2026 GAA sec. 62); its parameters list `allowedPayeeCategories`, drawn
+from the categories that section names (section 9).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -661,6 +663,80 @@ no contribution lines.
 
 Loan lines use a separate table because multiple deductions may exist.
 
+```sql
+CREATE TABLE deduction_obligations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  payee_category text NOT NULL
+    CHECK (payee_category IN ('BIR','PHILHEALTH','GSIS','HDMF',
+      'NATIONAL_GOVERNMENT_COA_DECISION','EMPLOYEE_COOPERATIVE_OR_ASSOCIATION',
+      'EMPLOYEE_PROVIDENT_FUND','GOVERNMENT_FINANCIAL_INSTITUTION',
+      'LICENSED_INSURER','THRIFT_OR_RURAL_BANK')),
+  payee_name citext NOT NULL,
+  issuer_reference citext NOT NULL,
+  incurred_on date NOT NULL,
+  outstanding_balance numeric(19,4) NOT NULL CHECK (outstanding_balance > 0),
+  scheduled_amount numeric(19,4) NOT NULL CHECK (scheduled_amount > 0),
+  authority_document_version_id uuid NOT NULL,
+  payee_rule_version_id uuid NOT NULL
+    REFERENCES national_payroll_rule_versions (id) ON DELETE RESTRICT,
+  effective_from date NOT NULL,
+  effective_to date,
+  status text NOT NULL CHECK (status IN ('ACTIVE','SUPERSEDED','ENDED')),
+  supersedes_obligation_id uuid UNIQUE,
+  change_reason text,
+  end_reason text,
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  ended_by_membership_id uuid,
+  ended_at timestamptz,
+  CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CHECK ((status = 'ENDED') = (effective_to IS NOT NULL)),
+  CHECK ((supersedes_obligation_id IS NOT NULL) = (change_reason IS NOT NULL)),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, authority_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, supersedes_obligation_id)
+    REFERENCES deduction_obligations (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, ended_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Deduction Obligation is an Employee's issuer-validated loan or deduction:
+the payee, the issuer's reference, the date incurred, the outstanding balance
+and scheduled amount the issuer validated, and the finalized Document Version
+that authorizes them. Payroll never calculates interest or amortization (#27).
+`incurred_on` gives the order incurred, by which obligations other than those
+due the BIR, PhilHealth, GSIS, and HDMF are satisfied (GAA sec. 62). Applying
+an obligation in calculation is #634.
+
+The payee categories are those of FY 2026 GAA sec. 62: (a) the BIR,
+PhilHealth, GSIS, and HDMF; (b) the National Government under a final and
+executory COA decision; and (c) to (g) qualified employee cooperatives and
+savings, loan, and mutual-benefit associations, employee provident funds,
+authorized government financial institutions and depository banks, licensed
+insurers, and BSP-accredited thrift and rural banks
+([R6](../../research/salary-overpayment-recovery-authorities.md);
+`research/official-personnel-compensation-boundaries.md` §6). Recording or
+changing an obligation needs the `AUTHORIZED_DEDUCTIONS` version in effect on
+its `effective_from` to allow the category, and stores that version as
+`payee_rule_version_id`. With no version in effect, no payee is accepted.
+
+A change never edits a row. It marks the active row `SUPERSEDED` and inserts a
+successor that names it, keeps its Employee, payee, issuer reference, and date
+incurred, and does not start earlier. A deferred trigger refuses a
+`SUPERSEDED` row without its successor at commit. Ending sets `effective_to`,
+`end_reason`, and who ended it. A superseded or ended row does not change, and
+no row is deleted. A partial unique index allows one `ACTIVE` row per Employee,
+payee category, payee name, and issuer reference. Record, change, and end need
+`payroll.deductions.manage` held Agency-wide and write an Audit Event.
+
 ---
 
 ## 10. Exceptions and Adjustments
@@ -886,6 +962,7 @@ Application permissions separately control:
 
 - compensation access;
 - payroll preparation;
+- Deduction Obligations;
 - certification;
 - the funding and accounting checkpoint reviews;
 - approval;
