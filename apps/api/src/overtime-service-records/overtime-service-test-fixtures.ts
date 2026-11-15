@@ -32,6 +32,7 @@ export async function approvedAuthority(
     status?: 'APPROVED' | 'DRAFT';
     approvedAt?: Date;
     authorizedHours?: string;
+    compensationMethod?: 'COC' | 'OVERTIME_PAY';
   },
 ): Promise<string> {
   const authority = await admin.overtimeAuthority.create({
@@ -42,7 +43,8 @@ export async function approvedAuthority(
       purpose: 'Year-end closing of accounts.',
       workDateFrom: new Date(options.workDateFrom),
       workDateTo: new Date(options.workDateTo),
-      compensationMethod: 'COC',
+      compensationMethod: options.compensationMethod ?? 'COC',
+      fundingReference: options.compensationMethod === 'OVERTIME_PAY' ? 'GAA 2026 MOOE' : null,
       status: 'DRAFT',
     },
   });
@@ -83,11 +85,12 @@ export function linkEmployee(home: AgencyFixture, membershipId: string, employee
   );
 }
 
-/** Remove an Attendance workflow fixture's Agency along with its Overtime rows. */
+/** Remove an Attendance workflow fixture's Agency along with its Overtime rows and Payroll Inputs. */
 export async function cleanupAttendanceOvertime(fixture: AttendanceWorkflowFixture): Promise<void> {
   const { admin, agencyId, suffix } = fixture;
   await admin.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.payrollInput.deleteMany({ where: { agencyId } });
     await transaction.overtimeServiceRecord.deleteMany({ where: { agencyId } });
     await transaction.overtimeAuthorityEmployee.deleteMany({ where: { agencyId } });
     await transaction.overtimeAuthority.deleteMany({ where: { agencyId } });

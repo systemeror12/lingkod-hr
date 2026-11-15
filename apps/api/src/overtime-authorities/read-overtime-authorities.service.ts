@@ -5,7 +5,6 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import {
   OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
-  OVERTIME_PAY_UNAVAILABLE_REASON,
   type OvertimeAuthorityDetail,
   type OvertimeAuthorityPendingAction,
   type OvertimeAuthorityRecord,
@@ -177,7 +176,6 @@ async function registerRecords(
     requestingUnitName: unitNames.get(authority.requestingUnitId) ?? authority.requestingUnitId,
     updatedAt: (changedAt.get(authority.id) ?? new Date(authority.createdAt)).toISOString(),
     pendingAction: pendingAction(authority.status, assignees.get(authority.id) ?? null),
-    overtimePayUnavailableReason: OVERTIME_PAY_UNAVAILABLE_REASON,
   }));
 }
 

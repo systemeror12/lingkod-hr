@@ -1,3 +1,5 @@
+import type { CompensationMethod } from '../overtime-authorities/overtime-authorities.types';
+
 export const OVERTIME_SERVICE_STATUSES = [
   'RENDERED',
   'FOR_CERTIFICATION',
@@ -36,6 +38,8 @@ export interface OvertimeServiceRecordSummary {
   overtimeAuthorityId: string;
   overtimeAuthorityEmployeeId: string;
   authorityNo: string;
+  /** The authority's compensation method, fixed at its approval. */
+  compensationMethod: CompensationMethod;
   employeeId: string;
   employeeNumber: string;
   employeeName: string;

@@ -293,6 +293,13 @@ Date of the allocation line. Payroll values each calendar month's days at the
 monthly salary in effect on those Work Dates, ÷ 22 (CSC MC No. 8, s. 2014;
 #328).
 
+For overtime pay, Overtime posts one `OVERTIME_HOURS` input when it certifies
+an Overtime Service Record under an `OVERTIME_PAY` authority, keyed by that
+record. Its `quantity` is the Certified Overtime Hours in whole minutes, as
+ADR 0009 counts COC, so no unsourced rounding rule applies, and `payload_snapshot`
+records `quantityUnit: 'MINUTE'`, the day classification, the Work Date, and
+the authority and Attendance provenance (#347).
+
 ---
 
 ## 5. Payroll Periods

@@ -14,7 +14,10 @@ import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
   type OvertimeAuthorityAuditWriter,
 } from '../overtime-authorities/overtime-authorities.audit';
+import type { CompensationMethod } from '../overtime-authorities/overtime-authorities.types';
 import { formatDate, toDatabaseDate } from '../overtime-authorities/overtime-authority.records';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
+import type { PayrollInputSubmission } from '../payroll-inputs/payroll-inputs.schemas';
 import {
   OvertimeServiceRecordError,
   type OvertimeServiceCertificationInput,
@@ -47,7 +50,7 @@ const recordSelect = {
   authorityEmployee: {
     select: {
       authorizedHours: true,
-      authority: { select: { id: true, authorityNo: true } },
+      authority: { select: { id: true, authorityNo: true, compensationMethod: true } },
     },
   },
 } as const;
@@ -64,6 +67,8 @@ export class OvertimeServiceRecordsService {
     private readonly auditWriter: OvertimeAuthorityAuditWriter,
     @Inject(AttendanceLockedDaysService)
     private readonly lockedDays: AttendanceLockedDaysService,
+    @Inject(PayrollInputsService)
+    private readonly payrollInputs: PayrollInputsService,
   ) {}
 
   /**
@@ -384,7 +389,10 @@ export class OvertimeServiceRecordsService {
    * changed source day version, official travel on the date, or a Work
    * Arrangement that does not require physically reporting is refused. The
    * covered Employee's row is locked before totalling, so certifications racing
-   * under one authority cannot together pass the authorized hours.
+   * under one authority cannot together pass the authorized hours. Under an
+   * `OVERTIME_PAY` authority the same transaction sends the Certified Overtime
+   * Hours to Payroll as a Payroll Input; if Payroll does not accept it, nothing
+   * is certified.
    */
   async certify(
     context: RequestContext,
@@ -467,6 +475,13 @@ export class OvertimeServiceRecordsService {
           certifiedAt: new Date(),
         },
       });
+      const payrollInputId =
+        current.compensationMethod === 'OVERTIME_PAY'
+          ? await this.sendOvertimePay(
+              transaction,
+              overtimePayInput(current, input.certifiedMinutes, day.attendancePeriodVersionId),
+            )
+          : null;
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,
@@ -484,10 +499,31 @@ export class OvertimeServiceRecordsService {
           actualMinutes: current.actualMinutes,
           sourceAttendanceDayId: day.attendanceDayId,
           attendancePeriodVersionId: day.attendancePeriodVersionId,
+          ...(payrollInputId ? { payrollInputId } : {}),
         },
       });
       return readRecord(transaction, context.agencyId, recordId);
     });
+  }
+
+  /**
+   * Post the overtime-pay Payroll Input and return its id. Payroll's refusal
+   * becomes a typed error, which rolls the certification back with it.
+   */
+  private async sendOvertimePay(
+    transaction: Prisma.TransactionClient,
+    submission: PayrollInputSubmission,
+  ): Promise<string> {
+    const answer = await this.payrollInputs.acceptInTransaction(transaction, submission);
+    if ('payrollInputId' in answer) return answer.payrollInputId;
+    const retryable = answer.outcome === 'RETRYABLE_FAILURE';
+    throw new OvertimeServiceRecordError(
+      `Payroll did not accept the overtime pay for ${submission.effectiveDate} (${answer.code}): ${answer.reason} The service was not certified${retryable ? '; certify it again later' : ''}.`,
+      retryable ? 503 : 409,
+      retryable
+        ? 'OVERTIME_SERVICE_PAYROLL_INPUT_RETRYABLE'
+        : 'OVERTIME_SERVICE_PAYROLL_INPUT_REJECTED',
+    );
   }
 
   /**
@@ -529,6 +565,41 @@ export class OvertimeServiceRecordsService {
       return readRecord(transaction, context.agencyId, recordId);
     });
   }
+}
+
+/**
+ * The Payroll Input for one certified record under an `OVERTIME_PAY` authority:
+ * the Certified Overtime Hours, the day classification, and their provenance.
+ * The quantity is whole minutes, as Overtime certifies them, so Payroll gets
+ * the certified time without a rounding rule no source sets (ADR 0009). The
+ * record is certified once, so its id is the stable source key.
+ */
+export function overtimePayInput(
+  record: OvertimeServiceRecordSummary,
+  certifiedMinutes: number,
+  attendancePeriodVersionId: string,
+): PayrollInputSubmission {
+  return {
+    agencyId: record.agencyId,
+    employeeId: record.employeeId,
+    sourceModule: 'OVERTIME',
+    inputKind: 'OVERTIME_HOURS',
+    sourceKey: `overtime-service-record:${record.id}`,
+    sourceType: 'OvertimeServiceRecord',
+    sourceId: record.id,
+    effectiveDate: record.workDate,
+    quantity: String(certifiedMinutes),
+    payload: {
+      quantityUnit: 'MINUTE',
+      certifiedMinutes,
+      dayClassification: record.dayClassification,
+      workDate: record.workDate,
+      overtimeAuthorityId: record.overtimeAuthorityId,
+      authorityNo: record.authorityNo,
+      sourceAttendanceDayId: record.sourceAttendanceDayId,
+      attendancePeriodVersionId,
+    },
+  };
 }
 
 async function lockRecord(
@@ -633,6 +704,7 @@ function toSummary(
     overtimeAuthorityId: record.authorityEmployee.authority.id,
     overtimeAuthorityEmployeeId: record.overtimeAuthorityEmployeeId,
     authorityNo: record.authorityEmployee.authority.authorityNo,
+    compensationMethod: record.authorityEmployee.authority.compensationMethod as CompensationMethod,
     employeeId: record.employeeId,
     employeeNumber: record.employee.employeeNumber,
     employeeName: record.employee.legalName,

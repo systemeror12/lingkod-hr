@@ -74,8 +74,6 @@ export interface OvertimeAuthority {
     role: 'PREPARER' | 'REVIEWER' | 'APPROVING_OFFICIAL';
     assigneeName: string | null;
   } | null;
-  /** The API's reason overtime pay is unavailable; `null` once it can be approved. */
-  overtimePayUnavailableReason: string | null;
   employees: CoveredEmployee[];
 }
 
@@ -952,11 +950,6 @@ function AuthoritySection({
             {detail.approvedAt ? 'Approved method' : 'Proposed method'}
           </dt>
           <dd className="m-0 text-ink">{METHOD_LABEL[detail.compensationMethod]}</dd>
-          {detail.compensationMethod === 'OVERTIME_PAY' && detail.overtimePayUnavailableReason ? (
-            <dd className="m-0 text-caption text-warning">
-              Unavailable: {detail.overtimePayUnavailableReason}
-            </dd>
-          ) : null}
         </div>
         <div>
           <dt className="text-caption text-ink-muted">Funding reference</dt>
@@ -1262,11 +1255,6 @@ function DecisionForm({
               <option value="COC">{METHOD_LABEL.COC}</option>
               <option value="OVERTIME_PAY">{METHOD_LABEL.OVERTIME_PAY}</option>
             </select>
-            {method === 'OVERTIME_PAY' && detail.overtimePayUnavailableReason ? (
-              <span className="text-caption font-normal text-warning">
-                Unavailable: {detail.overtimePayUnavailableReason}
-              </span>
-            ) : null}
           </Field>
           <Field label="Approval comments (optional)">
             <textarea
@@ -1516,11 +1504,6 @@ function DraftForm({
               <option value="COC">{METHOD_LABEL.COC}</option>
               <option value="OVERTIME_PAY">{METHOD_LABEL.OVERTIME_PAY}</option>
             </select>
-            {method === 'OVERTIME_PAY' && initial?.overtimePayUnavailableReason ? (
-              <span className="text-caption font-normal text-warning">
-                Unavailable: {initial?.overtimePayUnavailableReason}
-              </span>
-            ) : null}
           </Field>
           <Field
             label={method === 'OVERTIME_PAY' ? 'Funding reference' : 'Funding reference (optional)'}

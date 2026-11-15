@@ -594,7 +594,7 @@ flowchart TD
     I --> J{Certifier certifies?}
     J -- No --> N[Record reason; NOT_CERTIFIED]
     J -- Yes --> K{Method}
-    K -- Overtime pay --> L[Payroll Input, refused until Payroll supports it]
+    K -- Overtime pay --> L[Same transaction sends Certified Overtime Hours to Payroll as a Payroll Input]
     K -- COC --> M1[HR prepares monthly Certificate of COC Earned]
     M1 --> M2[Approving Official approves certificate]
     M2 --> M[COC module credits COC, applying ratio, caps, and validity]
