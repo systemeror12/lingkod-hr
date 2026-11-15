@@ -15,6 +15,7 @@ import { PersonnelBaselinesModule } from './personnel-baselines/personnel-baseli
 import { GovernmentIdentifiersModule } from './government-identifiers/government-identifiers.module';
 import { PersonnelActionsModule } from './personnel-actions/personnel-actions.module';
 import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
+import { PayrollInputsModule } from './payroll-inputs/payroll-inputs.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
@@ -57,6 +58,7 @@ import { CtoRequestsModule } from './cto-requests/cto-requests.module';
     GovernmentIdentifiersModule,
     PersonnelActionsModule,
     PayrollBankAccountsModule,
+    PayrollInputsModule,
     SalnComplianceModule,
     ServiceRecordsModule,
     ApprovalModule,

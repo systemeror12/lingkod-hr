@@ -79,7 +79,9 @@ are rows.
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
-a new issuance is a new row that names the version it supersedes.
+a new issuance is a new row that names the version it supersedes. A second
+trigger admits a `salary_grade_rates` row only for a `SALARY_SCHEDULE` version
+inserted in the same transaction, so a loaded schedule cannot gain rates later.
 
 The version in effect on a date is the one whose effectivity covers the date
 and that no successor has replaced from that date. The load refuses a version
@@ -256,7 +258,9 @@ owning services and copies neither here (#329, #619).
 An input belongs to no period when accepted. After acceptance a trigger allows
 only the status change and `consumed_by_payroll_period_id`, which the
 finalization transaction sets. Consumed inputs are immutable, apart from the
-return to `PENDING` when their payroll is voided.
+return to `PENDING` when their payroll is voided. The migration that creates
+`payroll_periods` adds the foreign key on `consumed_by_payroll_period_id`, which
+until then has only its CHECK (#338).
 
 A source module corrects an effect it posted by asking Payroll to withdraw the
 input, in its own transaction and idempotently by a stable correction key

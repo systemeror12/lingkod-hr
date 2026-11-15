@@ -5,6 +5,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "lint": "eslint .",
+    "load:payroll-rule-version": "tsx src/payroll-rule-versions/load-national-payroll-rule-version.ts",
     "provision:agency": "tsx src/agency-provisioning/provision-agency.ts",
     "start": "node dist/main.js",
     "test": "vitest run --passWithNoTests",
