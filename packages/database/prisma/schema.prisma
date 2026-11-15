@@ -5734,6 +5734,7 @@ model PayrollEmployee {
 
   payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_employees_period_fkey")
   lines         PayrollLine[]
+  contributions ContributionLine[]
 
   @@unique([payrollPeriodId, calculationVersion, employeeId], map: "payroll_employees_period_version_employee_key")
   @@unique([agencyId, id])
@@ -5759,6 +5760,24 @@ model PayrollLine {
   @@unique([agencyId, id])
   @@index([agencyId, payrollEmployeeId], map: "payroll_lines_payroll_employee_idx")
   @@map("payroll_lines")
+}
+
+/// One statutory contribution of a result: the shares, the base, and the
+/// rule version (#348). Employees' Compensation has no employee share. Immutable.
+model ContributionLine {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String  @map("agency_id") @db.Uuid
+  payrollEmployeeId String  @map("payroll_employee_id") @db.Uuid
+  contributionType  String  @map("contribution_type")
+  employeeShare     Decimal @map("employee_share") @db.Decimal(19, 4)
+  employerShare     Decimal @map("employer_share") @db.Decimal(19, 4)
+  compensationBase  Decimal @map("compensation_base") @db.Decimal(19, 4)
+  ruleVersionId     String  @map("rule_version_id") @db.Uuid
+
+  payrollEmployee PayrollEmployee @relation(fields: [agencyId, payrollEmployeeId], references: [agencyId, id], onDelete: Restrict, map: "contribution_lines_payroll_employee_fkey")
+
+  @@unique([payrollEmployeeId, contributionType], map: "contribution_lines_employee_type_key")
+  @@map("contribution_lines")
 }
 
 /// A calculation warning or blocker of one calculation version. It names the

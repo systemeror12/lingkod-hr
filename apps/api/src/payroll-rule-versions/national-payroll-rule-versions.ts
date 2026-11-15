@@ -6,7 +6,8 @@ import { z } from 'zod';
  * (ADR 0013). Each rule kind has one calculator in code; a version carries
  * only that kind's typed parameters, validated here at load.
  */
-export type NationalPayrollRuleKind = 'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS';
+export type NationalPayrollRuleKind =
+  'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS' | 'GSIS_CONTRIBUTION' | 'EMPLOYEES_COMPENSATION';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -40,6 +41,16 @@ const monthlyRate = z
   .string()
   .regex(/^\d{1,15}(\.\d{1,4})?$/, 'A monthly rate is a decimal string with up to 4 places.')
   .refine((value) => new Prisma.Decimal(value).gt(0), 'A monthly rate is greater than zero.');
+
+const positiveAmount = z
+  .string()
+  .regex(/^\d{1,15}(\.\d{1,4})?$/, 'An amount is a decimal string with up to 4 places.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'An amount is greater than zero.');
+/** A share of a base, as a fraction: `0.09` is 9%. */
+const shareRate = z
+  .string()
+  .regex(/^0\.\d{1,8}$/, 'A rate is a fraction below 1 with up to 8 places, such as 0.09.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'A rate is greater than zero.');
 
 const ruleVersionFields = {
   code: text(100),
@@ -104,9 +115,57 @@ const authorizedDeductionsFile = z
   })
   .strict();
 
+/**
+ * The GSIS contribution rule (RA No. 8291, sec. 5(a); research R17, R18): the
+ * member and government shares of monthly compensation up to the AMC limit.
+ * `monthlyCompensationLimit` is the Board-set limit, or null only when the
+ * cited issuance sets none; the file states it either way.
+ */
+export const gsisContributionParameters = z
+  .object({
+    employeeRate: shareRate,
+    employerRate: shareRate,
+    monthlyCompensationLimit: positiveAmount.nullable(),
+  })
+  .strict();
+
+/**
+ * The Employees' Compensation rule (PD No. 626, art. 181; research R22, R23):
+ * the employer's rate of the monthly salary credit, which is the monthly
+ * salary up to the ceiling. It has no employee rate: the whole contribution
+ * is the employer's.
+ */
+export const employeesCompensationParameters = z
+  .object({
+    employerRate: shareRate,
+    monthlySalaryCreditCeiling: positiveAmount,
+  })
+  .strict();
+
+const gsisContributionFile = z
+  .object({
+    ruleKind: z.literal('GSIS_CONTRIBUTION'),
+    ...ruleVersionFields,
+    parameters: gsisContributionParameters,
+  })
+  .strict();
+
+const employeesCompensationFile = z
+  .object({
+    ruleKind: z.literal('EMPLOYEES_COMPENSATION'),
+    ...ruleVersionFields,
+    parameters: employeesCompensationParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
-  .discriminatedUnion('ruleKind', [salaryScheduleFile, authorizedDeductionsFile])
+  .discriminatedUnion('ruleKind', [
+    salaryScheduleFile,
+    authorizedDeductionsFile,
+    gsisContributionFile,
+    employeesCompensationFile,
+  ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',
     path: ['effectiveTo'],
