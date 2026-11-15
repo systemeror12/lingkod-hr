@@ -31,6 +31,7 @@ import {
   YearEndBonusCalculator,
 } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
@@ -95,6 +96,7 @@ export class PayrollCalculationService {
     @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
     @Inject(PeraCalculator) pera: PeraCalculator,
     @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
+    @Inject(OvertimePayCalculator) overtimePay: OvertimePayCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last. PERA
     // reads basic salary and the days without pay.
@@ -103,6 +105,7 @@ export class PayrollCalculationService {
       daysWithoutPay,
       pera,
       commutableRata,
+      overtimePay,
       gsis,
       employeesCompensation,
     ];

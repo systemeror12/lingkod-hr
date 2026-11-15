@@ -57,6 +57,7 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
     new YearEndBonusCalculator(),
     noContribution,
     noContribution,
+    noContribution,
   );
   let admin: PrismaClient;
   let scheduleId: string;

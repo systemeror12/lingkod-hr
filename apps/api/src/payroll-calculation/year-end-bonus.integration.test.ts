@@ -22,6 +22,7 @@ import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.test-fixtures';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
@@ -48,6 +49,7 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
     new YearEndBonusCalculator(),
     new PeraCalculator(),
     new CommutableRataCalculator(),
+    new OvertimePayCalculator(),
   );
   let admin: PrismaClient;
   let ruleId: string;

@@ -46,7 +46,8 @@ CREATE TABLE national_payroll_rule_versions (
   rule_kind text NOT NULL
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
                          'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
-                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA')),
+                         'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA',
+                         'OVERTIME_PAY')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -98,6 +99,12 @@ sec. 71; DBM NBC No. 593); its parameters are `ranks`, each with its `rank`,
 the eligible `positionTitles`, and the monthly `representationAllowance` and
 `transportationAllowance`, and `actualWorkSchedule`, NBC 593's bands of
 `minimumDays` and `share`, rising to a share of 1 (section 8).
+`OVERTIME_PAY` is the Overtime Pay rule of CSC-DBM JC No. 2, s. 2015, which
+no GAA restates; its parameters are `workingDaysPerMonth` and
+`workHoursPerDay`, the hourly rate's divisors (item 9.3), `workdayPremium` and
+`nonWorkdayPremium` (item 9.4), `nonWorkdayPaidHoursLimit` (item 10.5), and
+`employeeAnnualCapShare` and `agencyAnnualCapShare` (items 10.6 and 10.7)
+(section 8).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -957,6 +964,28 @@ Attendance Period covers yet; a vehicle assignment for part of the month; and
 an amount that is not whole centavos. With no version in effect, every Employee
 blocks, since eligibility comes from the version.
 
+The `OVERTIME_PAY` component, which migration 0170 adds with the
+`OVERTIME_PAY` rule kind (#628), pays each `OVERTIME_HOURS` input in a regular
+period as one `EARNING` line resting on that input in `payroll_line_sources`
+([authorities](../../research/overtime-coc-cto-authorities.md#overtime-pay-limits-for-347)).
+`quantity` is the paid minutes, `rate` the monthly salary on the Work Date, and
+the amount `minutes ÷ 60 × rate ÷ 22 ÷ 8 × premium`, from the version in effect
+on the Work Date. The premium is 125% on a `WORKDAY` or `SPECIAL_WORKING` day
+and 150% on a `REST_DAY`, `REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, or
+`LOCAL_HOLIDAY` day, as the research's day-type map has them. A non-workday
+pays at most 12 hours; the circular compensates the rest through CTO, which
+Payroll does not grant, so it is unpaid and the line's result gets an
+`OVERTIME_PAY_NON_WORKDAY_HOURS_EXCEEDED` warning. `source_snapshot` records the
+certified and paid minutes, the day classification, the authority, and
+`taxTreatment` `SUPPLEMENTARY_COMPENSATION` (RR No. 11-2018 secs.
+2.78.1(B)(13) and 2.79(A)-(B)). An input is paid once: only `PENDING` inputs
+are read, each gives at most one line, and finalization consumes it. Every
+case no recorded rule settles blocks and writes no line: no version in effect
+on the Work Date, a payload that disagrees with its input, a `WORK_SUSPENSION`
+or unmapped classification, an `INDETERMINATE` basis, part-time service, a
+casual daily wage, and an amount that is not whole centavos. The annual caps
+are checks (below).
+
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line
 with `payroll_adjustment_id` carries the past period's component and the
@@ -1168,6 +1197,21 @@ to `DRAFT` and a warning alone does not:
 | `BASIC_SALARY_MISSING`   | BLOCKING | A `CALCULATED` result of a regular period with no `BASIC_SALARY` earning line                                          |
 | `PAYROLL_LINE_DUPLICATE` | BLOCKING | Two lines of one result with equal component, line type, rule version, quantity, rate, amount, and `source_snapshot`   |
 | `NET_PAY_VARIANCE`       | WARNING  | A `CALCULATED` result of a regular period whose net differs from the Employee's in the last `FINALIZED` regular period |
+
+Two more checks block a `CALCULATED` result of a regular period that pays
+`OVERTIME_PAY` (#628).
+`OVERTIME_PAY_AGENCY_CAP_UNVERIFIED` is raised for every such result: JC 2,
+s. 2015 item 10.7 caps the Agency's Overtime Pay for the year at 5% of its
+Personnel Services budget and needs the DBM's approval above it, and LingkodHR
+records neither. `OVERTIME_PAY_EMPLOYEE_ANNUAL_CAP` is raised when the
+Employee's Overtime Pay this period and in the year's `FINALIZED` periods
+exceeds 50% of the basic salary, less salary for days without pay, paid in
+them (item 10.6). The year's total basic salary, which item 10.6 measures
+against, is known only when the year ends, so the employee cap blocks whatever
+cannot yet be shown within it rather than project the rest of the year. The
+year is the period's own (_reading_: the circular counts pay "in a year"), and
+only one regular period is open at a time, so no other period of the year
+holds unfinalized pay.
 
 Variance has no threshold (the developer's ruling). With no `FINALIZED`
 regular period before this one, or no result for the Employee in it, nothing

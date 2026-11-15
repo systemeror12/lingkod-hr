@@ -16,7 +16,7 @@ import type {
 import { OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE } from './commutable-rata.calculator';
 
 /** The input kinds a calculator takes; any other kind stays for its own calculator. */
-const SALARY_INPUT_KINDS = ['LEAVE_WITHOUT_PAY', 'UNPAID_DEFICIT_REMAINDER'];
+const SALARY_INPUT_KINDS = ['LEAVE_WITHOUT_PAY', 'UNPAID_DEFICIT_REMAINDER', 'OVERTIME_HOURS'];
 
 /** The period a calculation covers and the Agency Payroll Applicabilities its snapshot froze. */
 export interface CalculationScope {
@@ -237,6 +237,9 @@ export class PayrollSourcesReader {
           : [],
       ),
       ...sources.absenceFacts.map((fact) => fact.workDate),
+      ...sources.payrollInputs.flatMap((input) =>
+        input.inputKind === 'OVERTIME_HOURS' ? [input.effectiveDate] : [],
+      ),
     ].filter((date) => date < period.from || date > period.to);
     const byMonth = new Map<string, string[]>();
     for (const date of dates) {
