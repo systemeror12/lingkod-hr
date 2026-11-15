@@ -1051,8 +1051,8 @@ CREATE TABLE attendance_deficit_charges (
   attendance_payroll_fact_id uuid NOT NULL,
   work_date date NOT NULL,
   deficit_type text NOT NULL CHECK (deficit_type IN ('TARDINESS','UNDERTIME')),
-  deficit_minutes integer NOT NULL CHECK (deficit_minutes >= 0),
-  expected_minutes integer NOT NULL CHECK (expected_minutes > 0),
+  deficit_minutes integer NOT NULL CHECK (deficit_minutes BETWEEN 0 AND 480),
+  expected_minutes integer NOT NULL CHECK (expected_minutes = 480),
   leave_account_id uuid NOT NULL,
   policy_version_id uuid NOT NULL,
   converted_quantity numeric(12,4) NOT NULL CHECK (converted_quantity >= 0),
@@ -1063,6 +1063,8 @@ CREATE TABLE attendance_deficit_charges (
   supersedes_charge_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (converted_quantity = charged_quantity + unpaid_quantity),
+  CHECK (converted_quantity = round(converted_quantity, 3)
+         AND charged_quantity = round(charged_quantity, 3)),
   CHECK ((charged_quantity > 0) = (leave_ledger_entry_id IS NOT NULL)),
   CHECK ((unpaid_quantity > 0) = (payroll_input_id IS NOT NULL)),
   FOREIGN KEY (agency_id, employee_id)
@@ -1075,6 +1077,8 @@ CREATE TABLE attendance_deficit_charges (
     REFERENCES leave_policy_versions (agency_id, id),
   FOREIGN KEY (agency_id, leave_ledger_entry_id)
     REFERENCES leave_ledger_entries (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_input_id)
+    REFERENCES payroll_inputs (agency_id, id),
   FOREIGN KEY (agency_id, supersedes_charge_id)
     REFERENCES attendance_deficit_charges (agency_id, id) ON DELETE RESTRICT,
   UNIQUE (agency_id, attendance_payroll_fact_id),
@@ -1086,9 +1090,21 @@ CREATE TABLE attendance_deficit_charges (
 An Attendance Deficit Charge is Leave's immutable record of one `TARDINESS` or
 `UNDERTIME` Attendance Payroll Fact (#329,
 [ADR 0012](../../adr/0012-charge-each-attendance-deficit-fact-once.md)). Leave
-creates it after an Attendance Period Lock or Locked Attendance Adjustment, from
-the lock's outbox event, reading the publication through Attendance's
-application service. `ABSENCE` facts get no charge.
+creates it after an Attendance Period Lock or Locked Attendance Adjustment,
+reading the publication through Attendance's application service. `ABSENCE`
+facts get no charge.
+
+The consumer runs in the API process, on start and five minutes after each
+pass (#340). `attendance_deficit_charge_agencies()` is a SECURITY DEFINER
+function that returns the Agencies with an `ATTENDANCE_PERIOD_LOCKED` outbox
+event, through an owner-only policy on `outbox_events`, as `coc_expiries_due`
+does. Under each Agency's context the consumer charges every publication with
+a `TARDINESS` or `UNDERTIME` fact that has no charge and that no later
+publication replaced. A Locked Attendance Adjustment writes no outbox event of
+its own, so the consumer finds its publication the same way; a Locked
+Attendance Adjustment only exists in an Agency that already locked. Holders of
+`leave.deficit_charges.run` rerun one publication by hand, and
+`leave.deficit_charges.read` reads its charges and uncharged facts.
 
 `converted_quantity` is the fact's minutes through CSC MC No. 41, s. 1998,
 Table II: the whole-hours row plus the remaining-minutes row, at three decimal
@@ -1104,12 +1120,27 @@ annual proportion only), a flexible-hours tardiness or undertime fact (MC 41
 §30 covers absence incurred), or another duty. A rerun charges it once a
 decision names the rule (#654).
 
+The reason codes are `COMPRESSED_WORKWEEK_DAY` (a `COMPRESSED` Work Schedule
+Version and 600 expected minutes), `FLEXIBLE_HOURS_DEFICIT` (a `FLEXIBLE` Work
+Schedule Version or Day Rule, at any expected duty, since §30 converts absence
+only), `EXPECTED_DUTY_NOT_480` (any other duty, part-time included, since
+Attendance records no part-time marker), `NO_VACATION_LEAVE_ACCOUNT` (no
+`ACTIVE` vacation Leave Account open on the Work Date), and
+`NO_VACATION_POLICY_VERSION`. A fact whose gap is resolved but whose charge
+has not run, or whose last run Payroll refused, reports `NOT_YET_CHARGED` or
+the refusal's code. A fact that a later publication replaced is not owed, and
+a zero-minute fact with no earlier charge is not owed either.
+
 Under the vacation Leave Account lock, and in Work Date order for the Employee,
 the service computes available credits as the posted balance as of the Work
 Date, or the current posted balance when lower, less active commitments.
-`charged_quantity` is the part they cover, posted as one ledger entry whose
-source is the charge, whose quantity is the negated charged part, and whose
-`effective_date` is the Work Date. `unpaid_quantity` is the Unpaid Deficit
+`charged_quantity` is the part they cover, floored to Table II's thousandths,
+posted as one ledger entry whose source is the charge (`source_type`
+`ATTENDANCE_DEFICIT_CHARGE`, posting key `CHARGE`), whose quantity is the
+negated charged part, and whose `effective_date` is the Work Date. The
+"current posted balance" counts entries effective through today in
+Asia/Manila. The ledger writes also re-evaluate the Employee's Mandatory Leave
+Assessments, as every vacation posting does. `unpaid_quantity` is the Unpaid Deficit
 Remainder. Leave obtains one Payroll Input for it through Payroll's application
 service in the same transaction and stores the returned identifier. The
 quantity sent is `unpaid_quantity` in days with the fact, minutes, and
@@ -1119,12 +1150,21 @@ conversion as provenance, never a rate or amount. A `REJECTED` or
 For each changed fact in an adjustment publication, the service reverses the
 earlier charge's ledger entry and writes a successor charge from the corrected
 minutes with `supersedes_charge_id` set, decided against the credits available
-then. Payroll receives a linked correcting input for the earlier remainder
-through its correction contract (#328). Nothing else changes a charge: later
-ledger entries never reopen it.
+then. The reversal's source is the successor charge, with posting key
+`REVERSAL`, on the earlier entry's account and Work Date. Payroll receives the
+correction through its withdrawal contract (payroll-schema.md §4): Leave
+withdraws the earlier charge's Payroll Input, which becomes `CANCELLED`, and a
+successor remainder is a new input whose `replaces_payroll_input_id` names it.
+A consumed input cannot be withdrawn until #649, so Payroll answers
+`RETRYABLE_FAILURE` and the Employee's charges roll back. Nothing else changes
+a charge: later ledger entries never reopen it.
 
-Attach the immutable mutation-prevention trigger to `attendance_deficit_charges`.
-`hris_app` holds `SELECT, INSERT` under the Agency policy with forced RLS.
+Attach the immutable mutation-prevention trigger to `attendance_deficit_charges`,
+and an insert guard requiring a successor to name a charge of the same Employee,
+Work Date, and deficit type. `hris_app` holds `SELECT, INSERT` under the Agency
+policy with forced RLS. Migration 0155 also grants `hris_app` `UPDATE` on
+`payroll_inputs` under an Agency policy, which the withdrawal needs; the
+existing mutation guard still allows only `PENDING` to `CANCELLED` there.
 
 ---
 

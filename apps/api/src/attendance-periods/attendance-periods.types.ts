@@ -168,6 +168,37 @@ export interface AttendancePayrollPublicationDetail {
   facts: AttendancePayrollFactSummary[];
 }
 
+/**
+ * One TARDINESS or UNDERTIME fact as Leave reads it to charge vacation leave
+ * (ADR 0012), with the duty its Work Date expected and the schedule it ran on.
+ */
+export interface AttendanceDeficitFact {
+  id: string;
+  employeeId: string;
+  workDate: string;
+  factType: 'TARDINESS' | 'UNDERTIME';
+  holidayClassification: string | null;
+  stableSourceKey: string;
+  correctedMinutes: number;
+  priorMinutes: number | null;
+  /** The source Attendance Day's expected duty minutes. */
+  expectedMinutes: number;
+  /** `REGULAR`, `FLEXIBLE`, `SHIFT`, or `COMPRESSED`; null on an unscheduled Day. */
+  scheduleType: string | null;
+  /** `FIXED`, `FLEXIBLE`, or `REST`; null when the Day names no Day Rule. */
+  dayRuleType: string | null;
+  /** Earlier publications' facts with the same stable key, oldest first. */
+  earlierFactIds: string[];
+  /** Whether a later publication carries a fact with the same stable key. */
+  supersededByLaterFact: boolean;
+}
+
+export interface AttendanceDeficitFactsRead {
+  publicationId: string;
+  publicationType: AttendancePayrollPublicationType;
+  facts: AttendanceDeficitFact[];
+}
+
 export interface AttendancePeriodLockResult {
   version: AttendancePeriodVersionSummary;
   dtrDocumentIds: string[];

@@ -161,11 +161,11 @@ CREATE TABLE authorized_payroll_component_inputs (
   scope text NOT NULL CHECK (scope IN ('AGENCY','EMPLOYEE')),
   employee_id uuid,
   value_kind text NOT NULL CHECK (value_kind IN ('AMOUNT','RATE','QUANTITY')),
-  value numeric(19,8) NOT NULL,
+  value numeric(19,8) NOT NULL CHECK (value > 0),
   payment_schedule text NOT NULL
     CHECK (payment_schedule IN ('ONCE','EACH_REGULAR_PERIOD')),
   authority_document_version_id uuid NOT NULL,
-  source_reference text NOT NULL,
+  source_reference text NOT NULL CHECK (btrim(source_reference) <> ''),
   effective_from date NOT NULL,
   effective_to date,
   status text NOT NULL CHECK (status IN ('RECORDED','APPROVED','CANCELLED')),
@@ -177,7 +177,10 @@ CREATE TABLE authorized_payroll_component_inputs (
   CHECK (effective_to IS NULL OR effective_to >= effective_from),
   CHECK ((scope = 'EMPLOYEE') = (employee_id IS NOT NULL)),
   CHECK (approved_by_membership_id IS DISTINCT FROM recorded_by_membership_id),
-  CHECK ((status = 'APPROVED') = (approved_at IS NOT NULL)),
+  CHECK ((status = 'APPROVED') = (approved_at IS NOT NULL)
+    AND (approved_at IS NULL) = (approved_by_membership_id IS NULL)),
+  CHECK (consumed_by_payroll_period_id IS NULL
+    OR (status = 'APPROVED' AND payment_schedule = 'ONCE')),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, authority_document_version_id)
@@ -190,6 +193,9 @@ CREATE TABLE authorized_payroll_component_inputs (
     REFERENCES payroll_periods (agency_id, id),
   UNIQUE (agency_id, id)
 );
+
+CREATE INDEX ON authorized_payroll_component_inputs
+  (agency_id, pay_component_id, status, effective_from);
 ```
 
 Applicability records for one component and one scope target must not overlap:
@@ -199,10 +205,27 @@ GAA-revalidated component, an `effective_to` no later than 31 December of the
 year of `effective_from`. After insert, only `effective_to` may move, and only
 earlier.
 
-A trigger requires an authorized input's component to accept one. An approved
-input changes only by an earlier `effective_to` or by its `ONCE` consumption.
+Migration 0156 creates `authorized_payroll_component_inputs` (#346), and
+migration 0157 adds the `consumed_by_payroll_period_id` foreign key to
+`payroll_periods`. Marking a `ONCE` input consumed is #626.
+
+A trigger requires an authorized input's component to accept one and the
+input to start `RECORDED`. Before approval, an input is approved or cancelled
+and nothing else changes. Approval needs an approver who is not the recorder:
+the check compares Users, so two memberships of one person count as one (#27).
+An approved input changes only by an earlier `effective_to` or by its `ONCE`
+consumption. No input is deleted. `hris_app` holds `SELECT`, `INSERT`, and
+`UPDATE` under the Agency policy.
+
+The record and approve services each need `payroll.inputs.adjust` for the
+whole Agency and write an Audit Event. The recorder's authority is a finalized
+Document Version of the Agency.
+
 National ceilings, such as the 20% night-shift rate, are checked by the service
-that records the input (#43).
+that records the input (#43). No National Payroll Rule Version kind carries the
+RATA ceiling yet, so the service refuses every reimbursable RATA input
+(catalogue code `REIMBURSABLE_RATA`) until one is loaded. The night-shift rate
+ceiling arrives with its calculation (#627).
 
 ---
 
@@ -380,9 +403,17 @@ period to name none.
 `cutoff_at` changes only while the period is `DRAFT`. The service refuses to
 start a calculation before it.
 
+Migration 0153 creates the period tables (#333). Its trigger also keeps a
+period's code, run type, dates, and `carries_adjustments` fixed, creates it
+`DRAFT`, rejects every `DELETE`, holds the status to the transitions of
+`hris-controls.md` §5.20 with `VOIDED` final, and advances
+`calculation_version` by one exactly when the period moves from `DRAFT` to
+`CALCULATING`. A component joins only a `DRAFT` special period.
+
 A special period carries Payroll Adjustments only with `carries_adjustments`.
 The trigger accepts that in place of a named component. A regular period
-always carries them (section 10).
+always carries them (section 10). Until Payroll Adjustments exist, the create
+command does not set it, so a special period always names a component.
 
 A period becomes `VOIDED` in two ways (#330). The Payroll Preparer cancels a
 `DRAFT` period with a reason: `void_reason`, `voided_by_membership_id`, and
@@ -471,9 +502,26 @@ CREATE TABLE payroll_rule_snapshot_items (
 ```
 
 One snapshot is taken per calculation version, when calculation starts. It
-lists every rule version in effect on any date of the period, plus the
-applicability and authorized-input records used. Items are references, not
-copies. Snapshots and their items are immutable.
+lists every rule version, of every kind, in effect on any date of the period,
+every approved Authorized Payroll Component Input of the Agency whose effective
+period overlaps the period, Agency-wide or Employee-scoped, and the
+applicability records used. Items are references, not copies. Whether the
+calculation pays an input is #626. Snapshots and their items are immutable.
+
+Migration 0153 creates both tables (#333), and a trigger rejects every
+`UPDATE` and `DELETE`. An item joins its snapshot only in the transaction that
+takes it. The snapshot freezes the period's current `calculation_version`, so
+the transaction that starts a calculation advances the version first (#621).
+Each rule kind the calculators need must be in effect on every date of the
+period; a date with none refuses the snapshot, naming the version that ended
+if one did. A kind no calculator requires yet is referenced on the dates it
+covers and never refuses. `SALARY_SCHEDULE` is the only kind yet.
+
+Migration 0157 adds `authorized_payroll_component_input_id` with its foreign
+key and UNIQUE, and replaces `payroll_rule_snapshot_items_one_source_check`
+with one that counts it beside `national_payroll_rule_version_id` (#346).
+`agency_payroll_applicability_id` (#618) arrives with its own migration, which
+adds the column, its foreign key and UNIQUE, and replaces the CHECK again.
 
 ---
 

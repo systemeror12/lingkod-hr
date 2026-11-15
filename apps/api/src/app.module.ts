@@ -17,6 +17,8 @@ import { PersonnelActionsModule } from './personnel-actions/personnel-actions.mo
 import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
 import { PayrollInputsModule } from './payroll-inputs/payroll-inputs.module';
 import { DeductionObligationsModule } from './deduction-obligations/deduction-obligations.module';
+import { PayrollPeriodsModule } from './payroll-periods/payroll-periods.module';
+import { AuthorizedPayrollComponentInputsModule } from './authorized-payroll-component-inputs/authorized-payroll-component-inputs.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
@@ -41,6 +43,7 @@ import { CocAccountsModule } from './coc-accounts/coc-accounts.module';
 import { OvertimeServiceRecordsModule } from './overtime-service-records/overtime-service-records.module';
 import { CocEarnedCertificatesModule } from './coc-earned-certificates/coc-earned-certificates.module';
 import { CtoRequestsModule } from './cto-requests/cto-requests.module';
+import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/attendance-deficit-charges.module';
 
 @Module({
   imports: [
@@ -61,6 +64,8 @@ import { CtoRequestsModule } from './cto-requests/cto-requests.module';
     PayrollBankAccountsModule,
     PayrollInputsModule,
     DeductionObligationsModule,
+    PayrollPeriodsModule,
+    AuthorizedPayrollComponentInputsModule,
     SalnComplianceModule,
     ServiceRecordsModule,
     ApprovalModule,
@@ -85,6 +90,7 @@ import { CtoRequestsModule } from './cto-requests/cto-requests.module';
     OvertimeServiceRecordsModule,
     CocEarnedCertificatesModule,
     CtoRequestsModule,
+    AttendanceDeficitChargesModule,
   ],
   controllers: [HealthController],
 })
