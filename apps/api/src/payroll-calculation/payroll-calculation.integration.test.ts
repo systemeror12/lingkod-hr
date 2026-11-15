@@ -3,6 +3,8 @@ import { prisma, setDatabaseContext, withDatabaseContext } from '@lingkod-hr/dat
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
+import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { payrollSourcesReader } from './payroll-calculation.test-fixtures';
 import { PersonnelSalaryFactsService } from '../personnel-salary-facts/personnel-salary-facts.service';
 import { PayrollPeriodsService } from '../payroll-periods/payroll-periods.service';
 import {
@@ -49,9 +51,12 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
   const scheduleCode = `${FIXTURE_PREFIX}CALC-SCHEDULE-${suffix}`;
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
+  const basis = new CompensationBasisService(facts);
   const calculation = new PayrollCalculationService(
-    new CompensationBasisService(facts),
+    basis,
     new BasicSalaryCalculator(),
+    payrollSourcesReader(basis),
+    new DaysWithoutPayCalculator(),
   );
   let admin: PrismaClient;
   let scheduleId: string;
@@ -396,11 +401,16 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
     };
 
     // Version 1: a technical failure returns the period to DRAFT with the reason and writes nothing.
-    const broken = new PayrollCalculationService(new CompensationBasisService(facts), {
-      calculate: () => {
-        throw new Error('calculator unavailable');
+    const broken = new PayrollCalculationService(
+      basis,
+      {
+        calculate: () => {
+          throw new Error('calculator unavailable');
+        },
       },
-    });
+      payrollSourcesReader(basis),
+      new DaysWithoutPayCalculator(),
+    );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({
       outcome: 'FAILED',

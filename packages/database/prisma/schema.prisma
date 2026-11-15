@@ -5761,6 +5761,38 @@ model PayrollLine {
   @@map("payroll_lines")
 }
 
+/// One source a Payroll Line rests on: exactly one Payroll Input, Attendance
+/// Payroll Fact, or Authorized Payroll Component Input (migration 0164). The
+/// foreign keys are in SQL.
+model PayrollLineSource {
+  id                                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                          String  @map("agency_id") @db.Uuid
+  payrollLineId                     String  @map("payroll_line_id") @db.Uuid
+  payrollInputId                    String? @map("payroll_input_id") @db.Uuid
+  attendancePayrollFactId           String? @map("attendance_payroll_fact_id") @db.Uuid
+  authorizedPayrollComponentInputId String? @map("authorized_payroll_component_input_id") @db.Uuid
+
+  @@unique([payrollLineId, payrollInputId], map: "payroll_line_sources_line_input_key")
+  @@unique([payrollLineId, attendancePayrollFactId], map: "payroll_line_sources_line_fact_key")
+  @@unique([payrollLineId, authorizedPayrollComponentInputId], map: "payroll_line_sources_line_authorized_input_key")
+  @@index([agencyId, payrollInputId], map: "payroll_line_sources_input_idx")
+  @@index([agencyId, attendancePayrollFactId], map: "payroll_line_sources_fact_idx")
+  @@map("payroll_line_sources")
+}
+
+/// Payroll's record that a finalized payroll consumed an Attendance Payroll
+/// Fact; a void sets `releasedAt` (migration 0164). The foreign keys are in SQL.
+model PayrollConsumedAttendanceFact {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  attendancePayrollFactId String    @map("attendance_payroll_fact_id") @db.Uuid
+  payrollPeriodId         String    @map("payroll_period_id") @db.Uuid
+  consumedAt              DateTime  @default(now()) @map("consumed_at") @db.Timestamptz(6)
+  releasedAt              DateTime? @map("released_at") @db.Timestamptz(6)
+
+  @@map("payroll_consumed_attendance_facts")
+}
+
 /// A calculation warning or blocker of one calculation version. It names the
 /// Employee, not a result.
 model PayrollException {

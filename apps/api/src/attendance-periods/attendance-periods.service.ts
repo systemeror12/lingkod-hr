@@ -30,6 +30,7 @@ import {
   ATTENDANCE_PERIOD_RECONCILIATION_SOURCE,
   AttendancePeriodServiceError,
   type AttendanceDeficitFactsRead,
+  type AttendancePayrollFactsByCutoff,
   type AttendancePayrollFactSummary,
   type AttendancePayrollFactType,
   type AttendancePayrollPublicationDetail,
@@ -1499,6 +1500,60 @@ export class AttendancePeriodsService {
           supersededByLaterFact: sameKey.some((row) => row.createdAt > fact.createdAt),
         };
       }),
+    };
+  }
+
+  /**
+   * Payroll's read by cutoff, inside the caller's Agency transaction (ADR
+   * 0014): every publication published at or before `cutoffAt`, oldest first,
+   * and their ABSENCE facts with each Work Date's expected duty. An adjustment
+   * publication's facts carry their prior value, so Payroll takes each as a
+   * delta. Payroll decides which facts a finalized payroll already consumed.
+   */
+  async payrollFactsByCutoffInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    cutoffAt: Date,
+  ): Promise<AttendancePayrollFactsByCutoff> {
+    const publications = await transaction.attendancePayrollPublication.findMany({
+      where: { agencyId, publishedAt: { lte: cutoffAt } },
+      orderBy: [{ publishedAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, publicationType: true },
+    });
+    const typeOf = new Map(publications.map((row) => [row.id, row.publicationType]));
+    const facts = publications.length
+      ? await transaction.attendancePayrollFact.findMany({
+          where: {
+            agencyId,
+            attendancePayrollPublicationId: { in: [...typeOf.keys()] },
+            factType: 'ABSENCE',
+          },
+          orderBy: [{ employeeId: 'asc' }, { workDate: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            attendancePayrollPublicationId: true,
+            employeeId: true,
+            workDate: true,
+            correctedMinutes: true,
+            priorMinutes: true,
+            attendanceDay: { select: { expectedMinutes: true } },
+          },
+        })
+      : [];
+    return {
+      publicationIds: publications.map((row) => row.id),
+      absenceFacts: facts.map((fact) => ({
+        id: fact.id,
+        publicationId: fact.attendancePayrollPublicationId,
+        publicationType: typeOf.get(
+          fact.attendancePayrollPublicationId,
+        ) as AttendancePayrollPublicationType,
+        employeeId: fact.employeeId,
+        workDate: formatDate(fact.workDate),
+        correctedMinutes: fact.correctedMinutes,
+        priorMinutes: fact.priorMinutes,
+        expectedMinutes: fact.attendanceDay.expectedMinutes,
+      })),
     };
   }
 

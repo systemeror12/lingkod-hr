@@ -737,10 +737,14 @@ Migration 0162 creates `payroll_lines` (#621). A line joins its result only in
 the transaction that wrote the result, and every `UPDATE` and `DELETE` is
 rejected. Each column arrives with the calculator that needs it:
 `taxable_amount` and `contribution_base` with the tax and contribution
-calculators (#350, #348), `payroll_adjustment_id` with Payroll Adjustments
-(#330), and `payroll_line_sources` and `payroll_consumed_attendance_facts`
-with the first line that rests on a Payroll Input or an Attendance Payroll
-Fact.
+calculators (#350, #348), and `payroll_adjustment_id` with Payroll
+Adjustments (#330).
+
+Migration 0164 creates `payroll_line_sources` and
+`payroll_consumed_attendance_facts` (#341). A source joins its line only in the
+transaction that wrote the line, and every `UPDATE` and `DELETE` is rejected.
+`hris_app` holds `SELECT` on `payroll_consumed_attendance_facts`; finalization,
+its only writer, grants itself `INSERT` and `UPDATE` when it arrives.
 
 The `BASIC_SALARY` component, which 0162 adds to the catalogue, pays a full
 month on the monthly full-time or proportional part-time basis as one
@@ -752,6 +756,42 @@ basis, a partial month (PAY-002, until #622), a casual daily wage, whose paid
 days in a month no recorded rule fixes, a rate, pay basis, or schedule that
 changes inside the month, such as a step increment, an amount that is not
 whole centavos, and a schedule the snapshot did not freeze.
+
+The `DAYS_WITHOUT_PAY` component, which 0164 adds, deducts salary for days
+without pay as `DEDUCTION` lines: quantity × monthly salary ÷ 22 (CSC MC No. 8,
+s. 2014), so with `BASIC_SALARY` a month pays `(22 − days) / 22` of its salary.
+Its days are leave without pay from `LEAVE_WITHOUT_PAY` inputs and whole Work
+Dates of `ABSENCE` facts (MC 41 sections 50 and 56). It writes one line per
+calendar month and salary in effect on those Work Dates, with the days in
+`quantity`, the monthly salary in `rate`, the salary schedule as
+`rule_version_id`, each Work Date's days and source in `source_snapshot`, and
+every input and fact it rests on in `payroll_line_sources`. A Work Date outside
+the period is valued at the compensation basis on that date, which the
+period's rule snapshot does not cover.
+
+The calculation takes the `PENDING` inputs accepted, and the `ABSENCE` facts
+published, at or before its rule snapshot's `cutoff_at`, less the facts in a
+live `payroll_consumed_attendance_facts` row (ADR 0014). A fact counts as its
+delta, `corrected_minutes − prior_minutes`, so an adjustment publication
+counts only its change, and withdrawing a deducted absence gives a negative
+line. Payroll never deducts `TARDINESS` or `UNDERTIME` facts (ADR 0012).
+Every case no recorded rule settles blocks and writes no line:
+
+- an `UNPAID_DEFICIT_REMAINDER` input, and an `ABSENCE` delta that is not a
+  whole Work Date's expected minutes: no authority on file values a fraction of
+  a day without pay. MC 8 counts days without pay, and MC 41 Table II converts
+  minutes to fractions of a day only to charge leave credits (#329). The
+  exception names `FRACTIONAL_DAY_SALARY_RULE` in `details.missingFacts`;
+- a tardiness or undertime fact, in any publication at or before the cutoff,
+  that Leave's application service reports as owed a charge (ADR 0012);
+- leave without pay counted in calendar days, which include days outside MC
+  8's 22-workday month exclusive of Saturdays and Sundays;
+- more than 22 days in one month, which the formula would make negative pay;
+- a Work Date whose compensation basis is `INDETERMINATE` or a casual daily
+  wage, which has no monthly salary;
+- an amount that is not whole centavos, which no recorded rule rounds.
+
+A blocked result keeps none of its calculators' lines (section 7).
 
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line
