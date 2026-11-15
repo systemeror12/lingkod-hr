@@ -19,6 +19,7 @@ import { PayrollInputsModule } from './payroll-inputs/payroll-inputs.module';
 import { DeductionObligationsModule } from './deduction-obligations/deduction-obligations.module';
 import { PayrollPeriodsModule } from './payroll-periods/payroll-periods.module';
 import { PayrollCalculationModule } from './payroll-calculation/payroll-calculation.module';
+import { PayrollExceptionsModule } from './payroll-exceptions/payroll-exceptions.module';
 import { AuthorizedPayrollComponentInputsModule } from './authorized-payroll-component-inputs/authorized-payroll-component-inputs.module';
 import { AgencyPayrollApplicabilitiesModule } from './agency-payroll-applicabilities/agency-payroll-applicabilities.module';
 import { CompensationBasisModule } from './compensation-basis/compensation-basis.module';
@@ -70,6 +71,7 @@ import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/att
     DeductionObligationsModule,
     PayrollPeriodsModule,
     PayrollCalculationModule,
+    PayrollExceptionsModule,
     AuthorizedPayrollComponentInputsModule,
     AgencyPayrollApplicabilitiesModule,
     CompensationBasisModule,

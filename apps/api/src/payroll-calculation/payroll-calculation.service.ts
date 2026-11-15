@@ -11,6 +11,7 @@ import type {
   CalculationContext,
   PayrollCalculator,
 } from './payroll-calculator';
+import { runPayrollChecks } from './payroll-checks';
 
 /** One queued calculation: a CALCULATING period and the version it started. */
 export interface CalculationJob {
@@ -40,9 +41,11 @@ interface LockedPeriod {
  * The calculation job of one Payroll Period version (hris-controls.md §5.20).
  * It resolves each Employee's compensation basis, runs every calculator, and
  * writes the Payroll Employee Results, their Payroll Lines, and the Payroll
- * Exceptions in one transaction with the period's next status: `FOR_REVIEW`
- * on a clean run, `DRAFT` on any blocking exception. A failure rolls that
- * back and returns the period to `DRAFT` with the reason.
+ * Exceptions, then runs the checks over what it stored (`runPayrollChecks`),
+ * in one transaction with the period's next status: `FOR_REVIEW` on a clean
+ * run, `DRAFT` on any blocking exception. A warning alone does not return the
+ * period. A failure rolls that back and returns the period to `DRAFT` with
+ * the reason.
  *
  * A retry is safe: the run locks the period row and does nothing unless the
  * period is still `CALCULATING` at the job's version, so a second or
@@ -191,6 +194,13 @@ export class PayrollCalculationService {
       results += 1;
       blockingExceptions += blocked.length;
     }
+    blockingExceptions += (
+      await runPayrollChecks(transaction, {
+        ...job,
+        runType: period.run_type,
+        periodFrom: context.periodFrom,
+      })
+    ).blocking;
 
     if (blockingExceptions > 0) {
       const reason = `${blockingExceptions} blocking exception${blockingExceptions === 1 ? '' : 's'} in calculation version ${job.calculationVersion}; correct the source or hold the Employee, then calculate again.`;
