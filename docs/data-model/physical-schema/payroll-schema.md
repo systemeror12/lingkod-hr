@@ -91,10 +91,14 @@ that would leave two versions of one kind in effect on the same date. A
 superseded row keeps its own dates, so this is checked by the load, not by an
 exclusion constraint.
 
-There is no derived-rate column. The salary calculator derives the daily rate
-as the monthly rate ÷ 22, the 22-working-day divisor of RA No. 6758, sec. 7. It
-does not prorate a partial month of a monthly-paid Employee: no rule is
-recorded for that case, and it blocks until an authority is found
+There is no derived-rate column. The compensation basis (#332) derives the
+daily rate as the monthly rate ÷ 22, the 22-working-day divisor of RA No. 6758,
+sec. 7. It matches each stretch of an Employee's Personnel salary facts to the
+salary schedule in effect on those dates, and returns `INDETERMINATE`, with
+reasons, for a missing fact, an unsupported pay basis, or a missing schedule or
+rate. The salary calculator does not prorate a partial month of a
+monthly-paid Employee: no rule is recorded for that case, and it blocks until
+an authority is found
 ([authorities](../../research/partial-month-basic-salary-authorities.md)).
 
 ---
