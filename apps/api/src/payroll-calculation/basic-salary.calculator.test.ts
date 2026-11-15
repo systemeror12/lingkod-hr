@@ -13,6 +13,7 @@ const context = {
   periodFrom: '2026-03-01',
   periodTo: '2026-03-31',
   snapshotRuleVersionIds: new Set(['schedule-a']),
+  snapshotRuleVersions: [],
 };
 
 function resolved(

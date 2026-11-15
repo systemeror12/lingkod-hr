@@ -3,9 +3,18 @@ import { Prisma } from '@prisma/client';
 import { prisma, setDatabaseContext } from '@lingkod-hr/database';
 import { log } from '@lingkod-hr/observability';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
+import {
+  isoDateOf,
+  type NationalPayrollRuleKind,
+} from '../payroll-rule-versions/national-payroll-rule-versions';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
 import { calculationHash } from './calculation-hash';
+import {
+  EmployeesCompensationCalculator,
+  GsisContributionCalculator,
+} from './contribution.calculators';
 import type {
+  CalculatedContribution,
   CalculatedException,
   CalculatedLine,
   CalculationContext,
@@ -56,8 +65,11 @@ export class PayrollCalculationService {
   constructor(
     @Inject(CompensationBasisService) private readonly compensationBasis: CompensationBasisService,
     @Inject(BasicSalaryCalculator) basicSalary: BasicSalaryCalculator,
+    @Inject(GsisContributionCalculator) gsis: GsisContributionCalculator,
+    @Inject(EmployeesCompensationCalculator) employeesCompensation: EmployeesCompensationCalculator,
   ) {
-    this.calculators = [basicSalary];
+    // Contributions read the earnings before them, so they stay last.
+    this.calculators = [basicSalary, gsis, employeesCompensation];
   }
 
   async run(job: CalculationJob): Promise<CalculationOutcome> {
@@ -96,12 +108,39 @@ export class PayrollCalculationService {
       select: { items: { select: { nationalPayrollRuleVersionId: true } } },
     });
     if (!snapshot) throw new Error('The calculation version has no rule snapshot.');
+    const snapshotRuleVersionIds = new Set(
+      snapshot.items.flatMap((item) => item.nationalPayrollRuleVersionId ?? []),
+    );
+    const frozen = await transaction.nationalPayrollRuleVersion.findMany({
+      where: { id: { in: [...snapshotRuleVersionIds] } },
+      orderBy: { effectiveFrom: 'asc' },
+      select: {
+        id: true,
+        code: true,
+        ruleKind: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        parameters: true,
+        supersededBy: { select: { id: true, effectiveFrom: true } },
+      },
+    });
     const context: CalculationContext = {
       periodFrom: period.period_from,
       periodTo: period.period_to,
-      snapshotRuleVersionIds: new Set(
-        snapshot.items.flatMap((item) => item.nationalPayrollRuleVersionId ?? []),
-      ),
+      snapshotRuleVersionIds,
+      // A successor loaded after the snapshot froze does not end its predecessor here.
+      snapshotRuleVersions: frozen.map((version) => ({
+        id: version.id,
+        code: version.code,
+        ruleKind: version.ruleKind as NationalPayrollRuleKind,
+        effectiveFrom: isoDateOf(version.effectiveFrom),
+        effectiveTo: version.effectiveTo ? isoDateOf(version.effectiveTo) : null,
+        successorEffectiveFrom:
+          version.supersededBy && snapshotRuleVersionIds.has(version.supersededBy.id)
+            ? isoDateOf(version.supersededBy.effectiveFrom)
+            : null,
+        parameters: version.parameters,
+      })),
     };
     const componentIds = new Map(
       (await transaction.payComponent.findMany({ select: { id: true, code: true } })).map(
@@ -129,10 +168,12 @@ export class PayrollCalculationService {
 
       const lines: CalculatedLine[] = [];
       const exceptions: CalculatedException[] = [];
+      const contributions: CalculatedContribution[] = [];
       for (const calculator of this.calculators) {
-        const outcome = calculator.calculate(basis, context);
+        const outcome = calculator.calculate(basis, context, lines);
         lines.push(...outcome.lines);
         exceptions.push(...outcome.exceptions);
+        contributions.push(...(outcome.contributions ?? []));
       }
       const totals = totalsOf(lines);
       const blocked = exceptions.filter((exception) => exception.severity === 'BLOCKING');
@@ -152,6 +193,7 @@ export class PayrollCalculationService {
             compensationBasis: basis,
             lines,
             exceptions,
+            contributions,
             totals,
           }),
         },
@@ -175,6 +217,13 @@ export class PayrollCalculationService {
             sourceSnapshot: toJson(line.source),
           };
         }),
+      });
+      await transaction.contributionLine.createMany({
+        data: contributions.map((contribution) => ({
+          agencyId: job.agencyId,
+          payrollEmployeeId: result.id,
+          ...contribution,
+        })),
       });
       await transaction.payrollException.createMany({
         data: exceptions.map((exception) => ({

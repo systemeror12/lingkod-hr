@@ -13,6 +13,10 @@ import {
   type PayrollTenant,
 } from '../payroll-periods/payroll-periods.test-fixtures';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
+import {
+  EmployeesCompensationCalculator,
+  GsisContributionCalculator,
+} from './contribution.calculators';
 import { dueCalculations } from './payroll-calculation.job';
 import { type CalculationJob, PayrollCalculationService } from './payroll-calculation.service';
 
@@ -42,19 +46,28 @@ class RecordedPayBases extends PersonnelSalaryFactsService {
   }
 }
 
-describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
-  // Test fixtures only: the rates are not from any issuance, and 2881 sits
-  // clear of every other test's rule versions.
+describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreSQL', () => {
+  // Test fixtures only: the rates, limit, and ceiling are not from any
+  // issuance, and 2881 sits clear of every other test's rule versions.
   const suffix = `${Date.now()}-calc`;
   const scheduleCode = `${FIXTURE_PREFIX}CALC-SCHEDULE-${suffix}`;
+  const gsisCode = `${FIXTURE_PREFIX}CALC-GSIS-${suffix}`;
+  const ecCode = `${FIXTURE_PREFIX}CALC-EC-${suffix}`;
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
+  const contributions = [
+    new GsisContributionCalculator(),
+    new EmployeesCompensationCalculator(),
+  ] as const;
   const calculation = new PayrollCalculationService(
     new CompensationBasisService(facts),
     new BasicSalaryCalculator(),
+    ...contributions,
   );
   let admin: PrismaClient;
   let scheduleId: string;
+  let gsisId: string;
+  let ecId: string;
   const tenants: PayrollTenant[] = [];
 
   const preparer = (tenant: PayrollTenant): RequestContext => ({
@@ -151,7 +164,24 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
   const resultsOf = (job: CalculationJob) =>
     admin.payrollEmployee.findMany({
       where: { payrollPeriodId: job.payrollPeriodId, calculationVersion: job.calculationVersion },
-      include: { lines: true },
+      include: { lines: true, contributions: true },
+    });
+
+  const ruleVersion = (ruleKind: string, code: string, effectiveTo: string, parameters: object) =>
+    admin.nationalPayrollRuleVersion.create({
+      data: {
+        ruleKind,
+        code,
+        name: `Test ${ruleKind}`,
+        issuingAuthority: 'Test authority',
+        issuanceReference: 'Test fixture, not an issuance',
+        sourceUrl: 'https://example.test/contribution',
+        verifiedOn: new Date('2026-11-15'),
+        verifiedBy: 'LingkodHR test fixture',
+        effectiveFrom: new Date('2881-01-01'),
+        effectiveTo: new Date(effectiveTo),
+        parameters,
+      },
     });
 
   const exceptionsOf = (job: CalculationJob) =>
@@ -185,6 +215,20 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
       });
       return version.id;
     });
+    // GSIS ends with October, so November has no GSIS version in effect.
+    gsisId = (
+      await ruleVersion('GSIS_CONTRIBUTION', gsisCode, '2881-10-31', {
+        employeeRate: '0.09',
+        employerRate: '0.12',
+        monthlyCompensationLimit: '100000',
+      })
+    ).id;
+    ecId = (
+      await ruleVersion('EMPLOYEES_COMPENSATION', ecCode, '2881-12-31', {
+        employerRate: '0.01',
+        monthlySalaryCreditCeiling: '20000',
+      })
+    ).id;
   });
 
   afterAll(async () => {
@@ -197,7 +241,7 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
       await transaction.employee.deleteMany({ where });
       await transaction.organizationUnit.deleteMany({ where });
       await transaction.$executeRaw`DELETE FROM salary_grade_rates WHERE rule_version_id = CAST(${scheduleId} AS uuid)`;
-      await transaction.$executeRaw`DELETE FROM national_payroll_rule_versions WHERE code = ${scheduleCode}`;
+      await transaction.$executeRaw`DELETE FROM national_payroll_rule_versions WHERE code IN (${scheduleCode}, ${gsisCode}, ${ecCode})`;
     });
     await cleanupPayrollTenants(admin, tenants);
     await admin.$disconnect();
@@ -209,7 +253,8 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
       payBasis: 'MONTHLY_FULL_TIME',
       employmentFraction: null,
     });
-    const part = await employeeWith(tenant, unitId, 'PART', [['2880-06-01', null, 1]], {
+    // Step 2, so half its rate is whole pesos and every share whole centavos.
+    const part = await employeeWith(tenant, unitId, 'PART', [['2880-06-01', null, 2]], {
       payBasis: 'PART_TIME_PROPORTIONAL',
       employmentFraction: '0.5',
     });
@@ -269,7 +314,7 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
     // The retried job runs twice at once and again later: it calculates once.
     const runs = await Promise.all([calculation.run(job), calculation.run(job)]);
     expect(runs.map((run) => run.outcome).sort()).toEqual(['RETURNED', 'SKIPPED']);
-    expect(runs).toContainEqual({ outcome: 'RETURNED', results: 6, blockingExceptions: 4 });
+    expect(runs).toContainEqual({ outcome: 'RETURNED', results: 6, blockingExceptions: 6 });
     expect(await calculation.run(job)).toEqual({ outcome: 'SKIPPED' });
 
     // Blocking exceptions return the period to DRAFT with the reason.
@@ -283,7 +328,7 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
       ['PAYROLL_PERIOD_CALCULATION_STARTED', 'CALCULATING', 'USER'],
       ['PAYROLL_PERIOD_CALCULATION_RETURNED', 'DRAFT', 'SYSTEM'],
     ]);
-    expect(audit[1]?.reason).toContain('4 blocking exceptions in calculation version 1');
+    expect(audit[1]?.reason).toContain('6 blocking exceptions in calculation version 1');
 
     const results = new Map((await resultsOf(job)).map((result) => [result.employeeId, result]));
     expect(results.has(separated)).toBe(false);
@@ -297,14 +342,12 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
     });
     for (const [employeeId, amount] of [
       [full, '31705'],
-      [part, '15852.5'],
+      [part, '16007'],
     ] as const) {
       const result = results.get(employeeId)!;
       expect(result).toMatchObject({ status: 'CALCULATED', calculationHash: /^[0-9a-f]{64}$/ });
       expect(result.grossAmount.toString()).toBe(amount);
-      expect(result.netAmount.toString()).toBe(amount);
-      expect(result.lines).toHaveLength(1);
-      const [line] = result.lines;
+      const line = result.lines.find((candidate) => candidate.payComponentId === basicSalary.id);
       expect(line).toMatchObject({
         payComponentId: basicSalary.id,
         ruleVersionId: scheduleId,
@@ -320,6 +363,59 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
       );
     }
 
+    // GSIS takes 9% and 12% of the basic salary; Employees' Compensation 1% of
+    // it up to the 20,000 ceiling, from the employer only.
+    const components = new Map(
+      (await admin.payComponent.findMany()).map((component) => [component.id, component.code]),
+    );
+    const linesOf = (employeeId: string) =>
+      results
+        .get(employeeId)!
+        .lines.map((line) => [
+          components.get(line.payComponentId),
+          line.lineType,
+          line.amount.toString(),
+        ])
+        .sort();
+    const contributionsOf = (employeeId: string) =>
+      results
+        .get(employeeId)!
+        .contributions.map((contribution) => [
+          contribution.contributionType,
+          contribution.employeeShare.toString(),
+          contribution.employerShare.toString(),
+          contribution.compensationBase.toString(),
+          contribution.ruleVersionId,
+        ])
+        .sort();
+    expect(linesOf(full)).toEqual(
+      [
+        ['BASIC_SALARY', 'EARNING', '31705'],
+        ['EMPLOYEES_COMPENSATION', 'EMPLOYER_SHARE', '200'],
+        ['GSIS_GOVERNMENT_SHARE', 'EMPLOYER_SHARE', '3804.6'],
+        ['GSIS_PERSONAL_SHARE', 'DEDUCTION', '2853.45'],
+      ].sort(),
+    );
+    expect(contributionsOf(full)).toEqual([
+      ['EMPLOYEES_COMPENSATION', '0', '200', '20000', ecId],
+      ['GSIS', '2853.45', '3804.6', '31705', gsisId],
+    ]);
+    expect(contributionsOf(part)).toEqual([
+      ['EMPLOYEES_COMPENSATION', '0', '160.07', '16007', ecId],
+      ['GSIS', '1440.63', '1920.84', '16007', gsisId],
+    ]);
+    // Only the GSIS personal share reduces pay; employer shares never do.
+    for (const [employeeId, deductions, net] of [
+      [full, '2853.45', '28851.55'],
+      [part, '1440.63', '14566.37'],
+    ] as const) {
+      const result = results.get(employeeId)!;
+      expect([result.totalDeductions.toString(), result.netAmount.toString()]).toEqual([
+        deductions,
+        net,
+      ]);
+    }
+
     // Blocked Employees get a result with the frozen basis, an exception, and no line.
     const exceptions = await exceptionsOf(job);
     expect(
@@ -329,12 +425,18 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
         [casual, 'BASIC_SALARY_CASUAL_DAYS_UNSETTLED'],
         [stepped, 'BASIC_SALARY_RATE_CHANGE_IN_PERIOD'],
         [partial, 'BASIC_SALARY_PARTIAL_MONTH'],
+        [partial, 'EMPLOYEES_COMPENSATION_PARTIAL_MONTH'],
+        [partial, 'GSIS_PARTIAL_MONTH'],
         [noBasis, 'COMPENSATION_BASIS_INDETERMINATE'],
       ].sort(),
     );
     expect(exceptions.every((e) => e.severity === 'BLOCKING' && e.status === 'OPEN')).toBe(true);
     for (const employeeId of [casual, stepped, partial, noBasis]) {
-      expect(results.get(employeeId)).toMatchObject({ status: 'EXCEPTION', lines: [] });
+      expect(results.get(employeeId)).toMatchObject({
+        status: 'EXCEPTION',
+        lines: [],
+        contributions: [],
+      });
     }
     // The mid-period step increment is frozen as two stretches with their own rates.
     expect(results.get(stepped)?.compensationBasisSnapshot).toMatchObject({
@@ -344,7 +446,9 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
         { from: '2881-03-10', to: '2881-03-31', salarySchedule: { monthlyRate: '32014' } },
       ],
     });
-    expect(exceptions.find((e) => e.employeeId === partial)?.details).toMatchObject({
+    expect(
+      exceptions.find((e) => e.exceptionType === 'BASIC_SALARY_PARTIAL_MONTH')?.details,
+    ).toMatchObject({
       unservedDates: [{ from: '2881-03-01', to: '2881-03-15' }],
     });
 
@@ -368,6 +472,12 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
       admin.payrollLine.updateMany({
         where: { payrollEmployeeId: results.get(full)!.id },
         data: { amount: '1' },
+      }),
+    ).rejects.toThrow(/immutable/);
+    await expect(
+      admin.contributionLine.updateMany({
+        where: { payrollEmployeeId: results.get(full)!.id },
+        data: { employeeShare: '1' },
       }),
     ).rejects.toThrow(/immutable/);
   });
@@ -396,11 +506,15 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
     };
 
     // Version 1: a technical failure returns the period to DRAFT with the reason and writes nothing.
-    const broken = new PayrollCalculationService(new CompensationBasisService(facts), {
-      calculate: () => {
-        throw new Error('calculator unavailable');
+    const broken = new PayrollCalculationService(
+      new CompensationBasisService(facts),
+      {
+        calculate: () => {
+          throw new Error('calculator unavailable');
+        },
       },
-    });
+      ...contributions,
+    );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({
       outcome: 'FAILED',
@@ -436,5 +550,98 @@ describe.skipIf(!enabled)('Basic salary calculation in PostgreSQL', () => {
     expect(after.get(late)).not.toBe(before.get(late));
     const lateResult = (await resultsOf(third)).find((result) => result.employeeId === late);
     expect(lateResult?.grossAmount.toString()).toBe('32014');
+  });
+
+  it('blocks GSIS once its version expired, still pays Employees Compensation, and leaves an excluded Employee out', async () => {
+    const { tenant, unitId } = await tenantWithUnit('CALC-CONTRIB');
+    const covered = await employeeWith(tenant, unitId, 'CONTRIB-FULL', [['2880-06-01', null, 1]], {
+      payBasis: 'MONTHLY_FULL_TIME',
+      employmentFraction: null,
+    });
+    // Separated before November: no Service Segment covers the month.
+    const excluded = await employeeWith(
+      tenant,
+      unitId,
+      'CONTRIB-GONE',
+      [['2880-06-01', '2881-10-31', 1]],
+      { payBasis: 'MONTHLY_FULL_TIME', employmentFraction: null },
+    );
+
+    const draft = await createPeriod(tenant, '2881-11', '2026-01-01T00:00:00+08:00');
+    // Neither contribution kind is required to freeze the snapshot.
+    const job = jobOf(
+      tenant,
+      await periods.startCalculation(preparer(tenant), draft.id, { rowVersion: draft.rowVersion }),
+    );
+    expect(await calculation.run(job)).toEqual({
+      outcome: 'RETURNED',
+      results: 1,
+      blockingExceptions: 1,
+    });
+
+    const results = await resultsOf(job);
+    expect(results.map((result) => result.employeeId)).toEqual([covered]);
+    expect(results.some((result) => result.employeeId === excluded)).toBe(false);
+    expect(
+      await admin.contributionLine.count({
+        where: { payrollEmployee: { employeeId: excluded } },
+      }),
+    ).toBe(0);
+
+    const [result] = results;
+    expect(result?.contributions).toEqual([
+      expect.objectContaining({ contributionType: 'EMPLOYEES_COMPENSATION', ruleVersionId: ecId }),
+    ]);
+    const [exception] = await exceptionsOf(job);
+    expect(exception).toMatchObject({
+      employeeId: covered,
+      exceptionType: 'GSIS_RULE_NOT_IN_EFFECT',
+      severity: 'BLOCKING',
+    });
+    // The snapshot froze no GSIS version: the one that ended in October is not in it.
+    expect((exception?.details as { message: string }).message).toBe(
+      'No GSIS_CONTRIBUTION version is in effect on 2881-11-01. GSIS is not calculated without it.',
+    );
+
+    // Contribution lines are isolated by Agency and written only with their result.
+    const other = await tenantWithUnit('CALC-CONTRIB-OTHER');
+    const agencyId = tenant.agency.id;
+    await expect(
+      withDatabaseContext({ agencyId: other.tenant.agency.id }, (transaction) =>
+        transaction.contributionLine.count({ where: { agencyId } }),
+      ),
+    ).resolves.toBe(0);
+    await expect(
+      withDatabaseContext({ agencyId }, (transaction) =>
+        transaction.contributionLine.create({
+          data: {
+            agencyId,
+            payrollEmployeeId: result!.id,
+            contributionType: 'GSIS',
+            employeeShare: '1',
+            employerShare: '1',
+            compensationBase: '1',
+            ruleVersionId: gsisId,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/joins its result only in the transaction/);
+    // Employees' Compensation never takes an employee share, however it is written.
+    await expect(
+      admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.contributionLine.create({
+          data: {
+            agencyId,
+            payrollEmployeeId: result!.id,
+            contributionType: 'EMPLOYEES_COMPENSATION',
+            employeeShare: '1',
+            employerShare: '1',
+            compensationBase: '1',
+            ruleVersionId: ecId,
+          },
+        });
+      }),
+    ).rejects.toThrow(/contribution_lines_employer_only_check/);
   });
 });
