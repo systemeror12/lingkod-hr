@@ -3,6 +3,8 @@ import { prisma, setDatabaseContext, withDatabaseContext } from '@lingkod-hr/dat
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
+import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { payrollSourcesReader } from './payroll-calculation.test-fixtures';
 import { PersonnelSalaryFactsService } from '../personnel-salary-facts/personnel-salary-facts.service';
 import { PayrollPeriodsService } from '../payroll-periods/payroll-periods.service';
 import {
@@ -55,13 +57,16 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
   const ecCode = `${FIXTURE_PREFIX}CALC-EC-${suffix}`;
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
+  const basis = new CompensationBasisService(facts);
   const contributions = [
     new GsisContributionCalculator(),
     new EmployeesCompensationCalculator(),
   ] as const;
   const calculation = new PayrollCalculationService(
-    new CompensationBasisService(facts),
+    basis,
     new BasicSalaryCalculator(),
+    payrollSourcesReader(basis),
+    new DaysWithoutPayCalculator(),
     ...contributions,
   );
   let admin: PrismaClient;
@@ -404,6 +409,13 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       ['EMPLOYEES_COMPENSATION', '0', '160.07', '16007', ecId],
       ['GSIS', '1440.63', '1920.84', '16007', gsisId],
     ]);
+    // Contribution lines are isolated by Agency.
+    const other = await tenantWithUnit('CALC-MAIN-OTHER');
+    await expect(
+      withDatabaseContext({ agencyId: other.tenant.agency.id }, (transaction) =>
+        transaction.contributionLine.count({ where: { agencyId: tenant.agency.id } }),
+      ),
+    ).resolves.toBe(0);
     // Only the GSIS personal share reduces pay; employer shares never do.
     for (const [employeeId, deductions, net] of [
       [full, '2853.45', '28851.55'],
@@ -507,12 +519,14 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
 
     // Version 1: a technical failure returns the period to DRAFT with the reason and writes nothing.
     const broken = new PayrollCalculationService(
-      new CompensationBasisService(facts),
+      basis,
       {
         calculate: () => {
           throw new Error('calculator unavailable');
         },
       },
+      payrollSourcesReader(basis),
+      new DaysWithoutPayCalculator(),
       ...contributions,
     );
     const first = jobOf(tenant, await startNext());
@@ -552,7 +566,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     expect(lateResult?.grossAmount.toString()).toBe('32014');
   });
 
-  it('blocks GSIS once its version expired, still pays Employees Compensation, and leaves an excluded Employee out', async () => {
+  it('blocks GSIS once its version expired, keeps no contribution line, and leaves an excluded Employee out', async () => {
     const { tenant, unitId } = await tenantWithUnit('CALC-CONTRIB');
     const covered = await employeeWith(tenant, unitId, 'CONTRIB-FULL', [['2880-06-01', null, 1]], {
       payBasis: 'MONTHLY_FULL_TIME',
@@ -588,10 +602,9 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       }),
     ).toBe(0);
 
+    // Employees' Compensation still calculates, but a blocked result keeps no line (§7).
     const [result] = results;
-    expect(result?.contributions).toEqual([
-      expect.objectContaining({ contributionType: 'EMPLOYEES_COMPENSATION', ruleVersionId: ecId }),
-    ]);
+    expect(result).toMatchObject({ status: 'EXCEPTION', lines: [], contributions: [] });
     const [exception] = await exceptionsOf(job);
     expect(exception).toMatchObject({
       employeeId: covered,
@@ -603,14 +616,8 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       'No GSIS_CONTRIBUTION version is in effect on 2881-11-01. GSIS is not calculated without it.',
     );
 
-    // Contribution lines are isolated by Agency and written only with their result.
-    const other = await tenantWithUnit('CALC-CONTRIB-OTHER');
+    // Contribution lines are written only with their result.
     const agencyId = tenant.agency.id;
-    await expect(
-      withDatabaseContext({ agencyId: other.tenant.agency.id }, (transaction) =>
-        transaction.contributionLine.count({ where: { agencyId } }),
-      ),
-    ).resolves.toBe(0);
     await expect(
       withDatabaseContext({ agencyId }, (transaction) =>
         transaction.contributionLine.create({

@@ -233,7 +233,9 @@ export class PayrollInputsService {
    * Withdraw a source module's own input inside the caller's transaction, which
    * must carry the caller's Agency database context (payroll-schema.md §4). A
    * `PENDING` input becomes `CANCELLED`; a retry answers `ALREADY_WITHDRAWN`.
-   * No calculation uses a `PENDING` input yet. A `CONSUMED` input is corrected
+   * A calculation that already rests a line on it is not yet given its
+   * blocking exception (§4); `payroll_line_sources` records which version used
+   * it. A `CONSUMED` input is corrected
    * by a Payroll Adjustment (#649), which does not exist yet, so it is refused
    * as retryable.
    */
