@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
@@ -19,6 +20,8 @@ import {
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
 import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 import {
+  MONETIZATION_CALCULATOR_KIND,
+  MONETIZATION_FACTOR,
   PayrollMonetizationCalculator,
   unresolvedMonetizationValuationRules,
   type MonetizationCompensationBasis,
@@ -606,32 +609,120 @@ it.skipIf(!enabled)(
       expect(adjustment.status).toBe('DRAFT');
       const adjustmentForApproval = await service.submitAdjustment(posterContext, adjustment.id);
       expect(adjustmentForApproval.status).toBe('FOR_APPROVAL');
-      // Monetization Adjustment binds to the inbox in #357; until then Payroll
-      // answers fail-closed and Leave writes no reversal.
+      // Payroll cancels the posted input under the adjustment's key and values
+      // the four retained credits as its replacement: 30,000 × 4 × 0.0481927.
       const decidedAdjustment = await service.decideAdjustment(approverContext, adjustment.id, {
         decision: 'APPROVE',
         comments: 'Adjustment approved.',
       });
-      expect(decidedAdjustment.adjustment.status).toBe('BLOCKED');
+      expect(decidedAdjustment.adjustment.status).toBe('APPLIED');
       expect(decidedAdjustment.ownerResult).toMatchObject({
-        code: 'PAYROLL_MONETIZATION_AUTHORITY_MISSING',
-        missingFacts: ['LINKED_PAYROLL_ADJUSTMENT_CONTRACT'],
+        kind: 'ACCEPTED',
+        status: 'PENDING',
+        amount: '5783.12',
       });
-      expect(decidedAdjustment.adjustment.lines[0]).toMatchObject({
-        reversalLedgerEntryId: null,
-        replacementLedgerEntryId: null,
-      });
+      const replacementId = (decidedAdjustment.ownerResult as { payrollInputId: string })
+        .payrollInputId;
+      const adjustmentKey = `MONETIZATION_ADJUSTMENT:${adjustment.id}`;
       await expect(
         admin.payrollInput.findFirstOrThrow({
           where: { agencyId: agency.id, id: posted.posting!.payrollInputId },
         }),
-      ).resolves.toMatchObject({ status: 'PENDING' });
+      ).resolves.toMatchObject({ status: 'CANCELLED', sourceCorrectionKey: adjustmentKey });
+      const replacement = await admin.payrollInput.findFirstOrThrow({
+        where: { agencyId: agency.id, id: replacementId },
+      });
+      expect(replacement).toMatchObject({
+        status: 'PENDING',
+        inputKind: 'MONETIZATION_EARNING',
+        sourceKey: adjustmentKey,
+        sourceType: 'MONETIZATION_ADJUSTMENT',
+        sourceId: adjustment.id,
+        replacesPayrollInputId: posted.posting!.payrollInputId,
+        payloadSnapshot: { scope: 'PARTIAL', retainedQuantity: '4.0000' },
+      });
+      expect(replacement.quantity?.toFixed(4)).toBe('4.0000');
+      expect(replacement.amount?.toFixed(2)).toBe('5783.12');
+      expect(decidedAdjustment.adjustment.lines[0]).toMatchObject({
+        reversalLedgerEntryId: expect.any(String),
+        replacementLedgerEntryId: expect.any(String),
+      });
+
+      // Payroll answers a retry of the same adjustment with the same replacement.
+      const payrollActor = {
+        agencyId: agency.id,
+        userId: posterUser.id,
+        membershipId: posterMembership.id,
+      };
+      const adjustmentRequest = {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        adjustmentId: adjustment.id,
+        adjustmentKey,
+        monetizationPostingId: postingId,
+        originalPayrollInputId: posted.posting!.payrollInputId,
+        scope: 'PARTIAL' as const,
+        reversedQuantity: '6.0000',
+        retainedQuantity: '4.0000',
+        reason: 'The employee retains four days and monetizes the rest.',
+        valuationDate: manilaDate(),
+        calculatorKind: MONETIZATION_CALCULATOR_KIND,
+        factor: MONETIZATION_FACTOR,
+      };
+      await expect(
+        payrollBinding(resolvedBasis, testRules).adjustEarningInput(
+          payrollActor,
+          adjustmentRequest,
+        ),
+      ).resolves.toMatchObject({
+        kind: 'ALREADY_ACCEPTED',
+        payrollInputId: replacementId,
+        status: 'PENDING',
+        amount: '5783.12',
+      });
+
+      // A replacement Payroll refuses rolls back its withdrawal.
+      const correctReplacement = {
+        ...adjustmentRequest,
+        adjustmentId: randomUUID(),
+        originalPayrollInputId: replacementId,
+        retainedQuantity: '1.0000',
+      };
+      await expect(
+        payrollBinding(resolvedBasis, unresolvedMonetizationValuationRules).adjustEarningInput(
+          payrollActor,
+          { ...correctReplacement, adjustmentKey: `${adjustmentKey}:refused` },
+        ),
+      ).resolves.toMatchObject({
+        kind: 'RETRYABLE_FAILURE',
+        code: 'PAYROLL_MONETIZATION_AUTHORITY_MISSING',
+      });
+      // Retaining nothing only cancels, and the answer names the cancelled input.
+      await expect(
+        payrollBinding(resolvedBasis, testRules).adjustEarningInput(payrollActor, {
+          ...correctReplacement,
+          adjustmentKey: `${adjustmentKey}:whole`,
+          scope: 'WHOLE',
+          retainedQuantity: '0.0000',
+        }),
+      ).resolves.toMatchObject({
+        kind: 'ACCEPTED',
+        payrollInputId: replacementId,
+        status: 'CANCELLED',
+        amount: null,
+      });
+      await expect(
+        admin.payrollInput.findFirstOrThrow({ where: { agencyId: agency.id, id: replacementId } }),
+      ).resolves.toMatchObject({
+        status: 'CANCELLED',
+        sourceCorrectionKey: `${adjustmentKey}:whole`,
+      });
 
       const ledgerBalance = await admin.leaveLedgerEntry.aggregate({
         where: { agencyId: agency.id, leaveAccountId: vacationAccount.id },
         _sum: { quantity: true },
       });
-      expect(ledgerBalance._sum.quantity?.toFixed(4)).toBe('20.0000');
+      expect(ledgerBalance._sum.quantity?.toFixed(4)).toBe('26.0000');
       const commitments = await admin.leaveCreditCommitment.findMany({
         where: { agencyId: agency.id, leaveAccountId: vacationAccount.id },
         orderBy: { id: 'asc' },
