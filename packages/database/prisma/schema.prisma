@@ -5481,3 +5481,58 @@ model CtoCancellation {
   @@index([agencyId, ctoRequestId])
   @@map("cto_cancellations")
 }
+
+/// A platform-wide National Payroll Rule Version (ADR 0013). Read-only for
+/// `hris_app`; the `hris_operator` load command inserts it, and a trigger
+/// rejects every update and delete.
+model NationalPayrollRuleVersion {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ruleKind                String    @map("rule_kind")
+  code                    String    @unique @db.Citext
+  name                    String
+  issuingAuthority        String    @map("issuing_authority")
+  issuanceReference       String    @map("issuance_reference")
+  sourceUrl               String    @map("source_url")
+  verifiedOn              DateTime  @map("verified_on") @db.Date
+  verifiedBy              String    @map("verified_by")
+  effectiveFrom           DateTime  @map("effective_from") @db.Date
+  effectiveTo             DateTime? @map("effective_to") @db.Date
+  supersedesRuleVersionId String?   @unique(map: "national_payroll_rule_versions_supersedes_key") @map("supersedes_rule_version_id") @db.Uuid
+  parameters              Json      @default("{}")
+  loadedAt                DateTime  @default(now()) @map("loaded_at") @db.Timestamptz(6)
+
+  supersedes       NationalPayrollRuleVersion? @relation("NationalPayrollRuleVersionSupersession", fields: [supersedesRuleVersionId], references: [id], onDelete: Restrict, map: "national_payroll_rule_versions_supersedes_fkey")
+  supersededBy     NationalPayrollRuleVersion? @relation("NationalPayrollRuleVersionSupersession")
+  salaryGradeRates SalaryGradeRate[]
+
+  @@index([ruleKind, effectiveFrom], map: "national_payroll_rule_versions_kind_effective_idx")
+  @@map("national_payroll_rule_versions")
+}
+
+/// One Salary Grade and step's monthly rate in a `SALARY_SCHEDULE` version.
+model SalaryGradeRate {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ruleVersionId String  @map("rule_version_id") @db.Uuid
+  salaryGrade   Int     @map("salary_grade")
+  salaryStep    Int     @map("salary_step")
+  monthlyRate   Decimal @map("monthly_rate") @db.Decimal(19, 4)
+
+  ruleVersion NationalPayrollRuleVersion @relation(fields: [ruleVersionId], references: [id], onDelete: Restrict, map: "salary_grade_rates_rule_version_fkey")
+
+  @@unique([ruleVersionId, salaryGrade, salaryStep], map: "salary_grade_rates_version_grade_step_key")
+  @@map("salary_grade_rates")
+}
+
+/// The platform-wide pay component catalogue (ADR 0013), read-only for `hris_app`.
+model PayComponent {
+  id                     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                   String  @unique @db.Citext
+  name                   String
+  category               String
+  isConditional          Boolean @map("is_conditional")
+  isGaaRevalidated       Boolean @map("is_gaa_revalidated")
+  acceptsAuthorizedInput Boolean @map("accepts_authorized_input")
+  reportingCategory      String? @map("reporting_category")
+
+  @@map("pay_components")
+}
