@@ -3,6 +3,10 @@ import { AttendanceDeficitChargesModule } from '../attendance-deficit-charges/at
 import { AttendancePeriodsModule } from '../attendance-periods/attendance-periods.module';
 import { CompensationBasisModule } from '../compensation-basis/compensation-basis.module';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
+import {
+  EmployeesCompensationCalculator,
+  GsisContributionCalculator,
+} from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationJob } from './payroll-calculation.job';
 import { PayrollCalculationService } from './payroll-calculation.service';
@@ -13,6 +17,8 @@ import { PayrollSourcesReader } from './payroll-sources.reader';
   providers: [
     BasicSalaryCalculator,
     DaysWithoutPayCalculator,
+    GsisContributionCalculator,
+    EmployeesCompensationCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

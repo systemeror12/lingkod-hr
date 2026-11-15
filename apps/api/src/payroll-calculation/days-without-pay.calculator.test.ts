@@ -14,6 +14,7 @@ const context = {
   periodFrom: '2026-03-01',
   periodTo: '2026-03-31',
   snapshotRuleVersionIds: new Set(['schedule-a']),
+  snapshotRuleVersions: [],
 };
 
 function resolved(
@@ -93,7 +94,7 @@ const sourcesOf = (overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
 });
 
 const run = (sources: EmployeePayrollSources, basis = march) =>
-  calculator.calculate(basis, context, sources);
+  calculator.calculate(basis, context, [], sources);
 
 const exceptionTypes = (sources: EmployeePayrollSources, basis = march) =>
   run(sources, basis).exceptions.map((exception) => exception.exceptionType);

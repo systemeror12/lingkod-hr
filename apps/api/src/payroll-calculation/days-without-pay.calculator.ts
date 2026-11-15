@@ -85,6 +85,7 @@ export class DaysWithoutPayCalculator implements PayrollCalculator {
   calculate(
     basis: CompensationBasis,
     _context: CalculationContext,
+    _earlierLines: readonly CalculatedLine[],
     sources: EmployeePayrollSources,
   ): CalculatorOutcome {
     const exceptions: CalculatedException[] = [];

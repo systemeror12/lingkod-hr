@@ -747,6 +747,10 @@ Detailed statutory contribution result
 - Unique `(payroll_employee_id, contribution_type)`.
 - `EMPLOYEES_COMPENSATION` is employer-only: its employee share is zero (#27).
   There is no `OTHER` type.
+- Written with its result and never changed (#348). The base is the month's
+  basic salary; each share is also a Payroll Line. A missing or changing rule
+  version, a partial month, a GSIS base above the AMC limit, and an unrounded
+  share block instead.
 
 **Deletion behavior:** Immutable after finalization.
 

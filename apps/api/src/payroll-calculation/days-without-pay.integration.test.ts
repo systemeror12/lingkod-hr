@@ -43,11 +43,15 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
   const { attendance, deficitCharges } = attendanceAndLeave();
+  // Contributions have their own test; these fixtures freeze no GSIS or EC version.
+  const noContribution = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
     new BasicSalaryCalculator(),
     new PayrollSourcesReader(attendance, deficitCharges, basis),
     new DaysWithoutPayCalculator(),
+    noContribution,
+    noContribution,
   );
   let admin: PrismaClient;
   let scheduleId: string;
