@@ -6,7 +6,12 @@ import { z } from 'zod';
  * (ADR 0013). Each rule kind has one calculator in code; a version carries
  * only that kind's typed parameters, validated here at load.
  */
-export type NationalPayrollRuleKind = 'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS';
+export type NationalPayrollRuleKind =
+  | 'SALARY_SCHEDULE'
+  | 'AUTHORIZED_DEDUCTIONS'
+  | 'GSIS_CONTRIBUTION'
+  | 'EMPLOYEES_COMPENSATION'
+  | 'YEAR_END_BONUS_AND_CASH_GIFT';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -40,6 +45,16 @@ const monthlyRate = z
   .string()
   .regex(/^\d{1,15}(\.\d{1,4})?$/, 'A monthly rate is a decimal string with up to 4 places.')
   .refine((value) => new Prisma.Decimal(value).gt(0), 'A monthly rate is greater than zero.');
+
+const positiveAmount = z
+  .string()
+  .regex(/^\d{1,15}(\.\d{1,4})?$/, 'An amount is a decimal string with up to 4 places.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'An amount is greater than zero.');
+/** A share of a base, as a fraction: `0.09` is 9%. */
+const shareRate = z
+  .string()
+  .regex(/^0\.\d{1,8}$/, 'A rate is a fraction below 1 with up to 8 places, such as 0.09.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'A rate is greater than zero.');
 
 const ruleVersionFields = {
   code: text(100),
@@ -104,9 +119,97 @@ const authorizedDeductionsFile = z
   })
   .strict();
 
+const pesoAmount = z
+  .string()
+  .regex(/^\d{1,15}(\.\d{1,2})?$/, 'An amount is a decimal string of whole centavos.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'An amount is greater than zero.');
+
+/**
+ * The year-end bonus and cash gift rule of one fiscal year: one month's basic
+ * salary as of `asOf` and the cash gift, for service of at least
+ * `minimumServiceMonths` from `serviceFrom` through `asOf` (RA No. 6686 sec. 1
+ * as amended by RA No. 8441; FY 2026 GAA sec. 75(a); research register R9,
+ * R10). `grantsSeparatedBeforeAsOf` records whether the GAA also grants the
+ * case of personnel who retired or were separated before `asOf` after that
+ * service (FY 2026 GAA sec. 75(b); R11), which no statute on file grants.
+ */
+export const yearEndBonusAndCashGiftParameters = z
+  .object({
+    serviceFrom: isoDate,
+    asOf: isoDate,
+    minimumServiceMonths: z.int().positive(),
+    bonusMonthsOfBasicSalary: z.int().positive(),
+    cashGiftAmount: pesoAmount,
+    grantsSeparatedBeforeAsOf: z.boolean(),
+  })
+  .strict()
+  .refine(({ serviceFrom, asOf }) => serviceFrom < asOf, {
+    message: 'serviceFrom is before asOf.',
+    path: ['asOf'],
+  });
+
+export type YearEndBonusAndCashGiftParameters = z.infer<typeof yearEndBonusAndCashGiftParameters>;
+
+const yearEndBonusAndCashGiftFile = z
+  .object({
+    ruleKind: z.literal('YEAR_END_BONUS_AND_CASH_GIFT'),
+    ...ruleVersionFields,
+    parameters: yearEndBonusAndCashGiftParameters,
+  })
+  .strict();
+
+/**
+ * The GSIS contribution rule (RA No. 8291, sec. 5(a); research R17, R18): the
+ * member and government shares of monthly compensation up to the AMC limit.
+ * `monthlyCompensationLimit` is the Board-set limit, or null only when the
+ * cited issuance sets none; the file states it either way.
+ */
+export const gsisContributionParameters = z
+  .object({
+    employeeRate: shareRate,
+    employerRate: shareRate,
+    monthlyCompensationLimit: positiveAmount.nullable(),
+  })
+  .strict();
+
+/**
+ * The Employees' Compensation rule (PD No. 626, art. 181; research R22, R23):
+ * the employer's rate of the monthly salary credit, which is the monthly
+ * salary up to the ceiling. It has no employee rate: the whole contribution
+ * is the employer's.
+ */
+export const employeesCompensationParameters = z
+  .object({
+    employerRate: shareRate,
+    monthlySalaryCreditCeiling: positiveAmount,
+  })
+  .strict();
+
+const gsisContributionFile = z
+  .object({
+    ruleKind: z.literal('GSIS_CONTRIBUTION'),
+    ...ruleVersionFields,
+    parameters: gsisContributionParameters,
+  })
+  .strict();
+
+const employeesCompensationFile = z
+  .object({
+    ruleKind: z.literal('EMPLOYEES_COMPENSATION'),
+    ...ruleVersionFields,
+    parameters: employeesCompensationParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
-  .discriminatedUnion('ruleKind', [salaryScheduleFile, authorizedDeductionsFile])
+  .discriminatedUnion('ruleKind', [
+    salaryScheduleFile,
+    authorizedDeductionsFile,
+    gsisContributionFile,
+    employeesCompensationFile,
+    yearEndBonusAndCashGiftFile,
+  ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',
     path: ['effectiveTo'],

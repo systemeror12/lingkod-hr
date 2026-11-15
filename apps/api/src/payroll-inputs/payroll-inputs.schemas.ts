@@ -62,6 +62,8 @@ export interface PayrollInputWithdrawal {
   agencyId: string;
   sourceModule: PayrollInputSourceModule;
   payrollInputId: string;
+  /** The source's stable key for this correction; a retry sends the same key. */
+  correctionKey: string;
 }
 
 export const payrollInputListFiltersSchema = z

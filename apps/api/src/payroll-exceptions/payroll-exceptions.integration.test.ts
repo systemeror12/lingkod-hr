@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
 import { BasicSalaryCalculator } from '../payroll-calculation/basic-salary.calculator';
 import { PayrollCalculationService } from '../payroll-calculation/payroll-calculation.service';
+import { payrollSourcesReader } from '../payroll-calculation/payroll-calculation.test-fixtures';
 import type { PayrollCalculator } from '../payroll-calculation/payroll-calculator';
 import { PayrollPeriodsService } from '../payroll-periods/payroll-periods.service';
 import {
@@ -48,7 +49,7 @@ class FaultyCalculator implements PayrollCalculator {
   readonly faults = new Map<string, Fault>();
   private readonly basic = new BasicSalaryCalculator();
 
-  calculate(...args: Parameters<PayrollCalculator['calculate']>) {
+  calculate(...args: Parameters<BasicSalaryCalculator['calculate']>) {
     const outcome = this.basic.calculate(...args);
     const [line] = outcome.lines;
     switch (this.faults.get(args[0].employeeId)) {
@@ -78,9 +79,21 @@ describe.skipIf(!enabled)('Payroll checks and exception commands in PostgreSQL',
   const periods = new PayrollPeriodsService();
   const exceptions = new PayrollExceptionsService();
   const basis = new CompensationBasisService(new MonthlyFullTime());
-  const calculation = new PayrollCalculationService(basis, new BasicSalaryCalculator());
+  // The checks judge basic salary alone, so the later calculators write nothing here.
+  const nothing = { calculate: () => ({ lines: [], exceptions: [] }) };
+  const calculationWith = (basicSalary: BasicSalaryCalculator) =>
+    new PayrollCalculationService(
+      basis,
+      basicSalary,
+      payrollSourcesReader(basis),
+      nothing,
+      nothing,
+      nothing,
+      nothing,
+    );
+  const calculation = calculationWith(new BasicSalaryCalculator());
   const faulty = new FaultyCalculator();
-  const faultyCalculation = new PayrollCalculationService(basis, faulty);
+  const faultyCalculation = calculationWith(faulty);
   let admin: PrismaClient;
   let scheduleId: string;
   const tenants: PayrollTenant[] = [];

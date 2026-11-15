@@ -4691,8 +4691,9 @@ model MonetizationAdjustmentLine {
 
 /// Payroll's recorded outcome of a Monetization Adjustment against a
 /// Monetization Earning Input. Immutable. `earningInputId` and `linkedInputId`
-/// name `payroll_inputs` rows by foreign key (0161); nothing writes here until
-/// Monetization Adjustment binds to the inbox (#357).
+/// name `payroll_inputs` rows by foreign key (0161). It keeps its earlier rows
+/// and has no writer: Monetization Adjustment records its answer as the inbox's
+/// cancellation, keyed by the adjustment (#357).
 model PayrollMonetizationAdjustmentOutcome {
   id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                  String   @map("agency_id") @db.Uuid
@@ -5519,6 +5520,8 @@ model PayrollInput {
   acceptedAt                 DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
   consumedByPayrollPeriodId  String?  @map("consumed_by_payroll_period_id") @db.Uuid
   replacesPayrollInputId     String?  @map("replaces_payroll_input_id") @db.Uuid
+  /// The source's correction key, written once as the input is cancelled (#357).
+  sourceCorrectionKey        String?  @map("source_correction_key") @db.Citext
 
   employee     Employee       @relation("PayrollInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
   replaces     PayrollInput?  @relation("PayrollInputReplacement", fields: [agencyId, replacesPayrollInputId], references: [agencyId, id], onDelete: Restrict)
@@ -5526,6 +5529,7 @@ model PayrollInput {
 
   @@unique([agencyId, id])
   @@unique([agencyId, sourceModule, sourceKey])
+  @@unique([agencyId, sourceModule, sourceCorrectionKey], map: "payroll_inputs_source_correction_key")
   @@index([agencyId, sourceModule, status, acceptedAt], map: "payroll_inputs_source_status_idx")
   @@map("payroll_inputs")
 }
@@ -5734,6 +5738,7 @@ model PayrollEmployee {
 
   payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_employees_period_fkey")
   lines         PayrollLine[]
+  contributions ContributionLine[]
 
   @@unique([payrollPeriodId, calculationVersion, employeeId], map: "payroll_employees_period_version_employee_key")
   @@unique([agencyId, id])
@@ -5759,6 +5764,56 @@ model PayrollLine {
   @@unique([agencyId, id])
   @@index([agencyId, payrollEmployeeId], map: "payroll_lines_payroll_employee_idx")
   @@map("payroll_lines")
+}
+
+/// One source a Payroll Line rests on: exactly one Payroll Input, Attendance
+/// Payroll Fact, or Authorized Payroll Component Input (migration 0164). The
+/// foreign keys are in SQL.
+model PayrollLineSource {
+  id                                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                          String  @map("agency_id") @db.Uuid
+  payrollLineId                     String  @map("payroll_line_id") @db.Uuid
+  payrollInputId                    String? @map("payroll_input_id") @db.Uuid
+  attendancePayrollFactId           String? @map("attendance_payroll_fact_id") @db.Uuid
+  authorizedPayrollComponentInputId String? @map("authorized_payroll_component_input_id") @db.Uuid
+
+  @@unique([payrollLineId, payrollInputId], map: "payroll_line_sources_line_input_key")
+  @@unique([payrollLineId, attendancePayrollFactId], map: "payroll_line_sources_line_fact_key")
+  @@unique([payrollLineId, authorizedPayrollComponentInputId], map: "payroll_line_sources_line_authorized_input_key")
+  @@index([agencyId, payrollInputId], map: "payroll_line_sources_input_idx")
+  @@index([agencyId, attendancePayrollFactId], map: "payroll_line_sources_fact_idx")
+  @@map("payroll_line_sources")
+}
+
+/// Payroll's record that a finalized payroll consumed an Attendance Payroll
+/// Fact; a void sets `releasedAt` (migration 0164). The foreign keys are in SQL.
+model PayrollConsumedAttendanceFact {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  attendancePayrollFactId String    @map("attendance_payroll_fact_id") @db.Uuid
+  payrollPeriodId         String    @map("payroll_period_id") @db.Uuid
+  consumedAt              DateTime  @default(now()) @map("consumed_at") @db.Timestamptz(6)
+  releasedAt              DateTime? @map("released_at") @db.Timestamptz(6)
+
+  @@map("payroll_consumed_attendance_facts")
+}
+
+/// One statutory contribution of a result: the shares, the base, and the
+/// rule version (#348). Employees' Compensation has no employee share. Immutable.
+model ContributionLine {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String  @map("agency_id") @db.Uuid
+  payrollEmployeeId String  @map("payroll_employee_id") @db.Uuid
+  contributionType  String  @map("contribution_type")
+  employeeShare     Decimal @map("employee_share") @db.Decimal(19, 4)
+  employerShare     Decimal @map("employer_share") @db.Decimal(19, 4)
+  compensationBase  Decimal @map("compensation_base") @db.Decimal(19, 4)
+  ruleVersionId     String  @map("rule_version_id") @db.Uuid
+
+  payrollEmployee PayrollEmployee @relation(fields: [agencyId, payrollEmployeeId], references: [agencyId, id], onDelete: Restrict, map: "contribution_lines_payroll_employee_fkey")
+
+  @@unique([payrollEmployeeId, contributionType], map: "contribution_lines_employee_type_key")
+  @@map("contribution_lines")
 }
 
 /// A calculation warning or blocker of one calculation version. It names the

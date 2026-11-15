@@ -271,6 +271,8 @@ export class AttendanceDeficitChargesService {
           agencyId,
           sourceModule: 'LEAVE',
           payrollInputId: predecessor.payrollInputId,
+          // The correcting fact names this correction, as it keys the replacement.
+          correctionKey: `${DEFICIT_CHARGE_SOURCE_TYPE}:${fact.id}`,
         });
         if (!('payrollInputId' in answer)) throw new PayrollRefusal(answer.code, answer.reason);
       }

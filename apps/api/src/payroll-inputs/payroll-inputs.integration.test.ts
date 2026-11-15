@@ -59,6 +59,7 @@ async function cleanup(admin: PrismaClient, tenants: Tenant[]) {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     for (const { agency, user } of tenants) {
       await transaction.payrollInput.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.payrollPeriod.deleteMany({ where: { agencyId: agency.id } });
       await transaction.employee.deleteMany({ where: { agencyId: agency.id } });
       await transaction.agencyMembership.deleteMany({ where: { agencyId: agency.id } });
       await transaction.agency.delete({ where: { id: agency.id } });
@@ -274,10 +275,23 @@ it.skipIf(!enabled)(
           data: { status: 'CONSUMED' },
         }),
       ).rejects.toThrow();
+      // Only a cancellation carries a correction key, and it is written once.
+      await expect(
+        admin.payrollInput.update({
+          where: { id: first.payrollInputId },
+          data: { status: 'CONSUMED', sourceCorrectionKey: `${suffix}-early` },
+        }),
+      ).rejects.toThrow();
       await admin.payrollInput.update({
         where: { id: first.payrollInputId },
-        data: { status: 'CANCELLED' },
+        data: { status: 'CANCELLED', sourceCorrectionKey: `${suffix}-direct-cancel` },
       });
+      await expect(
+        admin.payrollInput.update({
+          where: { id: first.payrollInputId },
+          data: { sourceCorrectionKey: `${suffix}-rekeyed` },
+        }),
+      ).rejects.toThrow(/cannot move from CANCELLED to CANCELLED/);
       await expect(
         admin.payrollInput.update({
           where: { id: first.payrollInputId },
@@ -289,6 +303,210 @@ it.skipIf(!enabled)(
       ).rejects.toThrow(/cannot be deleted/);
     } finally {
       await cleanup(admin, [home, foreign]);
+      await admin.$disconnect();
+    }
+  },
+  60_000,
+);
+
+it.skipIf(!enabled)(
+  'withdraws a pending Payroll Input by its correction key and refuses one a payroll uses',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}`;
+    const service = new PayrollInputsService();
+    const home = await createTenant(admin, suffix, 'W');
+    const lineId = randomUUID();
+    const submission = (sourceKey: string, quantity = '1'): PayrollInputSubmission => ({
+      agencyId: home.agency.id,
+      employeeId: home.employee.id,
+      sourceModule: 'LEAVE',
+      inputKind: 'LEAVE_WITHOUT_PAY',
+      sourceKey: `${suffix}-${sourceKey}`,
+      sourceType: 'LeaveApprovalAllocationLine',
+      sourceId: lineId,
+      effectiveDate: '2026-03-02',
+      quantity,
+      payload: { workDates: [{ date: '2026-03-02', days: quantity }] },
+    });
+    const accept = async (request: PayrollInputSubmission) => {
+      const answer = await withDatabaseContext(home.scope, (transaction) =>
+        service.acceptInTransaction(transaction, request),
+      );
+      if (!('payrollInputId' in answer)) throw new Error(`not accepted: ${answer.code}`);
+      return answer.payrollInputId;
+    };
+    const withdraw = (payrollInputId: string, correctionKey: string, sourceModule = 'LEAVE') =>
+      withDatabaseContext(home.scope, (transaction) =>
+        service.withdrawInTransaction(transaction, {
+          agencyId: home.agency.id,
+          sourceModule: sourceModule as 'LEAVE' | 'OVERTIME',
+          payrollInputId,
+          correctionKey: `${suffix}-${correctionKey}`,
+        }),
+      );
+    const status = async (id: string) =>
+      (await admin.payrollInput.findUniqueOrThrow({ where: { id } })).status;
+
+    try {
+      // Inputs accepted before the period's cutoff, then after it.
+      const drafted = await accept(submission('drafted'));
+      const live = await accept(submission('live'));
+      const { acceptedAt } = await admin.payrollInput.findUniqueOrThrow({ where: { id: live } });
+      const period = await admin.payrollPeriod.create({
+        data: {
+          agencyId: home.agency.id,
+          code: `PIN-${suffix}`,
+          runType: 'REGULAR',
+          periodFrom: new Date('2802-03-01'),
+          periodTo: new Date('2802-03-31'),
+          cutoffAt: new Date(acceptedAt.getTime() + 1),
+          paymentDate: new Date('2802-03-28'),
+          status: 'DRAFT',
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const consumedLater = await accept(submission('consumed'));
+      const late = await accept(submission('late'));
+      const spare = await accept(submission('spare'));
+
+      // While the period is DRAFT, the input is cancelled under its key and
+      // stays readable; a retry with the key, in any case, answers the same.
+      await expect(withdraw(drafted, 'fix-1')).resolves.toEqual({
+        outcome: 'WITHDRAWN',
+        payrollInputId: drafted,
+      });
+      await expect(withdraw(drafted, 'fix-1')).resolves.toEqual({
+        outcome: 'ALREADY_WITHDRAWN',
+        payrollInputId: drafted,
+      });
+      await expect(withdraw(drafted, 'FIX-1')).resolves.toMatchObject({
+        outcome: 'ALREADY_WITHDRAWN',
+      });
+      await expect(
+        admin.payrollInput.findUniqueOrThrow({ where: { id: drafted } }),
+      ).resolves.toMatchObject({ status: 'CANCELLED', sourceCorrectionKey: `${suffix}-fix-1` });
+      const cancelled = await service.list(readerContext(home, 'AGENCY'), {
+        status: 'CANCELLED',
+      });
+      expect(cancelled.map(({ id }) => id)).toEqual([drafted]);
+
+      // The key cannot withdraw a second input, and a second key cannot
+      // withdraw the cancelled one again. Neither changes anything.
+      await expect(withdraw(spare, 'fix-1')).resolves.toMatchObject({
+        outcome: 'REJECTED',
+        code: 'PAYROLL_CORRECTION_KEY_CONFLICT',
+      });
+      await expect(withdraw(drafted, 'fix-2')).resolves.toMatchObject({
+        outcome: 'REJECTED',
+        code: 'PAYROLL_INPUT_ALREADY_WITHDRAWN',
+      });
+      await expect(withdraw(spare, 'fix-spare', 'OVERTIME')).resolves.toMatchObject({
+        outcome: 'REJECTED',
+        code: 'PAYROLL_INPUT_NOT_FOUND',
+      });
+      await expect(
+        withDatabaseContext(home.scope, (transaction) =>
+          service.withdrawInTransaction(transaction, {
+            agencyId: home.agency.id,
+            sourceModule: 'LEAVE',
+            payrollInputId: spare,
+            correctionKey: '  ',
+          }),
+        ),
+      ).resolves.toMatchObject({
+        outcome: 'REJECTED',
+        code: 'PAYROLL_INPUT_INVALID',
+      });
+      expect(await status(spare)).toBe('PENDING');
+
+      // A replacement links to the cancelled input and is accepted PENDING.
+      const replacement = await accept({
+        ...submission('drafted-2', '0.5'),
+        replacesPayrollInputId: drafted,
+      });
+      await expect(
+        admin.payrollInput.findUniqueOrThrow({ where: { id: replacement } }),
+      ).resolves.toMatchObject({ status: 'PENDING', replacesPayrollInputId: drafted });
+
+      // The withdrawal rolls back with the caller's transaction.
+      await expect(
+        withDatabaseContext(home.scope, async (transaction) => {
+          await service.withdrawInTransaction(transaction, {
+            agencyId: home.agency.id,
+            sourceModule: 'LEAVE',
+            payrollInputId: spare,
+            correctionKey: `${suffix}-rolled-back`,
+          });
+          throw new Error('caller failed after withdrawing');
+        }),
+      ).rejects.toThrow('caller failed after withdrawing');
+      expect(await status(spare)).toBe('PENDING');
+
+      // A payroll consumes the input after the withdrawal checked it and before
+      // it cancels: the cancel waits on the row, then finds it consumed.
+      let notifyConsumed = () => {};
+      let commitConsumed = () => {};
+      const consumedOpen = new Promise<void>((resolve) => {
+        notifyConsumed = resolve;
+      });
+      const consumedCommit = new Promise<void>((resolve) => {
+        commitConsumed = resolve;
+      });
+      const consuming = admin.$transaction(
+        async (transaction) => {
+          await transaction.payrollInput.update({
+            where: { id: consumedLater },
+            data: { status: 'CONSUMED', consumedByPayrollPeriodId: period.id },
+          });
+          notifyConsumed();
+          await consumedCommit;
+        },
+        { timeout: 10_000 },
+      );
+      await consumedOpen;
+      const racing = withdraw(consumedLater, 'fix-consumed');
+      try {
+        await expect
+          .poll(
+            async () => {
+              const waiting = await admin.$queryRaw<{ count: number }[]>`
+                SELECT COUNT(*)::integer AS count FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock'
+                  AND query LIKE '%payroll_inputs%' AND cardinality(pg_blocking_pids(pid)) > 0`;
+              return waiting[0]!.count;
+            },
+            { timeout: 2_000, interval: 20 },
+          )
+          .toBe(1);
+      } finally {
+        commitConsumed();
+      }
+      await consuming;
+      const refusedConsumed = {
+        outcome: 'RETRYABLE_FAILURE',
+        code: 'PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE',
+      };
+      await expect(racing).resolves.toMatchObject(refusedConsumed);
+      await expect(withdraw(consumedLater, 'fix-consumed')).resolves.toMatchObject(refusedConsumed);
+      await expect(
+        admin.payrollInput.findUniqueOrThrow({ where: { id: consumedLater } }),
+      ).resolves.toMatchObject({ status: 'CONSUMED', sourceCorrectionKey: null });
+
+      // Once the period calculates, it uses every input accepted by its cutoff:
+      // that one is refused and stays PENDING, and a later one is withdrawn.
+      await admin.payrollPeriod.update({
+        where: { id: period.id },
+        data: { status: 'CALCULATING', calculationVersion: 1 },
+      });
+      await expect(withdraw(live, 'fix-live')).resolves.toMatchObject({
+        outcome: 'RETRYABLE_FAILURE',
+        code: 'PAYROLL_INPUT_IN_LIVE_CALCULATION',
+      });
+      expect(await status(live)).toBe('PENDING');
+      await expect(withdraw(late, 'fix-late')).resolves.toMatchObject({ outcome: 'WITHDRAWN' });
+    } finally {
+      await cleanup(admin, [home]);
       await admin.$disconnect();
     }
   },
