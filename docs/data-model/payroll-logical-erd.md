@@ -810,8 +810,9 @@ These warn: variance against the prior period, zero net pay, and an Attendance
 Period that ended before the cutoff and is not locked.
 
 The severity of negative net pay is not decided here. #28 already lets a
-finalized payroll hold a negative-net-pay result. It is open with the recovery
-rules in #661.
+finalized payroll hold a negative-net-pay result. #661 found no authority on
+it, and a recovery never produces it, because a deduction stops at the
+net-take-home floor. It stays the developer's ruling.
 
 **Deletion behavior:** Retain.
 
@@ -890,9 +891,13 @@ employee_id)`. A later cause joins the open one, so a difference is never
   like any other Employee-level exception.
 - An Employee with no pay in the carrying period gets a result that holds only
   the adjustment lines.
-- A negative adjustment stays `OPEN` and reported, and no period carries it,
-  until #661 records how an Agency may recover an overpayment. LingkodHR
-  records no cash collection.
+- A negative adjustment is deducted only under a final and executory COA
+  decision, for the whole amount or the monthly amount COA approved, after
+  statutory deductions and never below the net-take-home floor (#661,
+  [authorities](../research/salary-overpayment-recovery-authorities.md)). It
+  can settle across more than one period. Until #648 builds this, it stays
+  `OPEN` and reported, and no period carries it. LingkodHR records no cash
+  collection.
 - Voiding the original period cancels its open adjustments. Voiding a period
   that carried one returns it to `OPEN`.
 - The tax and contribution treatment of a difference is specified with #348,
