@@ -1646,6 +1646,22 @@ application projection, and appends Audit Events and outbox records, or rolls
 back all authoritative changes. Stable effect keys make retries return existing
 results.
 
+Of the allocation kinds, only `LEAVE_WITHOUT_PAY` needs a Payroll Input
+(#328). For each such line Leave asks Payroll's application service for one
+input inside the posting transaction, keyed by the line's effect key with
+`:payroll`, and records the returned identifier as a `PAYROLL_INPUT` effect.
+Leave sends the line's quantity, its first Work Date, and a payload of the day
+quantity on each Work Date with its provenance (version, allocation line,
+Approval Decision, policy version, unit), never an amount (payroll-schema.md
+§4). Working dates come from the line's frozen Leave Calculation Segment. A
+line places only when it is every counted date of its range, one day each; the
+unpaid excess of a charged segment, or a minute or source-defined unit, is
+refused with `LEAVE_POSTING_PAYROLL_WORK_DATES_UNPLACED`, because no source
+says which dates are the unpaid ones. A `REJECTED` answer fails the posting
+with `LEAVE_POSTING_PAYROLL_REJECTED` and a `RETRYABLE_FAILURE` answer with
+`LEAVE_POSTING_PAYROLL_RETRYABLE`, each naming Payroll's reason. Either rolls
+back the whole posting and leaves the application `APPROVED`.
+
 A Leave Cancellation is requested while the application is `APPROVED` or
 `POSTED`; `prior_status` records which, so a rejection returns the application
 to that exact state and preserves every original record. Requesting creates an
@@ -1690,8 +1706,11 @@ Attendance Period covers the input's dates, Attendance instead accepts a
 `FOR_AUTHORIZATION`. The locked records stay unchanged until a different HR
 Administrator authorizes it. A missing `ATTENDANCE_CORRECTION_POSTED_LEAVE`
 route or other Attendance refusal fails the command with
-`LEAVE_CANCELLATION_ATTENDANCE_REFUSED`. Payroll handoffs belong to M4; leave posted before M4 carries
-no Payroll Input.
+`LEAVE_CANCELLATION_ATTENDANCE_REFUSED`. Withdrawing a posted Payroll Input
+is Payroll's correction handoff (#228). Until it exists, applying a
+cancellation to a line with a `PAYROLL_INPUT` effect fails as a blocking
+`LEAVE_CANCELLATION_PAYROLL_HANDOFF_UNAVAILABLE`, and the posting and its
+input stay in force.
 
 A cancellation scope names the exact cancelled dates within one approval
 allocation line. A scope covering the whole line cancels its full quantity. A

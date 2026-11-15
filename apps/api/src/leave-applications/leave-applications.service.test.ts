@@ -12,6 +12,7 @@ import {
   mandatoryLeaveAssessmentAuditWriter,
   MandatoryLeaveAssessmentsService,
 } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 
 const documentsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[1];
 const approvalsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[2];
@@ -48,6 +49,7 @@ function service() {
     new AttendancePostedLeaveInputsService(),
     {} as never,
     new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+    new PayrollInputsService(),
   );
 }
 

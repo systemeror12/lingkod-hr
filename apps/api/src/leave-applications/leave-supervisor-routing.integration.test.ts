@@ -40,6 +40,7 @@ import {
   mandatoryLeaveAssessmentAuditWriter,
   MandatoryLeaveAssessmentsService,
 } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 import {
   LEAVE_CANCELLATION_ROUTE_CODE,
   leaveApplicationAuditWriter,
@@ -479,6 +480,7 @@ it.skipIf(!enabled)(
         postedLeaveInputs,
         attendanceCorrections,
         mandatoryLeave,
+        new PayrollInputsService(),
       );
       applications.onModuleInit();
 

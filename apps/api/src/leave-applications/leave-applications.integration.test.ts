@@ -50,6 +50,7 @@ import {
   mandatoryLeaveAssessmentAuditWriter,
   MandatoryLeaveAssessmentsService,
 } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -408,6 +409,7 @@ it.skipIf(!enabled)(
       attendancePeriods,
     );
     attendanceCorrections.onModuleInit();
+    const payrollInputs = new PayrollInputsService();
     const applications = new LeaveApplicationsService(
       leaveApplicationAuditWriter,
       documents,
@@ -419,6 +421,7 @@ it.skipIf(!enabled)(
       postedLeaveInputs,
       attendanceCorrections,
       new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+      payrollInputs,
     );
     applications.onModuleInit();
     const applicationApi = new LeaveApplicationsController(applications);
@@ -1351,11 +1354,68 @@ it.skipIf(!enabled)(
           { code: 'leave.applications.post', scopePolicy: 'AGENCY' as const },
         ],
       };
+      // Payroll already holds this line's source key with another payload, so
+      // it rejects the leave-without-pay input and the whole posting rolls back.
+      const unpaidLine = unpaidDecided.versions.at(-1)!.approvalAllocation!.lines[0]!;
+      const unpaidPayrollKey = `leave-posting:${unpaidVersion.id}:${unpaidLine.id}:payroll`;
+      await expect(
+        withDatabaseContext({ agencyId: agency.id }, (transaction) =>
+          payrollInputs.acceptInTransaction(transaction, {
+            agencyId: agency.id,
+            employeeId: employee.id,
+            sourceModule: 'LEAVE',
+            inputKind: 'LEAVE_WITHOUT_PAY',
+            sourceKey: unpaidPayrollKey,
+            sourceType: 'LeavePosting',
+            sourceId: randomUUID(),
+            effectiveDate: unpaidMonday,
+            quantity: '5',
+            payload: { heldBy: 'an earlier source' },
+          }),
+        ),
+      ).resolves.toMatchObject({ outcome: 'ACCEPTED' });
       await expect(
         applications.post(postingContext, unpaidApplicationId, `post-unpaid-${suffix}`),
-      ).rejects.toMatchObject({ code: 'LEAVE_POSTING_PAYROLL_OWNER_UNAVAILABLE' });
+      ).rejects.toMatchObject({
+        code: 'LEAVE_POSTING_PAYROLL_REJECTED',
+        message: expect.stringContaining('PAYROLL_INPUT_SOURCE_KEY_CONFLICT'),
+      });
       expect(
         (await applications.findById(agencyContext, unpaidApplicationId))!.application.status,
+      ).toBe('APPROVED');
+      expect({
+        postings: await admin.leavePosting.count({
+          where: { leaveApplicationVersionId: unpaidVersion.id },
+        }),
+        attendanceInputs: await admin.attendancePostedLeaveInput.count({
+          where: {
+            agencyId: agency.id,
+            sourceKey: { startsWith: `leave-posting:${unpaidVersion.id}` },
+          },
+        }),
+        payrollInputs: await admin.payrollInput.count({
+          where: { agencyId: agency.id, sourceKey: unpaidPayrollKey },
+        }),
+        failures: await admin.auditEvent.count({
+          where: {
+            agencyId: agency.id,
+            entityId: unpaidApplicationId,
+            action: 'LEAVE_APPLICATION_POST_FAILED',
+            metadata: { path: ['failureCode'], equals: 'LEAVE_POSTING_PAYROLL_REJECTED' },
+          },
+        }),
+      }).toEqual({ postings: 0, attendanceInputs: 0, payrollInputs: 1, failures: 1 });
+
+      // Two of the five days are without pay, and no rule says which two, so
+      // Leave cannot give Payroll the day on each Work Date.
+      await expect(
+        applications.post(postingContext, excessApplicationId, `post-excess-${suffix}`),
+      ).rejects.toMatchObject({
+        code: 'LEAVE_POSTING_PAYROLL_WORK_DATES_UNPLACED',
+        message: expect.stringContaining('2.0000 of the 5 Work Dates'),
+      });
+      expect(
+        (await applications.findById(agencyContext, excessApplicationId))!.application.status,
       ).toBe('APPROVED');
 
       expect(unpaidDecided.versions.at(-1)!.approvalAllocation!.lines).toMatchObject([
@@ -1423,7 +1483,6 @@ it.skipIf(!enabled)(
         { code: 'leave.applications.cancel', scopePolicy: 'AGENCY' },
         { code: 'leave.applications.reject_cancel', scopePolicy: 'AGENCY' },
       ]);
-      const unpaidLine = unpaidDecided.versions.at(-1)!.approvalAllocation!.lines[0]!;
       const excessLines = excessDecided.versions.at(-1)!.approvalAllocation!.lines;
       const ledgerBefore = await admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } });
       const commitmentsBefore = await admin.leaveCreditCommitment.findMany({
@@ -1827,6 +1886,7 @@ it.skipIf(!enabled)(
         postedLeaveInputs,
         attendanceCorrections,
         new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+        payrollInputs,
       );
       await expect(
         failingApplications.applyCancellation(
@@ -1875,6 +1935,7 @@ it.skipIf(!enabled)(
         postedLeaveInputs,
         attendanceCorrections,
         new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+        payrollInputs,
       );
       await expect(
         blockingApplications.applyCancellation(
@@ -1923,6 +1984,7 @@ it.skipIf(!enabled)(
         postedLeaveInputs,
         attendanceCorrections,
         new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+        payrollInputs,
       );
       await expect(
         expiringApplications.applyCancellation(
@@ -2559,6 +2621,167 @@ it.skipIf(!enabled)(
           where: { id: attendanceEffect.ownerRecordId },
         }),
       ).toMatchObject({ allocationKind: 'NON_CREDIT', employeeId: employee.id });
+
+      // Leave without pay posts one Payroll Input per line, carrying the day on
+      // each Work Date and its provenance, recorded as a posting effect (#227).
+      const lwopMonday = nextMonday(70);
+      const lwopTuesday = addDays(lwopMonday, 1);
+      const lwopDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: withoutPay.id,
+      });
+      const lwopId = lwopDraft.application.id;
+      await applications.update(agencyContext, lwopId, {
+        reason: 'Unpaid leave handed to Payroll.',
+        periods: [{ dateFrom: lwopMonday, dateTo: lwopTuesday }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await applications.submit(employeeContext, lwopId, submitInput);
+      await applications.route(recorderContext, lwopId);
+      await applications.certify(recorderContext, lwopId, {});
+      await applications.recommend(supervisorContext, lwopId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      const lwopVersion = (
+        await applications.decide(approverContext, lwopId, { decision: 'APPROVE' })
+      ).versions.at(-1)!;
+      const lwopLine = lwopVersion.approvalAllocation!.lines[0]!;
+      const lwopWrites = async () => ({
+        postings: await admin.leavePosting.count({
+          where: { leaveApplicationVersionId: lwopVersion.id },
+        }),
+        attendanceInputs: await admin.attendancePostedLeaveInput.count({
+          where: {
+            agencyId: agency.id,
+            sourceKey: { startsWith: `leave-posting:${lwopVersion.id}` },
+          },
+        }),
+        payrollInputs: await admin.payrollInput.count({
+          where: {
+            agencyId: agency.id,
+            sourceKey: { startsWith: `leave-posting:${lwopVersion.id}` },
+          },
+        }),
+      });
+
+      // A retryable Payroll answer rolls the whole posting back as well.
+      const unavailablePayroll = new LeaveApplicationsService(
+        leaveApplicationAuditWriter,
+        documents,
+        approvals,
+        completionRegistry,
+        schedules,
+        arrangements,
+        calendars,
+        postedLeaveInputs,
+        attendanceCorrections,
+        new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+        {
+          acceptInTransaction: async () => ({
+            outcome: 'RETRYABLE_FAILURE',
+            code: 'PAYROLL_INPUT_TEST_UNAVAILABLE',
+            reason: 'Payroll is not accepting inputs right now.',
+          }),
+        } as unknown as PayrollInputsService,
+      );
+      await expect(
+        unavailablePayroll.post(postingContext, lwopId, `post-lwop-${suffix}`),
+      ).rejects.toMatchObject({
+        code: 'LEAVE_POSTING_PAYROLL_RETRYABLE',
+        statusCode: 503,
+        message: expect.stringContaining('Payroll is not accepting inputs right now.'),
+      });
+      expect((await applications.findById(agencyContext, lwopId))!.application.status).toBe(
+        'APPROVED',
+      );
+      await expect(lwopWrites()).resolves.toEqual({
+        postings: 0,
+        attendanceInputs: 0,
+        payrollInputs: 0,
+      });
+
+      // The same key then posts, and a retry returns the same Payroll Input.
+      const lwopPosted = await applications.post(postingContext, lwopId, `post-lwop-${suffix}`);
+      expect(lwopPosted.application.status).toBe('POSTED');
+      const lwopPosting = lwopPosted.versions.at(-1)!.posting!;
+      expect(lwopPosting.effects.map(({ effectKind }) => effectKind)).toEqual([
+        'ATTENDANCE_INPUT',
+        'PAYROLL_INPUT',
+      ]);
+      const payrollEffect = lwopPosting.effects[1]!;
+      expect(payrollEffect.effectKey).toBe(
+        `leave-posting:${lwopVersion.id}:${lwopLine.id}:payroll`,
+      );
+      const payrollInput = await admin.payrollInput.findUniqueOrThrow({
+        where: { id: payrollEffect.ownerRecordId },
+      });
+      expect(payrollInput).toMatchObject({
+        agencyId: agency.id,
+        employeeId: employee.id,
+        sourceModule: 'LEAVE',
+        inputKind: 'LEAVE_WITHOUT_PAY',
+        sourceKey: payrollEffect.effectKey,
+        sourceType: 'LeavePosting',
+        sourceId: lwopPosting.id,
+        amount: null,
+        status: 'PENDING',
+        payloadSnapshot: {
+          leaveApplicationVersionId: lwopVersion.id,
+          allocationLineId: lwopLine.id,
+          approvalDecisionId: lwopVersion.approvalAllocation!.approvalDecisionId,
+          policyVersionId: withoutPayVersion.id,
+          unitCode: 'WORKING_DAY',
+          workDates: [
+            { workDate: lwopMonday, quantity: '1.0000' },
+            { workDate: lwopTuesday, quantity: '1.0000' },
+          ],
+        },
+      });
+      expect(payrollInput.quantity!.toFixed(4)).toBe('2.0000');
+      expect(payrollInput.effectiveDate.toISOString().slice(0, 10)).toBe(lwopMonday);
+      const lwopReplay = await applications.post(postingContext, lwopId, `post-lwop-${suffix}`);
+      expect(lwopReplay.versions.at(-1)!.posting).toEqual(lwopPosting);
+      await expect(lwopWrites()).resolves.toEqual({
+        postings: 1,
+        attendanceInputs: 1,
+        payrollInputs: 1,
+      });
+      expect(
+        await admin.auditEvent.count({
+          where: { agencyId: agency.id, entityId: lwopId, action: 'LEAVE_APPLICATION_POSTED' },
+        }),
+      ).toBe(1);
+
+      // Payroll cannot withdraw the input yet (#228), so cancelling the posted
+      // line fails closed and leaves the posting and its Payroll Input in force.
+      const lwopCancellation = (
+        await applications.requestCancellation(requestCancelEmployee, lwopId, {
+          scopeType: 'WHOLE',
+          reason: 'Returned to duty early.',
+        })
+      ).cancellations.at(-1)!;
+      await applications.decideCancellation(cancelApprover, lwopId, { decision: 'APPROVE' });
+      await expect(
+        applications.applyCancellation(
+          applyContext,
+          lwopId,
+          lwopCancellation.id,
+          `apply-lwop-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_PAYROLL_HANDOFF_UNAVAILABLE' });
+      expect(
+        (await applications.findById(recorderContext, lwopId))!.cancellations.at(-1),
+      ).toMatchObject({
+        decisionStatus: 'APPROVED',
+        effectStatus: 'FAILED',
+        lastEffectFailureKind: 'BLOCKING',
+        effects: [],
+      });
+      await expect(
+        admin.payrollInput.findUniqueOrThrow({ where: { id: payrollEffect.ownerRecordId } }),
+      ).resolves.toMatchObject({ status: 'PENDING' });
 
       // Separate requested periods stay separate through Attendance (#456).
       const splitMonday = nextMonday(52);
@@ -4031,6 +4254,7 @@ it.skipIf(!enabled)(
         await transaction.attendanceDay.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.attendancePeriod.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leavePostingEffect.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.payrollInput.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.attendancePostedLeaveInput.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });

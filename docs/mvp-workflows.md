@@ -422,7 +422,9 @@ evidenced route provides otherwise.
 
 Posting is a separate atomic Leave-owned command. It uses stable effect keys and
 owning application services to create every required ledger, Attendance, and
-Payroll effect. An authoritative failure rolls back the command and leaves the
+Payroll effect. Each leave-without-pay line becomes one Payroll Input carrying
+its day quantity on each Work Date. An authoritative failure, including a
+rejected or retryable Payroll answer, rolls back the command and leaves the
 application approved for retry. Notifications and document delivery use the
 outbox after commit.
 

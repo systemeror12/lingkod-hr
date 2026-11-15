@@ -751,6 +751,16 @@ POSTED
   authoritative effect or none. A failed cancellation effect leaves the
   cancellation approved and the original posting effective. Accepted Attendance
   or Payroll adjustment handoffs retain their own truthful pending status.
+- Posting obtains one Payroll Input for each `LEAVE_WITHOUT_PAY` allocation
+  line, the only kind that needs one (#328), through Payroll's application
+  service inside the posting transaction. Leave sends the day quantity on each
+  Work Date and its provenance, never an amount. A line that is only part of
+  its range's Work Dates, such as the unpaid excess of a charged segment, is
+  refused, because no source says which dates are unpaid. A rejected or
+  retryable Payroll answer rolls back the whole posting and leaves the
+  application `APPROVED` with Payroll's reason. Cancelling a line with a
+  Payroll Input waits for Payroll's correction handoff (#228) and fails closed
+  until then.
 - An Attendance Deficit Charge is system-created after an Attendance Period
   Lock or Locked Attendance Adjustment, one per `TARDINESS` or `UNDERTIME`
   Attendance Payroll Fact and unique by that fact (MC41 section 34, ADR 0012).

@@ -28,6 +28,8 @@ import {
 } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import { DocumentsService } from '../documents/documents.service';
 import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
+import { leaveWithoutPayWorkDates } from './leave-without-pay-work-dates';
 import {
   findLeaveCatalogueEntry,
   parseLeaveRuleParameters,
@@ -1177,8 +1179,9 @@ function cancellationApplyFailure(error: unknown): LeaveApplicationServiceError 
 }
 
 /**
- * Stable key of one posted allocation line. Posting suffixes it with `:ledger`
- * and `:attendance`; cancellation finds the posted effects by the same keys.
+ * Stable key of one posted allocation line. Posting suffixes it with `:ledger`,
+ * `:attendance` and `:payroll`; cancellation finds the posted effects by the
+ * same keys.
  */
 function postingLineKey(versionId: string, lineId: string): string {
   return `leave-posting:${versionId}:${lineId}`;
@@ -1282,6 +1285,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     private readonly attendanceCorrections: AttendanceCorrectionsService,
     @Inject(MandatoryLeaveAssessmentsService)
     private readonly mandatoryLeave: MandatoryLeaveAssessmentsService,
+    @Inject(PayrollInputsService) private readonly payrollInputs: PayrollInputsService,
   ) {}
 
   onModuleInit(): void {
@@ -3154,15 +3158,6 @@ export class LeaveApplicationsService implements OnModuleInit {
               );
             }
           }
-          if (
-            allocation.lines.some(({ allocationKind }) => allocationKind === 'LEAVE_WITHOUT_PAY')
-          ) {
-            throw new LeaveApplicationServiceError(
-              'Leave without pay cannot be posted until the Payroll owner can accept Payroll Inputs in M4. The Leave Application remains approved.',
-              409,
-              'LEAVE_POSTING_PAYROLL_OWNER_UNAVAILABLE',
-            );
-          }
           const accountIds = [
             ...new Set([
               ...version.creditCertification.lines.map(({ leaveAccountId }) => leaveAccountId),
@@ -3316,6 +3311,25 @@ export class LeaveApplicationsService implements OnModuleInit {
                 ownerRecordId: attendance.id,
               },
             });
+            if (line.allocationKind === 'LEAVE_WITHOUT_PAY') {
+              const payrollInputId = await this.acceptLeaveWithoutPay(transaction, context, {
+                employeeId: application.employeeId,
+                version,
+                approvalDecisionId: allocation.approvalDecisionId,
+                postingId: posting.id,
+                sourceKey: `${sourceKey}:payroll`,
+                line,
+              });
+              await transaction.leavePostingEffect.create({
+                data: {
+                  agencyId: context.agencyId,
+                  leavePostingId: posting.id,
+                  effectKind: 'PAYROLL_INPUT',
+                  effectKey: `${sourceKey}:payroll`,
+                  ownerRecordId: payrollInputId,
+                },
+              });
+            }
           }
           await transaction.leaveCreditCommitment.updateMany({
             where: {
@@ -3402,6 +3416,97 @@ export class LeaveApplicationsService implements OnModuleInit {
       });
       throw error;
     }
+  }
+
+  /**
+   * Asks Payroll for the one Payroll Input a leave-without-pay line needs,
+   * inside the posting transaction, and returns its identifier. Leave sends the
+   * day quantity on each Work Date and its provenance, never an amount. Any
+   * answer but an accepted input throws, so the whole posting rolls back.
+   */
+  private async acceptLeaveWithoutPay(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    handoff: {
+      employeeId: string;
+      version: VersionRecord;
+      approvalDecisionId: string;
+      postingId: string;
+      sourceKey: string;
+      line: {
+        id: string;
+        dateFrom: Date;
+        dateTo: Date;
+        unitCode: string;
+        quantity: Prisma.Decimal;
+        policyVersionId: string;
+      };
+    },
+  ): Promise<string> {
+    const { version, line } = handoff;
+    const segment = version.calculationSegments.find(
+      (candidate) =>
+        candidate.policyVersionId === line.policyVersionId &&
+        candidate.dateFrom.getTime() === line.dateFrom.getTime() &&
+        candidate.dateTo.getTime() === line.dateTo.getTime(),
+    );
+    const assignment = segment?.scheduleAssignmentId
+      ? await transaction.scheduleAssignment.findFirst({
+          where: { agencyId: context.agencyId, id: segment.scheduleAssignmentId },
+          select: {
+            workScheduleVersion: {
+              select: { dayRules: { select: { weekday: true, ruleType: true } } },
+            },
+          },
+        })
+      : null;
+    const placed = leaveWithoutPayWorkDates({
+      dateFrom: formatDate(line.dateFrom),
+      dateTo: formatDate(line.dateTo),
+      unitCode: line.unitCode,
+      quantity: formatQuantity(line.quantity),
+      dayRules: assignment?.workScheduleVersion.dayRules ?? null,
+      holidayFacts: segment?.holidayFacts ?? null,
+    });
+    const range = `${formatDate(line.dateFrom)} to ${formatDate(line.dateTo)}`;
+    if ('reason' in placed) {
+      throw new LeaveApplicationServiceError(
+        `Leave without pay from ${range} cannot be placed on exact Work Dates for Payroll. ${placed.reason} The Leave Application remains approved.`,
+        409,
+        'LEAVE_POSTING_PAYROLL_WORK_DATES_UNPLACED',
+      );
+    }
+    const answer = await this.payrollInputs.acceptInTransaction(transaction, {
+      agencyId: context.agencyId,
+      employeeId: handoff.employeeId,
+      sourceModule: 'LEAVE',
+      inputKind: 'LEAVE_WITHOUT_PAY',
+      sourceKey: handoff.sourceKey,
+      sourceType: 'LeavePosting',
+      sourceId: handoff.postingId,
+      effectiveDate: placed.workDates[0]!.workDate,
+      quantity: formatQuantity(line.quantity),
+      payload: {
+        leaveApplicationVersionId: version.id,
+        allocationLineId: line.id,
+        approvalDecisionId: handoff.approvalDecisionId,
+        policyVersionId: line.policyVersionId,
+        unitCode: line.unitCode,
+        workDates: placed.workDates.map((workDate) => ({ ...workDate })),
+      },
+    });
+    if ('payrollInputId' in answer) return answer.payrollInputId;
+    throw answer.outcome === 'REJECTED'
+      ? new LeaveApplicationServiceError(
+          `Payroll rejected leave without pay from ${range}: ${answer.reason} (${answer.code}). The Leave Application remains approved.`,
+          409,
+          'LEAVE_POSTING_PAYROLL_REJECTED',
+        )
+      : new LeaveApplicationServiceError(
+          `Payroll cannot accept leave without pay from ${range} yet: ${answer.reason} (${answer.code}). The Leave Application remains approved; post it again later.`,
+          503,
+          'LEAVE_POSTING_PAYROLL_RETRYABLE',
+        );
   }
 
   async returnToApplicant(
@@ -4694,6 +4799,19 @@ export class LeaveApplicationsService implements OnModuleInit {
       );
       return scope ? [{ line, scope }] : [];
     });
+    // Withdrawing a posted Payroll Input is Payroll's correction handoff (#228).
+    // Until it exists, cancelling such a line fails closed, so Attendance and
+    // Payroll never disagree about leave without pay.
+    const payrollKeys = new Set(
+      cancelled.map(({ line }) => `${postingLineKey(version.id, line.id)}:payroll`),
+    );
+    if (posting?.effects.some(({ effectKey }) => payrollKeys.has(effectKey))) {
+      throw new LeaveApplicationServiceError(
+        'Cancelling posted leave without pay needs Payroll to withdraw its Payroll Input, which Payroll cannot do yet. The posting stays in force and the cancellation stays approved.',
+        409,
+        'LEAVE_CANCELLATION_PAYROLL_HANDOFF_UNAVAILABLE',
+      );
+    }
     const accountIds = [
       ...new Set(
         cancelled.flatMap(({ line }) => (line.leaveAccountId ? [line.leaveAccountId] : [])),
