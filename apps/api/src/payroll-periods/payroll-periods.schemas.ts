@@ -59,3 +59,9 @@ export type PayrollPeriodCutoffMoveInput = z.input<typeof payrollPeriodCutoffMov
 export const payrollPeriodCancelSchema = z.object({ reason, rowVersion }).strict();
 
 export type PayrollPeriodCancelInput = z.input<typeof payrollPeriodCancelSchema>;
+
+export const payrollPeriodCalculationStartSchema = z.object({ rowVersion }).strict();
+
+export type PayrollPeriodCalculationStartInput = z.input<
+  typeof payrollPeriodCalculationStartSchema
+>;

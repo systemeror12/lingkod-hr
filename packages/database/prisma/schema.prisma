@@ -5644,6 +5644,8 @@ model PayrollPeriod {
   components    PayrollPeriodComponent[]
   actors        PayrollPeriodActor[]
   ruleSnapshots PayrollRuleSnapshot[]
+  employees     PayrollEmployee[]
+  exceptions    PayrollException[]
 
   @@unique([agencyId, code])
   @@unique([agencyId, id])
@@ -5710,6 +5712,75 @@ model PayrollRuleSnapshotItem {
   @@unique([payrollRuleSnapshotId, agencyPayrollApplicabilityId], map: "payroll_rule_snapshot_items_applicability_key")
   @@unique([payrollRuleSnapshotId, authorizedPayrollComponentInputId], map: "payroll_rule_snapshot_items_authorized_input_key")
   @@map("payroll_rule_snapshot_items")
+}
+
+// #621 Payroll calculation. Foreign keys to employees, pay components, and rule
+// versions, the insert and immutability guards, and RLS live in migration 0162.
+
+/// A Payroll Employee Result: one Employee's outcome in one calculation version.
+/// Append-only; once written, only `status` changes.
+model PayrollEmployee {
+  id                        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String  @map("agency_id") @db.Uuid
+  payrollPeriodId           String  @map("payroll_period_id") @db.Uuid
+  calculationVersion        Int     @map("calculation_version")
+  employeeId                String  @map("employee_id") @db.Uuid
+  compensationBasisSnapshot Json    @map("compensation_basis_snapshot")
+  status                    String
+  grossAmount               Decimal @default(0) @map("gross_amount") @db.Decimal(19, 4)
+  totalDeductions           Decimal @default(0) @map("total_deductions") @db.Decimal(19, 4)
+  netAmount                 Decimal @default(0) @map("net_amount") @db.Decimal(19, 4)
+  calculationHash           String  @map("calculation_hash")
+
+  payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_employees_period_fkey")
+  lines         PayrollLine[]
+
+  @@unique([payrollPeriodId, calculationVersion, employeeId], map: "payroll_employees_period_version_employee_key")
+  @@unique([agencyId, id])
+  @@map("payroll_employees")
+}
+
+/// A Payroll Line: one calculated amount of a result, with its source. Immutable.
+model PayrollLine {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String   @map("agency_id") @db.Uuid
+  payrollEmployeeId String   @map("payroll_employee_id") @db.Uuid
+  payComponentId    String   @map("pay_component_id") @db.Uuid
+  ruleVersionId     String?  @map("rule_version_id") @db.Uuid
+  lineType          String   @map("line_type")
+  quantity          Decimal? @db.Decimal(12, 4)
+  rate              Decimal? @db.Decimal(19, 8)
+  amount            Decimal  @db.Decimal(19, 4)
+  sourceSnapshot    Json     @map("source_snapshot")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payrollEmployee PayrollEmployee @relation(fields: [agencyId, payrollEmployeeId], references: [agencyId, id], onDelete: Restrict, map: "payroll_lines_payroll_employee_fkey")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, payrollEmployeeId], map: "payroll_lines_payroll_employee_idx")
+  @@map("payroll_lines")
+}
+
+/// A calculation warning or blocker of one calculation version. It names the
+/// Employee, not a result.
+model PayrollException {
+  id                     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String  @map("agency_id") @db.Uuid
+  payrollPeriodId        String  @map("payroll_period_id") @db.Uuid
+  calculationVersion     Int     @map("calculation_version")
+  employeeId             String? @map("employee_id") @db.Uuid
+  exceptionType          String  @map("exception_type")
+  severity               String
+  status                 String
+  details                Json
+  reason                 String?
+  resolvedByMembershipId String? @map("resolved_by_membership_id") @db.Uuid
+
+  payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_exceptions_period_fkey")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, payrollPeriodId, calculationVersion], map: "payroll_exceptions_period_version_idx")
+  @@map("payroll_exceptions")
 }
 
 // #340 Attendance Deficit Charges. Foreign keys, the successor and immutable

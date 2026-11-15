@@ -461,6 +461,11 @@ Payroll Period: one payroll run of one Agency (#328)
   (#27).
 - Calculation cannot start before `cutoff_at`. The Payroll Preparer may move
   the cutoff while the period is `DRAFT`, with an Audit Event (ADR 0014).
+- Starting a calculation moves `DRAFT` to `CALCULATING`, advances
+  `calculation_version`, and freezes its rule snapshot in one transaction. The
+  `CALCULATING` period is the queued job. Its run ends in `FOR_REVIEW`, or in
+  `DRAFT` on a blocking exception or a failure, with the reason in an Audit
+  Event (#621).
 
 **Deletion behavior:** Retain permanently per policy.
 
@@ -569,6 +574,11 @@ Payroll Employee Result: one Employee's outcome in one calculation version
   yields two segments.
 - Amounts reconcile to lines.
 - An Employee under a Payroll Hold has no result in that period.
+- Every Employee with a Service Segment on any date of the period gets a
+  result: `CALCULATED` with lines, or `EXCEPTION` with its blocking exceptions
+  and no line (#621).
+- `calculation_hash` covers what the calculation decided, never row ids,
+  times, or the version, so the same snapshot and inputs reproduce it.
 
 **Deletion behavior:** Retain.
 
@@ -661,6 +671,11 @@ informational amount
 - A line with `payroll_adjustment_id` carries the component of the past
   period's line and the signed difference. It sits in the Employee's result in
   the period that carries the adjustment.
+- A line is written with its result and never changed (#621). Basic salary is
+  one `EARNING` line of one month for a full month on the monthly full-time or
+  part-time basis. A partial month, a casual daily wage, a rate change inside
+  the month, and an amount that is not whole centavos block instead, because
+  no recorded rule settles them.
 
 **Deletion behavior:** Never delete after finalization.
 

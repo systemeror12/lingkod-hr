@@ -439,6 +439,26 @@ period to name none.
 `cutoff_at` changes only while the period is `DRAFT`. The service refuses to
 start a calculation before it.
 
+Starting a calculation needs `payroll.periods.calculate` and claims the
+Payroll Preparer's `PREPARATION` function (#621). In one transaction it moves
+the period from `DRAFT` to `CALCULATING`, advances `calculation_version`, and
+freezes that version's rule snapshot (section 6); a missing required rule
+refuses the start and changes nothing. A special period is refused until a
+calculator exists for a component it names. A second start at the same
+`row_version` finds the period moved and is refused.
+
+The committed `CALCULATING` period is the queued job. The calculation job
+reads every `CALCULATING` period through `payroll_calculations_due()`, a
+`SECURITY DEFINER` function that returns only identifiers and versions across
+Agencies, then runs each under its own Agency's context. A run locks the
+period row and writes nothing unless the period is still `CALCULATING` at its
+version, so a repeated or concurrent run is harmless and a run that died
+mid-transaction left nothing. The run writes every result, line, and
+exception with the period's next status in one transaction: `FOR_REVIEW` on a
+clean run, `DRAFT` on any blocking exception. A failure rolls that back and
+returns the period to `DRAFT`. Each outcome is a `SYSTEM` Audit Event with the
+reason, keyed to its calculation version.
+
 Migration 0153 creates the period tables (#333). Its trigger also keeps a
 period's code, run type, dates, and `carries_adjustments` fixed, creates it
 `DRAFT`, rejects every `DELETE`, holds the status to the transitions of
@@ -625,6 +645,17 @@ certification and the Certified Payroll Review Export bind one exact version
 continuous segment: Service Segment, salary grade, step, pay basis, employment
 fraction, salary rate, and their sources.
 
+Migration 0162 creates `payroll_employees` (#621); `payroll_holds` arrives
+with the hold command. The calculation writes one result for each Employee
+with a Service Segment on any date of the period: `CALCULATED` with its lines,
+or `EXCEPTION` with a blocking exception, the frozen basis, zero totals, and no
+line. A trigger admits a result only while its period is `CALCULATING` at the
+result's version, rejects every `DELETE`, and lets an `UPDATE` change only
+`status`. `calculation_hash` is the SHA-256 of the canonical JSON of what the
+calculation decided: the Employee, the period dates, the compensation basis,
+the lines, the exceptions, and the totals. Row ids, times, and the version are
+left out, so the same snapshot and inputs reproduce it.
+
 A hold is placed or lifted only while the period is `DRAFT`, and only against
 an Employee-level blocking exception. A held Employee has no result in that
 period. When the period is finalized, the finalization transaction opens a
@@ -701,6 +732,26 @@ CREATE UNIQUE INDEX payroll_consumed_attendance_facts_one_live_key
 
 Lines are inserted with their result. A trigger rejects every `UPDATE` and
 `DELETE` once the calculation that wrote them completes.
+
+Migration 0162 creates `payroll_lines` (#621). A line joins its result only in
+the transaction that wrote the result, and every `UPDATE` and `DELETE` is
+rejected. Each column arrives with the calculator that needs it:
+`taxable_amount` and `contribution_base` with the tax and contribution
+calculators (#350, #348), `payroll_adjustment_id` with Payroll Adjustments
+(#330), and `payroll_line_sources` and `payroll_consumed_attendance_facts`
+with the first line that rests on a Payroll Input or an Attendance Payroll
+Fact.
+
+The `BASIC_SALARY` component, which 0162 adds to the catalogue, pays a full
+month on the monthly full-time or proportional part-time basis as one
+`EARNING` line: quantity 1 month, the monthly rate the compensation basis
+derived, the salary schedule as `rule_version_id`, and the Service Segments,
+grade, step, pay basis, and fraction in `source_snapshot`. Every case no
+recorded rule settles is a blocking exception and no line: an `INDETERMINATE`
+basis, a partial month (PAY-002, until #622), a casual daily wage, whose paid
+days in a month no recorded rule fixes, a rate, pay basis, or schedule that
+changes inside the month, such as a step increment, an amount that is not
+whole centavos, and a schedule the snapshot did not freeze.
 
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line
@@ -861,6 +912,13 @@ CREATE TABLE payroll_exceptions (
 There is no `WAIVED` status: no blocking exception can be waived, and only a
 warning can be acknowledged, with a reason (#27, #328). An exception names the
 Employee, not a result, because a blocked or held Employee may have none.
+
+Migration 0162 creates `payroll_exceptions` (#621). The calculation writes
+them, `OPEN`, with the cause in `details.message`; `reason` stays for an
+acknowledgement or resolution. A trigger admits one only while its period is
+`CALCULATING` at its version and rejects every `DELETE`. `hris_app` holds
+`SELECT` and `INSERT` until the acknowledge and resolve commands grant
+`UPDATE`.
 
 ```sql
 CREATE TABLE payroll_adjustments (
