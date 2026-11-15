@@ -45,6 +45,7 @@ CREATE TABLE national_payroll_rule_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_kind text NOT NULL
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
+                         'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
                          'YEAR_END_BONUS_AND_CASH_GIFT')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
@@ -78,7 +79,14 @@ its calculator and parameter schema in code. The load validates `parameters`
 against that schema. `SALARY_SCHEDULE` has empty parameters, because its rates
 are rows. `AUTHORIZED_DEDUCTIONS` is the GAA's authorized-deductions provision
 (FY 2026 GAA sec. 62); its parameters list `allowedPayeeCategories`, drawn
-from the categories that section names (section 9).
+from the categories that section names (section 9). `GSIS_CONTRIBUTION`
+(RA No. 8291, sec. 5(a)) holds `employeeRate`, `employerRate`, and
+`monthlyCompensationLimit`, the AMC limit, which the file states as null only
+when its issuance sets none. `EMPLOYEES_COMPENSATION` (PD No. 626, art. 181)
+holds `employerRate` and `monthlySalaryCreditCeiling`, and no employee rate.
+Rates are fractions, such as `0.09`. Neither kind is issued for 2027
+([R18, R23](../../research/national-payroll-rule-versions-2027.md)), so
+neither is loaded until its issuance is read (section 9).
 `YEAR_END_BONUS_AND_CASH_GIFT` is one fiscal year's year-end bonus and cash
 gift rule (FY 2026 GAA sec. 75); its parameters are `serviceFrom`, `asOf`,
 `minimumServiceMonths`, `bonusMonthsOfBasicSalary`, `cashGiftAmount`, and
@@ -742,11 +750,14 @@ Lines are inserted with their result. A trigger rejects every `UPDATE` and
 Migration 0162 creates `payroll_lines` (#621). A line joins its result only in
 the transaction that wrote the result, and every `UPDATE` and `DELETE` is
 rejected. Each column arrives with the calculator that needs it:
-`taxable_amount` and `contribution_base` with the tax and contribution
-calculators (#350, #348), `payroll_adjustment_id` with Payroll Adjustments
-(#330), and `payroll_line_sources` and `payroll_consumed_attendance_facts`
-with the first line that rests on a Payroll Input or an Attendance Payroll
-Fact.
+`taxable_amount` with the tax calculator (#350), and `payroll_adjustment_id`
+with Payroll Adjustments (#330).
+
+Migration 0164 creates `payroll_line_sources` and
+`payroll_consumed_attendance_facts` (#341). A source joins its line only in the
+transaction that wrote the line, and every `UPDATE` and `DELETE` is rejected.
+`hris_app` holds `SELECT` on `payroll_consumed_attendance_facts`; finalization,
+its only writer, grants itself `INSERT` and `UPDATE` when it arrives.
 
 The `BASIC_SALARY` component, which 0162 adds to the catalogue, pays a full
 month on the monthly full-time or proportional part-time basis as one
@@ -758,6 +769,42 @@ basis, a partial month (PAY-002, until #622), a casual daily wage, whose paid
 days in a month no recorded rule fixes, a rate, pay basis, or schedule that
 changes inside the month, such as a step increment, an amount that is not
 whole centavos, and a schedule the snapshot did not freeze.
+
+The `DAYS_WITHOUT_PAY` component, which 0164 adds, deducts salary for days
+without pay as `DEDUCTION` lines: quantity × monthly salary ÷ 22 (CSC MC No. 8,
+s. 2014), so with `BASIC_SALARY` a month pays `(22 − days) / 22` of its salary.
+Its days are leave without pay from `LEAVE_WITHOUT_PAY` inputs and whole Work
+Dates of `ABSENCE` facts (MC 41 sections 50 and 56). It writes one line per
+calendar month and salary in effect on those Work Dates, with the days in
+`quantity`, the monthly salary in `rate`, the salary schedule as
+`rule_version_id`, each Work Date's days and source in `source_snapshot`, and
+every input and fact it rests on in `payroll_line_sources`. A Work Date outside
+the period is valued at the compensation basis on that date, which the
+period's rule snapshot does not cover.
+
+The calculation takes the `PENDING` inputs accepted, and the `ABSENCE` facts
+published, at or before its rule snapshot's `cutoff_at`, less the facts in a
+live `payroll_consumed_attendance_facts` row (ADR 0014). A fact counts as its
+delta, `corrected_minutes − prior_minutes`, so an adjustment publication
+counts only its change, and withdrawing a deducted absence gives a negative
+line. Payroll never deducts `TARDINESS` or `UNDERTIME` facts (ADR 0012).
+Every case no recorded rule settles blocks and writes no line:
+
+- an `UNPAID_DEFICIT_REMAINDER` input, and an `ABSENCE` delta that is not a
+  whole Work Date's expected minutes: no authority on file values a fraction of
+  a day without pay. MC 8 counts days without pay, and MC 41 Table II converts
+  minutes to fractions of a day only to charge leave credits (#329). The
+  exception names `FRACTIONAL_DAY_SALARY_RULE` in `details.missingFacts`;
+- a tardiness or undertime fact, in any publication at or before the cutoff,
+  that Leave's application service reports as owed a charge (ADR 0012);
+- leave without pay counted in calendar days, which include days outside MC
+  8's 22-workday month exclusive of Saturdays and Sundays;
+- more than 22 days in one month, which the formula would make negative pay;
+- a Work Date whose compensation basis is `INDETERMINATE` or a casual daily
+  wage, which has no monthly salary;
+- an amount that is not whole centavos, which no recorded rule rounds.
+
+A blocked result keeps none of its calculators' lines (section 7).
 
 The `YEAR_END_BONUS` and `CASH_GIFT` components, which migration 0165 adds to
 the catalogue with the `YEAR_END_BONUS_AND_CASH_GIFT` rule kind (#344), are
@@ -831,6 +878,42 @@ CREATE TABLE tax_lines (
 Employees' Compensation is employer-only, and there is no `OTHER` contribution
 type (#27, #328). A special period writes a tax line for its taxable lines and
 no contribution lines.
+
+Migration 0163 creates `contribution_lines` for `GSIS` and
+`EMPLOYEES_COMPENSATION` (#348); `PHILHEALTH` and `PAGIBIG` join its type
+check with their calculators (#632). A line joins its result only in the
+transaction that writes the result, every `UPDATE` and `DELETE` is rejected,
+and RLS is forced. Each share is also a Payroll Line, so the totals and the
+payslip carry it: `GSIS_PERSONAL_SHARE` is a `DEDUCTION`, and
+`GSIS_GOVERNMENT_SHARE` and `EMPLOYEES_COMPENSATION` are `EMPLOYER_SHARE`
+lines, which never reduce pay. Each line's quantity is the base and its rate
+the version's, so quantity × rate is the amount.
+
+The base is the month's `BASIC_SALARY` line, so `payroll_lines` has no
+`contribution_base` column: one column cannot carry a base per contribution
+type, and basic salary is the only line any base rests on yet. GSIS takes the
+version's member and government rates of it. Employees' Compensation takes the
+employer rate of the monthly salary credit, the basic salary up to the
+version's ceiling. Each reads the one version of its kind that the rule
+snapshot froze for every date of the month. Neither kind is required to
+freeze a snapshot, so every case the recorded rules do not settle is a
+blocking exception on the Employee and no line: no version in effect on every
+date, a version that changes inside the month, service for only part of the
+month, a GSIS base above the AMC limit, where RA 8291 sets another member
+share (research open question 3), and a share that is not whole centavos.
+With no basic salary line, neither writes anything, because basic salary's
+own exception already blocks the Employee. A blocked result keeps no
+contribution line, as it keeps no Payroll Line (section 7).
+
+Personnel records no GSIS or Employees' Compensation coverage fact. RA No.
+8291 covers compensated government employees irrespective of appointment
+status; its exclusions are special-regime populations and contractuals
+without an employer-employee relationship, both outside the Reference Agency
+Profile (BRD PAY-001;
+`research/reference-agency-personnel-compensation-boundaries.md`). So an
+Employee with a Service Segment in the month is treated as covered, and one
+without is not in the calculation. A recorded coverage fact, when Personnel
+adds one, replaces this.
 
 Loan lines use a separate table because multiple deductions may exist.
 

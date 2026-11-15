@@ -10,7 +10,10 @@ ALTER TABLE "national_payroll_rule_versions"
   DROP CONSTRAINT "national_payroll_rule_versions_rule_kind_check";
 ALTER TABLE "national_payroll_rule_versions"
   ADD CONSTRAINT "national_payroll_rule_versions_rule_kind_check"
-    CHECK ("rule_kind" IN ('SALARY_SCHEDULE', 'AUTHORIZED_DEDUCTIONS', 'YEAR_END_BONUS_AND_CASH_GIFT'));
+    CHECK ("rule_kind" IN (
+      'SALARY_SCHEDULE', 'AUTHORIZED_DEDUCTIONS', 'GSIS_CONTRIBUTION', 'EMPLOYEES_COMPENSATION',
+      'YEAR_END_BONUS_AND_CASH_GIFT'
+    ));
 
 -- Native Payroll Components: unconditional, revalidated against each year's
 -- GAA, and taking no Authorized Payroll Component Input.

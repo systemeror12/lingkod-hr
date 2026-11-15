@@ -25,6 +25,7 @@ const parameters = {
   grantsSeparatedBeforeAsOf: true,
 };
 const calculator = new YearEndBonusCalculator();
+const openEnded = { effectiveFrom: '2026-01-01', effectiveTo: null, successorEffectiveFrom: null };
 
 function contextWith(
   overrides: Partial<CalculationContext> & { rule?: Record<string, unknown> } = {},
@@ -35,11 +36,18 @@ function contextWith(
     periodTo: '2026-10-31',
     snapshotRuleVersionIds: new Set(['schedule-a', 'yeb-2026']),
     snapshotRuleVersions: [
-      { id: 'schedule-a', code: 'SSL-TEST', ruleKind: 'SALARY_SCHEDULE', parameters: {} },
+      {
+        id: 'schedule-a',
+        code: 'SSL-TEST',
+        ruleKind: 'SALARY_SCHEDULE',
+        ...openEnded,
+        parameters: {},
+      },
       {
         id: 'yeb-2026',
         code: 'YEB-TEST-2026',
         ruleKind: YEAR_END_BONUS_RULE_KIND,
+        ...openEnded,
         parameters: { ...parameters, ...rule },
       },
     ],

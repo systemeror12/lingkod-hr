@@ -1,9 +1,8 @@
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
-import { PersonnelSalaryFactsService } from '../personnel-salary-facts/personnel-salary-facts.service';
 import { PayrollPeriodsService } from '../payroll-periods/payroll-periods.service';
 import {
   cleanupPayrollTenants,
@@ -15,31 +14,18 @@ import {
   type PayrollTenant,
 } from '../payroll-periods/payroll-periods.test-fixtures';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
+import {
+  EmployeesCompensationCalculator,
+  GsisContributionCalculator,
+} from './contribution.calculators';
+import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
+import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.test-fixtures';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
 type RecordedBasis = { payBasis: string; employmentFraction: string | null };
-
-/** Personnel records no pay basis yet (#619); this stands in for it per Employee. */
-class RecordedPayBases extends PersonnelSalaryFactsService {
-  readonly bases = new Map<string, RecordedBasis>();
-
-  override async readInTransaction(
-    transaction: Prisma.TransactionClient,
-    agencyId: string,
-    employeeId: string,
-    from: string,
-    to: string,
-  ) {
-    const stretches = await super.readInTransaction(transaction, agencyId, employeeId, from, to);
-    const basis = this.bases.get(employeeId);
-    return stretches.map((stretch) =>
-      stretch.status === 'IN_SERVICE' && basis ? { ...stretch, ...basis } : stretch,
-    ) as never;
-  }
-}
 
 describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQL', () => {
   // Test fixtures only: the rate is not from any issuance, the parameters
@@ -49,9 +35,14 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
   const ruleCode = `${FIXTURE_PREFIX}YEB-RULE-${suffix}`;
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
+  const basis = new CompensationBasisService(facts);
   const calculation = new PayrollCalculationService(
-    new CompensationBasisService(facts),
+    basis,
     new BasicSalaryCalculator(),
+    payrollSourcesReader(basis),
+    new DaysWithoutPayCalculator(),
+    new GsisContributionCalculator(),
+    new EmployeesCompensationCalculator(),
     new YearEndBonusCalculator(),
   );
   let admin: PrismaClient;
@@ -286,9 +277,9 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
     ]);
     expect(results.get(onTime)).toMatchObject({ status: 'CALCULATED' });
     expect(results.get(onTime)?.grossAmount.toString()).toBe('36705');
-    expect(paid(partTime)).toEqual([
-      ['YEAR_END_BONUS', '15852.5', 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS', ruleId],
-    ]);
+    // The unsettled part-time cash gift blocks the result, so its bonus line is not kept either.
+    expect(results.get(partTime)).toMatchObject({ status: 'EXCEPTION' });
+    expect(paid(partTime)).toEqual([]);
     expect(paid(late)).toEqual([]);
     expect(paid(separated)).toEqual([]);
 

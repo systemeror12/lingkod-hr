@@ -1,16 +1,28 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { prisma, setDatabaseContext } from '@lingkod-hr/database';
 import { log } from '@lingkod-hr/observability';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
+import {
+  isoDateOf,
+  type NationalPayrollRuleKind,
+} from '../payroll-rule-versions/national-payroll-rule-versions';
 import { BasicSalaryCalculator } from './basic-salary.calculator';
 import { calculationHash } from './calculation-hash';
+import {
+  EmployeesCompensationCalculator,
+  GsisContributionCalculator,
+} from './contribution.calculators';
+import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import type {
+  CalculatedContribution,
   CalculatedException,
   CalculatedLine,
   CalculationContext,
   PayrollCalculator,
 } from './payroll-calculator';
+import { PayrollSourcesReader } from './payroll-sources.reader';
 import {
   CASH_GIFT_COMPONENT_CODE,
   YEAR_END_BONUS_COMPONENT_CODE,
@@ -70,10 +82,15 @@ export class PayrollCalculationService {
 
   constructor(
     @Inject(CompensationBasisService) private readonly compensationBasis: CompensationBasisService,
-    @Inject(BasicSalaryCalculator) basicSalary: PayrollCalculator,
-    @Inject(YearEndBonusCalculator) yearEndBonus: PayrollCalculator,
+    @Inject(BasicSalaryCalculator) basicSalary: BasicSalaryCalculator,
+    @Inject(PayrollSourcesReader) private readonly sources: PayrollSourcesReader,
+    @Inject(DaysWithoutPayCalculator) daysWithoutPay: DaysWithoutPayCalculator,
+    @Inject(GsisContributionCalculator) gsis: GsisContributionCalculator,
+    @Inject(EmployeesCompensationCalculator) employeesCompensation: EmployeesCompensationCalculator,
+    @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
   ) {
-    this.calculators = [basicSalary];
+    // Contributions read the earnings before them, so they stay last.
+    this.calculators = [basicSalary, daysWithoutPay, gsis, employeesCompensation];
     this.specialCalculators = [yearEndBonus];
   }
 
@@ -130,24 +147,52 @@ export class PayrollCalculationService {
           calculationVersion: job.calculationVersion,
         },
       },
-      select: { items: { select: { nationalPayrollRuleVersionId: true } } },
+      select: { cutoffAt: true, items: { select: { nationalPayrollRuleVersionId: true } } },
     });
     if (!snapshot) throw new Error('The calculation version has no rule snapshot.');
     const snapshotRuleVersionIds = new Set(
       snapshot.items.flatMap((item) => item.nationalPayrollRuleVersionId ?? []),
     );
+    const frozen = await transaction.nationalPayrollRuleVersion.findMany({
+      where: { id: { in: [...snapshotRuleVersionIds] } },
+      orderBy: { effectiveFrom: 'asc' },
+      select: {
+        id: true,
+        code: true,
+        ruleKind: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        parameters: true,
+        supersededBy: { select: { id: true, effectiveFrom: true } },
+      },
+    });
     const context: CalculationContext = {
       periodFrom: period.period_from,
       periodTo: period.period_to,
       snapshotRuleVersionIds,
-      snapshotRuleVersions: await transaction.nationalPayrollRuleVersion.findMany({
-        where: { id: { in: [...snapshotRuleVersionIds] } },
-        orderBy: { id: 'asc' },
-        select: { id: true, code: true, ruleKind: true, parameters: true },
-      }),
+      // A successor loaded after the snapshot froze does not end its predecessor here.
+      snapshotRuleVersions: frozen.map((version) => ({
+        id: version.id,
+        code: version.code,
+        ruleKind: version.ruleKind as NationalPayrollRuleKind,
+        effectiveFrom: isoDateOf(version.effectiveFrom),
+        effectiveTo: version.effectiveTo ? isoDateOf(version.effectiveTo) : null,
+        successorEffectiveFrom:
+          version.supersededBy && snapshotRuleVersionIds.has(version.supersededBy.id)
+            ? isoDateOf(version.supersededBy.effectiveFrom)
+            : null,
+        parameters: version.parameters,
+      })),
       componentCodes,
     };
     const calculators = period.run_type === 'SPECIAL' ? this.specialCalculators : this.calculators;
+
+    // The snapshot's cutoff fixes the input set, so a recalculation takes the same sources.
+    const sources = await this.sources.readInTransaction(
+      transaction,
+      job.agencyId,
+      snapshot.cutoffAt,
+    );
 
     const employees = await transaction.employee.findMany({
       where: { agencyId: job.agencyId },
@@ -167,15 +212,31 @@ export class PayrollCalculationService {
       // An Employee with no Service Segment on any date of the period is not in scope.
       if (basis.stretches.every((stretch) => stretch.personnel === null)) continue;
 
-      const lines: CalculatedLine[] = [];
+      const employeeSources = sources.forEmployee(employeeId);
+      const valuationBases = await this.sources.valuationBasesInTransaction(
+        transaction,
+        job.agencyId,
+        employeeId,
+        { from: context.periodFrom, to: context.periodTo },
+        employeeSources,
+      );
+      const calculated: CalculatedLine[] = [];
       const exceptions: CalculatedException[] = [];
+      const calculatedContributions: CalculatedContribution[] = [];
       for (const calculator of calculators) {
-        const outcome = calculator.calculate(basis, context);
-        lines.push(...outcome.lines);
+        const outcome = calculator.calculate(basis, context, calculated, {
+          ...employeeSources,
+          valuationBases,
+        });
+        calculated.push(...outcome.lines);
         exceptions.push(...outcome.exceptions);
+        calculatedContributions.push(...(outcome.contributions ?? []));
       }
-      const totals = totalsOf(lines);
       const blocked = exceptions.filter((exception) => exception.severity === 'BLOCKING');
+      // A blocked result has zero totals and no line (payroll-schema.md §7).
+      const lines = blocked.length > 0 ? [] : calculated;
+      const contributions = blocked.length > 0 ? [] : calculatedContributions;
+      const totals = totalsOf(lines);
       const result = await transaction.payrollEmployee.create({
         data: {
           agencyId: job.agencyId,
@@ -192,18 +253,21 @@ export class PayrollCalculationService {
             compensationBasis: basis,
             lines,
             exceptions,
+            contributions,
             totals,
           }),
         },
         select: { id: true },
       });
+      const written = lines.map((line) => ({ id: randomUUID(), line }));
       await transaction.payrollLine.createMany({
-        data: lines.map((line) => {
+        data: written.map(({ id, line }) => {
           const payComponentId = componentIds.get(line.componentCode);
           if (!payComponentId) {
             throw new Error(`Pay component ${line.componentCode} is not in the catalogue.`);
           }
           return {
+            id,
             agencyId: job.agencyId,
             payrollEmployeeId: result.id,
             payComponentId,
@@ -215,6 +279,22 @@ export class PayrollCalculationService {
             sourceSnapshot: toJson(line.source),
           };
         }),
+      });
+      await transaction.payrollLineSource.createMany({
+        data: written.flatMap(({ id, line }) =>
+          (line.sourceRecords ?? []).map((record) => ({
+            agencyId: job.agencyId,
+            payrollLineId: id,
+            ...record,
+          })),
+        ),
+      });
+      await transaction.contributionLine.createMany({
+        data: contributions.map((contribution) => ({
+          agencyId: job.agencyId,
+          payrollEmployeeId: result.id,
+          ...contribution,
+        })),
       });
       await transaction.payrollException.createMany({
         data: exceptions.map((exception) => ({

@@ -16,7 +16,7 @@ import {
   type CalculationContext,
   type CalculatorOutcome,
   type PayrollCalculator,
-  type SnapshotRuleVersion,
+  type FrozenRuleVersion,
 } from './payroll-calculator';
 
 export const YEAR_END_BONUS_COMPONENT_CODE = 'YEAR_END_BONUS';
@@ -175,7 +175,7 @@ export class YearEndBonusCalculator implements PayrollCalculator {
 function ruleFor(
   context: CalculationContext,
 ):
-  | { version: SnapshotRuleVersion; parameters: YearEndBonusAndCashGiftParameters }
+  | { version: FrozenRuleVersion; parameters: YearEndBonusAndCashGiftParameters }
   | { reason: string } {
   const versions = context.snapshotRuleVersions
     .filter((version) => version.ruleKind === YEAR_END_BONUS_RULE_KIND)
@@ -200,7 +200,7 @@ function ruleFor(
 function bonusLine(
   onAsOf: Extract<CompensationBasisStretch, { status: 'RESOLVED' }>,
   parameters: YearEndBonusAndCashGiftParameters,
-  version: SnapshotRuleVersion,
+  version: FrozenRuleVersion,
   context: CalculationContext,
   source: Record<string, unknown>,
 ): { lines: CalculatedLine[] } | { exceptionType: string; message: string } {
