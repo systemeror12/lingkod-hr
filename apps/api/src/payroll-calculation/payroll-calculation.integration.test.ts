@@ -19,6 +19,7 @@ import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
 } from './contribution.calculators';
+import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { dueCalculations } from './payroll-calculation.job';
 import { type CalculationJob, PayrollCalculationService } from './payroll-calculation.service';
@@ -56,6 +57,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
   const scheduleCode = `${FIXTURE_PREFIX}CALC-SCHEDULE-${suffix}`;
   const gsisCode = `${FIXTURE_PREFIX}CALC-GSIS-${suffix}`;
   const ecCode = `${FIXTURE_PREFIX}CALC-EC-${suffix}`;
+  const peraCode = `${FIXTURE_PREFIX}CALC-PERA-${suffix}`;
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
@@ -72,12 +74,14 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     new DaysWithoutPayCalculator(),
     ...contributions,
     new YearEndBonusCalculator(),
+    new PeraCalculator(),
     noRata,
   );
   let admin: PrismaClient;
   let scheduleId: string;
   let gsisId: string;
   let ecId: string;
+  let peraId: string;
   const tenants: PayrollTenant[] = [];
 
   const preparer = (tenant: PayrollTenant): RequestContext => ({
@@ -239,6 +243,12 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
         monthlySalaryCreditCeiling: '20000',
       })
     ).id;
+    peraId = (
+      await ruleVersion('PERA', peraCode, '2881-12-31', {
+        monthlyAmount: '2000.00',
+        dailyAmount: '90.91',
+      })
+    ).id;
   });
 
   afterAll(async () => {
@@ -251,7 +261,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       await transaction.employee.deleteMany({ where });
       await transaction.organizationUnit.deleteMany({ where });
       await transaction.$executeRaw`DELETE FROM salary_grade_rates WHERE rule_version_id = CAST(${scheduleId} AS uuid)`;
-      await transaction.$executeRaw`DELETE FROM national_payroll_rule_versions WHERE code IN (${scheduleCode}, ${gsisCode}, ${ecCode})`;
+      await transaction.$executeRaw`DELETE FROM national_payroll_rule_versions WHERE code IN (${scheduleCode}, ${gsisCode}, ${ecCode}, ${peraCode})`;
     });
     await cleanupPayrollTenants(admin, tenants);
     await admin.$disconnect();
@@ -324,7 +334,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     // The retried job runs twice at once and again later: it calculates once.
     const runs = await Promise.all([calculation.run(job), calculation.run(job)]);
     expect(runs.map((run) => run.outcome).sort()).toEqual(['RETURNED', 'SKIPPED']);
-    expect(runs).toContainEqual({ outcome: 'RETURNED', results: 6, blockingExceptions: 6 });
+    expect(runs).toContainEqual({ outcome: 'RETURNED', results: 6, blockingExceptions: 7 });
     expect(await calculation.run(job)).toEqual({ outcome: 'SKIPPED' });
 
     // Blocking exceptions return the period to DRAFT with the reason.
@@ -338,7 +348,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       ['PAYROLL_PERIOD_CALCULATION_STARTED', 'CALCULATING', 'USER'],
       ['PAYROLL_PERIOD_CALCULATION_RETURNED', 'DRAFT', 'SYSTEM'],
     ]);
-    expect(audit[1]?.reason).toContain('6 blocking exceptions in calculation version 1');
+    expect(audit[1]?.reason).toContain('7 blocking exceptions in calculation version 1');
 
     const results = new Map((await resultsOf(job)).map((result) => [result.employeeId, result]));
     expect(results.has(separated)).toBe(false);
@@ -350,13 +360,14 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     const basicSalary = await admin.payComponent.findUniqueOrThrow({
       where: { code: 'BASIC_SALARY' },
     });
-    for (const [employeeId, amount] of [
-      [full, '31705'],
-      [part, '16007'],
+    for (const [employeeId, amount, gross] of [
+      [full, '31705', '33705'],
+      [part, '16007', '17007'],
     ] as const) {
       const result = results.get(employeeId)!;
       expect(result).toMatchObject({ status: 'CALCULATED', calculationHash: /^[0-9a-f]{64}$/ });
-      expect(result.grossAmount.toString()).toBe(amount);
+      // Gross is basic salary and PERA.
+      expect(result.grossAmount.toString()).toBe(gross);
       const line = result.lines.find((candidate) => candidate.payComponentId === basicSalary.id);
       expect(line).toMatchObject({
         payComponentId: basicSalary.id,
@@ -404,8 +415,28 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
         ['EMPLOYEES_COMPENSATION', 'EMPLOYER_SHARE', '200'],
         ['GSIS_GOVERNMENT_SHARE', 'EMPLOYER_SHARE', '3804.6'],
         ['GSIS_PERSONAL_SHARE', 'DEDUCTION', '2853.45'],
+        ['PERA', 'EARNING', '2000'],
       ].sort(),
     );
+    // PERA is the version's monthly amount, or its share for part-time
+    // service, and is not subject to income tax.
+    const pera = await admin.payComponent.findUniqueOrThrow({ where: { code: 'PERA' } });
+    for (const [employeeId, quantity, amount] of [
+      [full, '1', '2000'],
+      [part, '0.5', '1000'],
+    ] as const) {
+      const line = results
+        .get(employeeId)!
+        .lines.find((candidate) => candidate.payComponentId === pera.id);
+      expect(line).toMatchObject({
+        ruleVersionId: peraId,
+        lineType: 'EARNING',
+        sourceSnapshot: expect.objectContaining({ taxTreatment: 'NON_TAXABLE' }),
+      });
+      expect([line?.quantity?.toString(), line?.rate?.toString(), line?.amount.toString()]).toEqual(
+        [quantity, '2000', amount],
+      );
+    }
     expect(contributionsOf(full)).toEqual([
       ['EMPLOYEES_COMPENSATION', '0', '200', '20000', ecId],
       ['GSIS', '2853.45', '3804.6', '31705', gsisId],
@@ -423,8 +454,8 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     ).resolves.toBe(0);
     // Only the GSIS personal share reduces pay; employer shares never do.
     for (const [employeeId, deductions, net] of [
-      [full, '2853.45', '28851.55'],
-      [part, '1440.63', '14566.37'],
+      [full, '2853.45', '30851.55'],
+      [part, '1440.63', '15566.37'],
     ] as const) {
       const result = results.get(employeeId)!;
       expect([result.totalDeductions.toString(), result.netAmount.toString()]).toEqual([
@@ -444,6 +475,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
         [partial, 'BASIC_SALARY_PARTIAL_MONTH'],
         [partial, 'EMPLOYEES_COMPENSATION_PARTIAL_MONTH'],
         [partial, 'GSIS_PARTIAL_MONTH'],
+        [partial, 'PERA_PARTIAL_MONTH'],
         [noBasis, 'COMPENSATION_BASIS_INDETERMINATE'],
       ].sort(),
     );
@@ -534,6 +566,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       new DaysWithoutPayCalculator(),
       ...contributions,
       new YearEndBonusCalculator(),
+      new PeraCalculator(),
       noRata,
     );
     const first = jobOf(tenant, await startNext());
@@ -570,7 +603,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     expect(after.get(full)).toBe(before.get(full));
     expect(after.get(late)).not.toBe(before.get(late));
     const lateResult = (await resultsOf(third)).find((result) => result.employeeId === late);
-    expect(lateResult?.grossAmount.toString()).toBe('32014');
+    expect(lateResult?.grossAmount.toString()).toBe('34014');
   });
 
   it('blocks GSIS once its version expired, keeps no contribution line, and leaves an excluded Employee out', async () => {

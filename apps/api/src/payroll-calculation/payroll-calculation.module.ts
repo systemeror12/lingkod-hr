@@ -11,6 +11,7 @@ import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationJob } from './payroll-calculation.job';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PayrollSourcesReader } from './payroll-sources.reader';
+import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
 
@@ -22,6 +23,7 @@ import { CommutableRataCalculator } from './commutable-rata.calculator';
     GsisContributionCalculator,
     EmployeesCompensationCalculator,
     YearEndBonusCalculator,
+    PeraCalculator,
     CommutableRataCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,

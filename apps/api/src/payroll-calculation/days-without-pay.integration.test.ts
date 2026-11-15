@@ -44,7 +44,8 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
   const { attendance, deficitCharges } = attendanceAndLeave();
-  // Contributions have their own test; these fixtures freeze no GSIS or EC version.
+  // Contributions, PERA, and RATA have their own tests; these fixtures freeze
+  // no GSIS, EC, PERA, or RATA version.
   const noContribution = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -54,6 +55,7 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
     noContribution,
     noContribution,
     new YearEndBonusCalculator(),
+    noContribution,
     noContribution,
   );
   let admin: PrismaClient;

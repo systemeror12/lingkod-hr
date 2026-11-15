@@ -36,7 +36,8 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
-  // Contributions have their own test; these fixtures freeze no GSIS or EC version.
+  // Contributions and PERA have their own tests; these fixtures freeze no GSIS,
+  // EC, or PERA version.
   const noContribution = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -46,6 +47,7 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
     noContribution,
     noContribution,
     new YearEndBonusCalculator(),
+    noContribution,
     new CommutableRataCalculator(),
   );
   let admin: PrismaClient;
