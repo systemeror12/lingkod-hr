@@ -4691,8 +4691,9 @@ model MonetizationAdjustmentLine {
 
 /// Payroll's recorded outcome of a Monetization Adjustment against a
 /// Monetization Earning Input. Immutable. `earningInputId` and `linkedInputId`
-/// name `payroll_inputs` rows by foreign key (0161); nothing writes here until
-/// Monetization Adjustment binds to the inbox (#357).
+/// name `payroll_inputs` rows by foreign key (0161). It keeps its earlier rows
+/// and has no writer: Monetization Adjustment records its answer as the inbox's
+/// cancellation, keyed by the adjustment (#357).
 model PayrollMonetizationAdjustmentOutcome {
   id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                  String   @map("agency_id") @db.Uuid
@@ -5519,6 +5520,8 @@ model PayrollInput {
   acceptedAt                 DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
   consumedByPayrollPeriodId  String?  @map("consumed_by_payroll_period_id") @db.Uuid
   replacesPayrollInputId     String?  @map("replaces_payroll_input_id") @db.Uuid
+  /// The source's correction key, written once as the input is cancelled (#357).
+  sourceCorrectionKey        String?  @map("source_correction_key") @db.Citext
 
   employee     Employee       @relation("PayrollInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
   replaces     PayrollInput?  @relation("PayrollInputReplacement", fields: [agencyId, replacesPayrollInputId], references: [agencyId, id], onDelete: Restrict)
@@ -5526,6 +5529,7 @@ model PayrollInput {
 
   @@unique([agencyId, id])
   @@unique([agencyId, sourceModule, sourceKey])
+  @@unique([agencyId, sourceModule, sourceCorrectionKey], map: "payroll_inputs_source_correction_key")
   @@index([agencyId, sourceModule, status, acceptedAt], map: "payroll_inputs_source_status_idx")
   @@map("payroll_inputs")
 }

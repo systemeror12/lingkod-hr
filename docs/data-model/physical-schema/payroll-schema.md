@@ -266,9 +266,11 @@ CREATE TABLE payroll_inputs (
   accepted_at timestamptz NOT NULL DEFAULT now(),
   consumed_by_payroll_period_id uuid,
   replaces_payroll_input_id uuid,
+  source_correction_key citext,
   CHECK ((input_kind = 'MONETIZATION_EARNING') = (amount IS NOT NULL)),
   CHECK ((input_kind = 'OVERTIME_HOURS') = (source_module = 'OVERTIME')),
   CHECK ((status = 'CONSUMED') = (consumed_by_payroll_period_id IS NOT NULL)),
+  CHECK (source_correction_key IS NULL OR status = 'CANCELLED'),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, consumed_by_payroll_period_id)
@@ -276,6 +278,7 @@ CREATE TABLE payroll_inputs (
   FOREIGN KEY (agency_id, replaces_payroll_input_id)
     REFERENCES payroll_inputs (agency_id, id),
   UNIQUE (agency_id, source_module, source_key),
+  UNIQUE (agency_id, source_module, source_correction_key),
   UNIQUE (agency_id, id)
 );
 ```
@@ -293,8 +296,9 @@ Payroll reads Attendance Payroll Facts and Personnel salary facts through their
 owning services and copies neither here (#329, #619).
 
 An input belongs to no period when accepted. After acceptance a trigger allows
-only the status change and `consumed_by_payroll_period_id`, which the
-finalization transaction sets. Consumed inputs are immutable, apart from the
+only the status change, `consumed_by_payroll_period_id`, which the
+finalization transaction sets, and `source_correction_key`, which a withdrawal
+sets. Consumed inputs are immutable, apart from the
 return to `PENDING` when their payroll is voided. The migration that creates
 `payroll_periods` adds the foreign key on `consumed_by_payroll_period_id`, which
 until then has only its CHECK (#338).
@@ -313,6 +317,19 @@ input, in its own transaction and idempotently by a stable correction key
   joins the open one, and returns its identifier (section 10).
 
 There is no `REVERSED` or `SUPERSEDED` status.
+
+`withdrawInTransaction` builds the first case (#357). It writes the correction
+key with the cancellation, so a retry with the key answers `ALREADY_WITHDRAWN`,
+the key cannot withdraw another input, and another key cannot withdraw a
+cancelled one. Inputs cancelled before migration 0166 have no key. Per ADR
+0014, a live calculation uses the input when a period past `DRAFT` has a
+`cutoff_at` at or after its `accepted_at`. No recorded rule maps an input kind
+to a special period's components, so a live special period counts too. The
+withdrawal locks the Agency's open periods, so a calculation cannot start
+until it commits. Until #649 builds the second and third cases, Payroll refuses
+both as `RETRYABLE_FAILURE`, with `PAYROLL_INPUT_IN_LIVE_CALCULATION` or
+`PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE`, and changes nothing. A
+cancelled input stays readable with its key.
 
 For a Leave Monetization input, Payroll resolves the authoritative salary source
 and computes `amount`; Leave may not supply either as an unrestricted value. The
@@ -336,16 +353,25 @@ a salary rule is recorded, Payroll reads the salary through the compensation
 basis (#332) and still names it while the basis does not resolve. No authority
 settles the valuation date or centavo rounding (#614, questions 1 and 4), so
 Payroll answers `RETRYABLE_FAILURE` naming `VALUATION_DATE_RULE` and
-`ROUNDING_RULE` too. A Monetization Adjustment fails closed until it binds to
-withdrawal (#357).
+`ROUNDING_RULE` too.
+
+A Monetization Adjustment withdraws the posted input with its adjustment key,
+`MONETIZATION_ADJUSTMENT:<id>`, as the correction key (#357). When it retains
+credits, Leave also posts a replacement in the same transaction: a
+`MONETIZATION_EARNING` input with `source_key` the adjustment key,
+`source_type` `MONETIZATION_ADJUSTMENT`, `quantity` the retained credits, and
+the posting's valuation date and calculator. Payroll values it like the
+original. If Payroll refuses the replacement, the withdrawal rolls back.
+Payroll answers with the replacement's identifier and `PENDING`, or with the
+cancelled input's identifier and `CANCELLED` when no credits are retained.
 
 Migration 0161 moved the phase-local `payroll_monetization_earning_inputs` rows
 here with their identifiers and dropped the table (#339). A superseded row is
 `CANCELLED`, and its successor names it in `replaces_payroll_input_id`. Each
 row's old status and the columns this table lacks stay in `payload_snapshot`
 under `movedFrom` and `payrollValuation`. `payroll_monetization_adjustment_outcomes`
-keeps its rows, its foreign keys now on this table, and has no writer until
-#357.
+keeps its rows, with its foreign keys now on this table. It has no writer,
+because the cancelled input's correction key records Payroll's answer (#357).
 
 For leave without pay, `payload_snapshot` holds the day quantity for each Work
 Date of the allocation line. Payroll values each calendar month's days at the

@@ -2042,8 +2042,9 @@ Payroll's owning service is the Payroll Input inbox: Leave posts one
 `MONETIZATION_EARNING` input keyed by the posting key, with the approved
 quantities and provenance only, and Payroll values it (payroll-schema.md §4,
 #339). `monetization_postings.payroll_input_id` names that `payroll_inputs`
-row. Until Monetization Adjustment binds to the inbox's withdrawal (#357),
-Payroll's answer to an adjustment fails closed and the adjustment is `BLOCKED`.
+row. A Monetization Adjustment withdraws the posted input with its adjustment
+key and, when it retains credits, posts a valued replacement in the same
+transaction (payroll-schema.md §4, #357).
 
 An applied Monetization Adjustment must receive Payroll's accepted cancellation,
 replacement, or linked adjustment before it writes exact ledger reversals and

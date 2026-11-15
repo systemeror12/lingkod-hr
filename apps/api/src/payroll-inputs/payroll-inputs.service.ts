@@ -231,42 +231,66 @@ export class PayrollInputsService {
 
   /**
    * Withdraw a source module's own input inside the caller's transaction, which
-   * must carry the caller's Agency database context (payroll-schema.md §4). A
-   * `PENDING` input becomes `CANCELLED`; a retry answers `ALREADY_WITHDRAWN`.
-   * No calculation uses a `PENDING` input yet. A `CONSUMED` input is corrected
-   * by a Payroll Adjustment (#649), which does not exist yet, so it is refused
-   * as retryable.
+   * must carry the caller's Agency database context (payroll-schema.md §4,
+   * #357). A `PENDING` input that no live calculation uses becomes `CANCELLED`
+   * under the source's correction key, and stays readable. A retry with the
+   * same key answers `ALREADY_WITHDRAWN`; the key cannot withdraw another input.
+   * A replacement is then accepted with `replacesPayrollInputId` in the same
+   * transaction.
+   *
+   * Payroll does not yet correct an input a live calculation uses or a
+   * finalized payroll consumed (#649), so it refuses both as retryable. Two
+   * concurrent withdrawals of different inputs under one key fail the second
+   * caller's transaction on the key's unique index.
    */
   async withdrawInTransaction(
     transaction: Prisma.TransactionClient,
     request: PayrollInputWithdrawal,
   ): Promise<PayrollInputWithdrawalAnswer> {
-    const where = { agencyId: request.agencyId, id: request.payrollInputId };
-    const cancelled = await transaction.payrollInput.updateMany({
-      where: { ...where, sourceModule: request.sourceModule, status: 'PENDING' },
-      data: { status: 'CANCELLED' },
-    });
-    if (cancelled.count === 1) {
-      return { outcome: 'WITHDRAWN', payrollInputId: request.payrollInputId };
-    }
-    const input = await transaction.payrollInput.findFirst({
-      where,
-      select: { sourceModule: true, status: true },
-    });
-    if (!input || input.sourceModule !== request.sourceModule) {
+    const { agencyId, sourceModule, payrollInputId } = request;
+    const correctionKey = request.correctionKey.trim();
+    if (!correctionKey) {
       return rejected(
-        'PAYROLL_INPUT_NOT_FOUND',
-        'The Payroll Input is not one this source posted.',
+        'PAYROLL_INPUT_INVALID',
+        'correctionKey: A stable correction key is required.',
       );
     }
-    if (input.status === 'CANCELLED') {
-      return { outcome: 'ALREADY_WITHDRAWN', payrollInputId: request.payrollInputId };
+    const keyed = await transaction.payrollInput.findFirst({
+      where: { agencyId, sourceModule, sourceCorrectionKey: correctionKey },
+      select: { id: true },
+    });
+    if (keyed && keyed.id !== payrollInputId) {
+      return rejected(
+        'PAYROLL_CORRECTION_KEY_CONFLICT',
+        'The correction key already withdrew another Payroll Input.',
+      );
     }
-    return {
-      outcome: 'RETRYABLE_FAILURE',
-      code: 'PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE',
-      reason: 'The Payroll Input was consumed by a payroll; Payroll cannot yet correct it (#649).',
-    };
+
+    const read = () =>
+      transaction.payrollInput.findFirst({
+        where: { agencyId, id: payrollInputId },
+        select: { sourceModule: true, status: true, sourceCorrectionKey: true },
+      });
+    const settled = settledWithdrawal(await read(), request, correctionKey);
+    if (settled) return settled;
+
+    if (await usedByLiveCalculation(transaction, agencyId, payrollInputId)) {
+      return {
+        outcome: 'RETRYABLE_FAILURE',
+        code: 'PAYROLL_INPUT_IN_LIVE_CALCULATION',
+        reason:
+          'A Payroll Period past DRAFT uses the Payroll Input; Payroll cannot yet withdraw it (#649).',
+      };
+    }
+    const cancelled = await transaction.payrollInput.updateMany({
+      where: { agencyId, id: payrollInputId, sourceModule, status: 'PENDING' },
+      data: { status: 'CANCELLED', sourceCorrectionKey: correctionKey },
+    });
+    if (cancelled.count === 1) return { outcome: 'WITHDRAWN', payrollInputId };
+    // A finalization or another withdrawal changed the input after the check.
+    const raced = settledWithdrawal(await read(), request, correctionKey);
+    if (!raced) throw new Error('The Payroll Input stayed PENDING but could not be withdrawn.');
+    return raced;
   }
 
   /** Payroll Inputs of the acting Agency, newest first, by source module and status. */
@@ -304,6 +328,55 @@ export class PayrollInputsService {
       acceptedAt: row.acceptedAt.toISOString(),
     }));
   }
+}
+
+/** Payroll's answer for an input that is no longer `PENDING`, or not the source's. */
+function settledWithdrawal(
+  input: { sourceModule: string; status: string; sourceCorrectionKey: string | null } | null,
+  request: PayrollInputWithdrawal,
+  correctionKey: string,
+): PayrollInputWithdrawalAnswer | null {
+  if (!input || input.sourceModule !== request.sourceModule) {
+    return rejected('PAYROLL_INPUT_NOT_FOUND', 'The Payroll Input is not one this source posted.');
+  }
+  if (input.status === 'CANCELLED') {
+    // The key is citext, so a retry matches it without regard to case.
+    return input.sourceCorrectionKey?.toLowerCase() === correctionKey.toLowerCase()
+      ? { outcome: 'ALREADY_WITHDRAWN', payrollInputId: request.payrollInputId }
+      : rejected(
+          'PAYROLL_INPUT_ALREADY_WITHDRAWN',
+          'Another correction already withdrew the Payroll Input.',
+        );
+  }
+  if (input.status === 'CONSUMED') {
+    return {
+      outcome: 'RETRYABLE_FAILURE',
+      code: 'PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE',
+      reason: 'The Payroll Input was consumed by a payroll; Payroll cannot yet correct it (#649).',
+    };
+  }
+  return null;
+}
+
+/**
+ * Whether a live calculation uses the input. By ADR 0014 a period uses every
+ * unconsumed input accepted at or before its cutoff; past `DRAFT` that use is
+ * live. No recorded rule maps an input kind to a special period's components,
+ * so a live special period counts too. Locking the Agency's open periods holds
+ * a calculation start or cutoff move until the caller commits.
+ */
+async function usedByLiveCalculation(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  payrollInputId: string,
+): Promise<boolean> {
+  const periods = await transaction.$queryRaw<{ live: boolean }[]>`
+    SELECT p."status" <> 'DRAFT' AND p."cutoff_at" >= i."accepted_at" AS "live"
+    FROM "payroll_periods" p
+    JOIN "payroll_inputs" i ON i."agency_id" = p."agency_id" AND i."id" = ${payrollInputId}::uuid
+    WHERE p."agency_id" = ${agencyId}::uuid AND p."status" NOT IN ('FINALIZED', 'VOIDED')
+    FOR SHARE OF p`;
+  return periods.some((period) => period.live);
 }
 
 function findByKey(

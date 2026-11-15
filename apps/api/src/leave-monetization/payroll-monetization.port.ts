@@ -59,6 +59,7 @@ export interface MonetizationAdjustmentRequest {
   agencyId: string;
   employeeId: string;
   adjustmentId: string;
+  /** The stable correction key; a retry of the same adjustment sends it again. */
   adjustmentKey: string;
   monetizationPostingId: string;
   originalPayrollInputId: string;
@@ -66,9 +67,26 @@ export interface MonetizationAdjustmentRequest {
   reversedQuantity: string;
   retainedQuantity: string;
   reason: string;
+  /** The posting's valuation provenance, which a retained replacement keeps. */
+  valuationDate: string;
+  calculatorKind: string;
+  factor: string;
 }
 
-export type MonetizationAdjustmentResult = MonetizationPortAccepted | MonetizationPortFailure;
+/**
+ * Payroll's acceptance of a Monetization Adjustment: the cancelled original
+ * input when no credits are retained, else the `PENDING` replacement Payroll
+ * valued for the retained credits.
+ */
+export interface MonetizationAdjustmentAccepted {
+  kind: 'ACCEPTED' | 'ALREADY_ACCEPTED';
+  payrollInputId: string;
+  status: 'CANCELLED' | 'PENDING';
+  amount: string | null;
+  payrollResult: unknown;
+}
+
+export type MonetizationAdjustmentResult = MonetizationAdjustmentAccepted | MonetizationPortFailure;
 
 export interface PayrollMonetizationPort {
   submitEarningInput(
@@ -84,8 +102,8 @@ export interface PayrollMonetizationPort {
 
 export const PAYROLL_MONETIZATION_PORT = Symbol('PAYROLL_MONETIZATION_PORT');
 
-export function isAccepted(
-  result: MonetizationEarningInputResult | MonetizationAdjustmentResult,
-): result is MonetizationPortAccepted {
+export function isAccepted<
+  Result extends MonetizationEarningInputResult | MonetizationAdjustmentResult,
+>(result: Result): result is Extract<Result, { kind: 'ACCEPTED' | 'ALREADY_ACCEPTED' }> {
   return result.kind === 'ACCEPTED' || result.kind === 'ALREADY_ACCEPTED';
 }

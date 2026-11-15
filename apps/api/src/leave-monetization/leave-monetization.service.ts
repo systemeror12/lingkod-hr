@@ -1644,6 +1644,9 @@ export class LeaveMonetizationService implements OnModuleInit {
             reason: adjustment.reason,
             postingId: adjustment.monetizationPostingId,
             payrollInputId: adjustment.posting.payrollInputId,
+            valuationDate: formatDate(adjustment.posting.valuationDate),
+            calculatorKind: adjustment.posting.calculatorKind,
+            factor: adjustment.posting.factor.toFixed(),
             employeeId: adjustment.posting.requestVersion.request.employeeId,
             lines: adjustment.lines.map((line) => ({
               originalLedgerEntryId: line.originalLedgerEntryId,
@@ -1664,6 +1667,9 @@ export class LeaveMonetizationService implements OnModuleInit {
           reason: adjustment.reason,
           postingId: adjustment.monetizationPostingId,
           payrollInputId: adjustment.posting.payrollInputId,
+          valuationDate: formatDate(adjustment.posting.valuationDate),
+          calculatorKind: adjustment.posting.calculatorKind,
+          factor: adjustment.posting.factor.toFixed(),
           employeeId: adjustment.posting.requestVersion.request.employeeId,
           lines: adjustment.lines.map((line) => ({
             originalLedgerEntryId: line.originalLedgerEntryId,
@@ -1701,12 +1707,17 @@ export class LeaveMonetizationService implements OnModuleInit {
         reversedQuantity: formatQuantity(reversedQuantity),
         retainedQuantity: formatQuantity(retainedQuantity),
         reason: preparation.reason,
+        valuationDate: preparation.valuationDate,
+        calculatorKind: preparation.calculatorKind,
+        factor: preparation.factor,
       },
     );
     const ownerResult: Prisma.InputJsonValue = isAccepted(result)
       ? {
           kind: result.kind,
           payrollInputId: result.payrollInputId,
+          status: result.status,
+          amount: result.amount,
           payrollResult: (result.payrollResult ?? null) as Prisma.InputJsonValue,
         }
       : {
