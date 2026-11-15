@@ -321,13 +321,13 @@ Create:
 2. `salary_grade_rates`
 3. `pay_components`
 4. `agency_payroll_applicabilities`
-5. `payroll_periods`
-6. `payroll_period_components`
-7. `payroll_period_actors`
-8. `authorized_payroll_component_inputs`
+5. `payroll_periods` (0153, #333), with the deferred `payroll_inputs.consumed_by_payroll_period_id` foreign key
+6. `payroll_period_components` (0153, #333)
+7. `payroll_period_actors` (0153, #333)
+8. `authorized_payroll_component_inputs` (0156, #346), and its `payroll_periods` foreign key (0157)
 9. `payroll_inputs`
-10. `payroll_rule_snapshots`
-11. `payroll_rule_snapshot_items`
+10. `payroll_rule_snapshots` (0153, #333)
+11. `payroll_rule_snapshot_items` (0153, #333), its authorized-input reference (0157, #346), and its applicability reference with its table (#618)
 12. `payroll_employees`
 13. `payroll_exceptions`
 14. `payroll_holds`

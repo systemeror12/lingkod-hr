@@ -5571,6 +5571,132 @@ model PayrollInput {
   @@map("payroll_inputs")
 }
 
+// #346 Authorized Payroll Component Inputs. Foreign keys, the mutation guard,
+// and RLS live in migrations 0156 and 0157; the model keeps scalars only.
+
+/// An Authorized Payroll Component Input (payroll-schema.md §3): an approved,
+/// effective-dated amount, rate, or quantity for a component that accepts one.
+/// It is not a Payroll Input. An approved input is never edited.
+model AuthorizedPayrollComponentInput {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  payComponentId             String    @map("pay_component_id") @db.Uuid
+  scope                      String
+  employeeId                 String?   @map("employee_id") @db.Uuid
+  valueKind                  String    @map("value_kind")
+  value                      Decimal   @db.Decimal(19, 8)
+  paymentSchedule            String    @map("payment_schedule")
+  authorityDocumentVersionId String    @map("authority_document_version_id") @db.Uuid
+  sourceReference            String    @map("source_reference")
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  status                     String
+  recordedByMembershipId     String    @map("recorded_by_membership_id") @db.Uuid
+  approvedByMembershipId     String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt                 DateTime? @map("approved_at") @db.Timestamptz(6)
+  consumedByPayrollPeriodId  String?   @map("consumed_by_payroll_period_id") @db.Uuid
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, payComponentId, status, effectiveFrom], map: "authorized_payroll_component_inputs_component_effective_idx")
+  @@map("authorized_payroll_component_inputs")
+}
+
+// #333 Payroll Periods, their payroll-function actors, and rule snapshots
+// (payroll-schema.md §5, §6). Foreign keys to existing models stay in SQL.
+
+/// One payroll run of one Agency (payroll-schema.md §5). A trigger keeps its
+/// run and dates fixed, moves the cutoff only in DRAFT, and follows
+/// hris-controls.md §5.20 for status.
+model PayrollPeriod {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String    @map("agency_id") @db.Uuid
+  code                        String    @db.Citext
+  runType                     String    @map("run_type")
+  periodFrom                  DateTime  @map("period_from") @db.Date
+  periodTo                    DateTime  @map("period_to") @db.Date
+  cutoffAt                    DateTime  @map("cutoff_at") @db.Timestamptz(6)
+  paymentDate                 DateTime  @map("payment_date") @db.Date
+  status                      String
+  carriesAdjustments          Boolean   @default(false) @map("carries_adjustments")
+  calculationVersion          Int       @default(0) @map("calculation_version")
+  finalizedAt                 DateTime? @map("finalized_at") @db.Timestamptz(6)
+  voidRequestedByMembershipId String?   @map("void_requested_by_membership_id") @db.Uuid
+  voidRequestedAt             DateTime? @map("void_requested_at") @db.Timestamptz(6)
+  voidReason                  String?   @map("void_reason")
+  voidDocumentVersionId       String?   @map("void_document_version_id") @db.Uuid
+  voidedByMembershipId        String?   @map("voided_by_membership_id") @db.Uuid
+  voidedAt                    DateTime? @map("voided_at") @db.Timestamptz(6)
+  rowVersion                  Int       @default(1) @map("row_version")
+
+  components    PayrollPeriodComponent[]
+  actors        PayrollPeriodActor[]
+  ruleSnapshots PayrollRuleSnapshot[]
+
+  @@unique([agencyId, code])
+  @@unique([agencyId, id])
+  @@map("payroll_periods")
+}
+
+/// A pay component a special Payroll Period pays.
+model PayrollPeriodComponent {
+  agencyId        String @map("agency_id") @db.Uuid
+  payrollPeriodId String @map("payroll_period_id") @db.Uuid
+  payComponentId  String @map("pay_component_id") @db.Uuid
+
+  payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_period_components_period_fkey")
+
+  @@id([payrollPeriodId, payComponentId])
+  @@map("payroll_period_components")
+}
+
+/// The one payroll function a person acts in on a Payroll Period (#330).
+model PayrollPeriodActor {
+  agencyId        String   @map("agency_id") @db.Uuid
+  payrollPeriodId String   @map("payroll_period_id") @db.Uuid
+  membershipId    String   @map("membership_id") @db.Uuid
+  payrollFunction String   @map("payroll_function")
+  firstActedAt    DateTime @default(now()) @map("first_acted_at") @db.Timestamptz(6)
+
+  payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_period_actors_period_fkey")
+
+  @@id([payrollPeriodId, membershipId])
+  @@map("payroll_period_actors")
+}
+
+/// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
+model PayrollRuleSnapshot {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String   @map("agency_id") @db.Uuid
+  payrollPeriodId    String   @map("payroll_period_id") @db.Uuid
+  calculationVersion Int      @map("calculation_version")
+  cutoffAt           DateTime @map("cutoff_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payrollPeriod PayrollPeriod             @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_rule_snapshots_period_fkey")
+  items         PayrollRuleSnapshotItem[]
+
+  @@unique([payrollPeriodId, calculationVersion], map: "payroll_rule_snapshots_period_version_key")
+  @@unique([agencyId, id])
+  @@map("payroll_rule_snapshots")
+}
+
+/// A reference from a rule snapshot to one source it froze.
+model PayrollRuleSnapshotItem {
+  id                                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                          String  @map("agency_id") @db.Uuid
+  payrollRuleSnapshotId             String  @map("payroll_rule_snapshot_id") @db.Uuid
+  nationalPayrollRuleVersionId      String? @map("national_payroll_rule_version_id") @db.Uuid
+  /// #346: its foreign key to authorized_payroll_component_inputs is in migration 0157.
+  authorizedPayrollComponentInputId String? @map("authorized_payroll_component_input_id") @db.Uuid
+
+  snapshot PayrollRuleSnapshot @relation(fields: [agencyId, payrollRuleSnapshotId], references: [agencyId, id], onDelete: Restrict, map: "payroll_rule_snapshot_items_snapshot_fkey")
+
+  @@unique([payrollRuleSnapshotId, nationalPayrollRuleVersionId], map: "payroll_rule_snapshot_items_rule_version_key")
+  @@unique([payrollRuleSnapshotId, authorizedPayrollComponentInputId], map: "payroll_rule_snapshot_items_authorized_input_key")
+  @@map("payroll_rule_snapshot_items")
+}
+
 // #340 Attendance Deficit Charges. Foreign keys, the successor and immutable
 // guards, and RLS live in migration 0155; the model keeps scalars only.
 
