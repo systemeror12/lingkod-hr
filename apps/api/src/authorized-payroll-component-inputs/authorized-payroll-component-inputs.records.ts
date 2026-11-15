@@ -47,7 +47,7 @@ export interface AuthorizedInputSummary {
   rowVersion: number;
 }
 
-const summarySelect = {
+export const summarySelect = {
   id: true,
   payComponentId: true,
   scope: true,
@@ -85,6 +85,13 @@ export async function readAuthorizedInput(
       'AUTHORIZED_INPUT_NOT_FOUND',
     );
   }
+  return toAuthorizedInputSummary(row);
+}
+
+/** Map a row read with `summarySelect` to its API shape. */
+export function toAuthorizedInputSummary(
+  row: Prisma.AuthorizedPayrollComponentInputGetPayload<{ select: typeof summarySelect }>,
+): AuthorizedInputSummary {
   return {
     ...row,
     scope: row.scope as AuthorizedInputScope,

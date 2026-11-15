@@ -1,4 +1,13 @@
-import { Body, Controller, HttpException, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpException,
+  Inject,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
@@ -12,6 +21,11 @@ import {
   type AuthorizedInputSummary,
 } from './authorized-payroll-component-inputs.records';
 import type { RecordAuthorizedInput } from './authorized-payroll-component-inputs.schemas';
+import {
+  ListAuthorizedPayrollComponentInputsService,
+  READ_PERMISSION,
+  type AuthorizedInputList,
+} from './list-authorized-payroll-component-inputs.service';
 import { RecordAuthorizedPayrollComponentInputService } from './record-authorized-payroll-component-input.service';
 
 @Controller('agencies')
@@ -22,7 +36,19 @@ export class AuthorizedPayrollComponentInputsController {
     private readonly recordService: RecordAuthorizedPayrollComponentInputService,
     @Inject(ApproveAuthorizedPayrollComponentInputService)
     private readonly approveService: ApproveAuthorizedPayrollComponentInputService,
+    @Inject(ListAuthorizedPayrollComponentInputsService)
+    private readonly listService: ListAuthorizedPayrollComponentInputsService,
   ) {}
+
+  @Get(':agencyId/authorized-payroll-component-inputs')
+  @RequirePermission(READ_PERMISSION)
+  async list(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<AuthorizedInputList> {
+    assertAgency(agencyId, context);
+    return translate(() => this.listService.execute(context), context);
+  }
 
   /** The service validates the body; a missing field is refused there. */
   @Post(':agencyId/authorized-payroll-component-inputs')
