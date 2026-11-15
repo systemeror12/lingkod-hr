@@ -12,6 +12,7 @@ import { PayrollCalculationJob } from './payroll-calculation.job';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PayrollSourcesReader } from './payroll-sources.reader';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
+import { CommutableRataCalculator } from './commutable-rata.calculator';
 
 @Module({
   imports: [CompensationBasisModule, AttendancePeriodsModule, AttendanceDeficitChargesModule],
@@ -21,6 +22,7 @@ import { YearEndBonusCalculator } from './year-end-bonus.calculator';
     GsisContributionCalculator,
     EmployeesCompensationCalculator,
     YearEndBonusCalculator,
+    CommutableRataCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

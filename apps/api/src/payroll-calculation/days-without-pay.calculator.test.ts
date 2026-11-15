@@ -91,6 +91,9 @@ const sourcesOf = (overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
   absenceFacts: [],
   unchargedDeficitFacts: [],
   valuationBases: [],
+  positionTitles: [],
+  periodAttendance: { coveredDates: [], workDates: [] },
+  officialVehicleAssignments: [],
   ...overrides,
 });
 

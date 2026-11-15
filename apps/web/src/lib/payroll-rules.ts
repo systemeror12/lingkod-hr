@@ -6,7 +6,8 @@ export type RuleKind =
   | 'AUTHORIZED_DEDUCTIONS'
   | 'GSIS_CONTRIBUTION'
   | 'EMPLOYEES_COMPENSATION'
-  | 'YEAR_END_BONUS_AND_CASH_GIFT';
+  | 'YEAR_END_BONUS_AND_CASH_GIFT'
+  | 'COMMUTABLE_RATA';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -45,6 +46,7 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   GSIS_CONTRIBUTION: 'GSIS contribution',
   EMPLOYEES_COMPENSATION: "Employees' Compensation",
   YEAR_END_BONUS_AND_CASH_GIFT: 'Year-end bonus and cash gift',
+  COMMUTABLE_RATA: 'Commutable RATA',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */

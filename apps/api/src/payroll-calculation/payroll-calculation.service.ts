@@ -29,6 +29,7 @@ import {
   YEAR_END_BONUS_COMPONENT_CODE,
   YearEndBonusCalculator,
 } from './year-end-bonus.calculator';
+import { CommutableRataCalculator } from './commutable-rata.calculator';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
@@ -91,9 +92,10 @@ export class PayrollCalculationService {
     @Inject(GsisContributionCalculator) gsis: GsisContributionCalculator,
     @Inject(EmployeesCompensationCalculator) employeesCompensation: EmployeesCompensationCalculator,
     @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
+    @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last.
-    this.calculators = [basicSalary, daysWithoutPay, gsis, employeesCompensation];
+    this.calculators = [basicSalary, daysWithoutPay, commutableRata, gsis, employeesCompensation];
     this.specialCalculators = [yearEndBonus];
   }
 
@@ -150,7 +152,12 @@ export class PayrollCalculationService {
           calculationVersion: job.calculationVersion,
         },
       },
-      select: { cutoffAt: true, items: { select: { nationalPayrollRuleVersionId: true } } },
+      select: {
+        cutoffAt: true,
+        items: {
+          select: { nationalPayrollRuleVersionId: true, agencyPayrollApplicabilityId: true },
+        },
+      },
     });
     if (!snapshot) throw new Error('The calculation version has no rule snapshot.');
     const snapshotRuleVersionIds = new Set(
@@ -195,6 +202,14 @@ export class PayrollCalculationService {
       transaction,
       job.agencyId,
       snapshot.cutoffAt,
+      {
+        runType: period.run_type,
+        periodFrom: context.periodFrom,
+        periodTo: context.periodTo,
+        agencyPayrollApplicabilityIds: snapshot.items.flatMap(
+          (item) => item.agencyPayrollApplicabilityId ?? [],
+        ),
+      },
     );
 
     const employees = await transaction.employee.findMany({

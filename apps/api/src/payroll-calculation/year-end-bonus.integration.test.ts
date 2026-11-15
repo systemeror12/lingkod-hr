@@ -19,6 +19,7 @@ import {
   GsisContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { CommutableRataCalculator } from './commutable-rata.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.test-fixtures';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
@@ -44,6 +45,7 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
     new GsisContributionCalculator(),
     new EmployeesCompensationCalculator(),
     new YearEndBonusCalculator(),
+    new CommutableRataCalculator(),
   );
   let admin: PrismaClient;
   let ruleId: string;

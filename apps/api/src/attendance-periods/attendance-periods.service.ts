@@ -43,6 +43,8 @@ import {
   type AttendancePeriodVersionDetail,
   type AttendancePeriodVersionState,
   type AttendancePeriodVersionSummary,
+  type AttendanceWorkDate,
+  type AttendanceWorkDatesByCutoff,
 } from './attendance-periods.types';
 
 const MAX_LIST_LIMIT = 200;
@@ -1554,6 +1556,92 @@ export class AttendancePeriodsService {
         priorMinutes: fact.priorMinutes,
         expectedMinutes: fact.attendanceDay.expectedMinutes,
       })),
+    };
+  }
+
+  /**
+   * Payroll's read of the Work Dates from `from` through `to`, inside the
+   * caller's Agency transaction: the dates of every Attendance Period with a
+   * publication at or before `cutoffAt`, and each Employee's current minutes
+   * by fact type on them. A fact's latest publication by then gives its value,
+   * so an adjustment's corrected minutes replace the original's.
+   */
+  async payrollWorkDatesByCutoffInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    cutoffAt: Date,
+    from: string,
+    to: string,
+  ): Promise<AttendanceWorkDatesByCutoff> {
+    const rangeFrom = new Date(`${from}T00:00:00.000Z`);
+    const rangeTo = new Date(`${to}T00:00:00.000Z`);
+    const publications = await transaction.attendancePayrollPublication.findMany({
+      where: {
+        agencyId,
+        publishedAt: { lte: cutoffAt },
+        attendancePeriodVersion: {
+          attendancePeriod: { dateFrom: { lte: rangeTo }, dateTo: { gte: rangeFrom } },
+        },
+      },
+      orderBy: [{ publishedAt: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        attendancePeriodVersion: {
+          select: { attendancePeriod: { select: { dateFrom: true, dateTo: true } } },
+        },
+      },
+    });
+    const order = new Map(publications.map((row, index) => [row.id, index]));
+    const facts = publications.length
+      ? await transaction.attendancePayrollFact.findMany({
+          where: {
+            agencyId,
+            attendancePayrollPublicationId: { in: [...order.keys()] },
+            workDate: { gte: rangeFrom, lte: rangeTo },
+          },
+          select: {
+            attendancePayrollPublicationId: true,
+            employeeId: true,
+            workDate: true,
+            factType: true,
+            stableSourceKey: true,
+            correctedMinutes: true,
+          },
+        })
+      : [];
+    const latest = new Map<string, (typeof facts)[number]>();
+    for (const fact of facts) {
+      const held = latest.get(fact.stableSourceKey);
+      if (
+        !held ||
+        order.get(fact.attendancePayrollPublicationId)! >
+          order.get(held.attendancePayrollPublicationId)!
+      ) {
+        latest.set(fact.stableSourceKey, fact);
+      }
+    }
+    const workDates = new Map<string, AttendanceWorkDate>();
+    for (const fact of latest.values()) {
+      const workDate = formatDate(fact.workDate);
+      const key = `${fact.employeeId}|${workDate}`;
+      const day = workDates.get(key) ?? { employeeId: fact.employeeId, workDate, minutes: {} };
+      const factType = fact.factType as AttendancePayrollFactType;
+      day.minutes[factType] = (day.minutes[factType] ?? 0) + fact.correctedMinutes;
+      workDates.set(key, day);
+    }
+    const coveredDates = new Map<string, { from: string; to: string }>();
+    for (const { attendancePeriodVersion } of publications) {
+      const period = attendancePeriodVersion.attendancePeriod;
+      const range = { from: formatDate(period.dateFrom), to: formatDate(period.dateTo) };
+      coveredDates.set(`${range.from}|${range.to}`, range);
+    }
+    return {
+      coveredDates: [...coveredDates.values()].sort((a, b) => (a.from < b.from ? -1 : 1)),
+      workDates: [...workDates.values()].sort((a, b) =>
+        a.employeeId === b.employeeId
+          ? a.workDate.localeCompare(b.workDate)
+          : a.employeeId.localeCompare(b.employeeId),
+      ),
     };
   }
 

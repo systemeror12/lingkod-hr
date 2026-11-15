@@ -222,6 +222,23 @@ export interface AttendancePayrollFactsByCutoff {
   absenceFacts: AttendanceAbsenceFact[];
 }
 
+/** One Employee's current minutes on one Work Date, by fact type. */
+export interface AttendanceWorkDate {
+  employeeId: string;
+  workDate: string;
+  minutes: Partial<Record<AttendancePayrollFactType, number>>;
+}
+
+/**
+ * What Payroll reads of a date range at a cutoff: the dates that published
+ * Attendance Periods cover, and each Employee's current minutes on them,
+ * where a later publication's value for a fact replaces an earlier one.
+ */
+export interface AttendanceWorkDatesByCutoff {
+  coveredDates: { from: string; to: string }[];
+  workDates: AttendanceWorkDate[];
+}
+
 export interface AttendancePeriodLockResult {
   version: AttendancePeriodVersionSummary;
   dtrDocumentIds: string[];

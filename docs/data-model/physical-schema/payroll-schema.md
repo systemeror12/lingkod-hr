@@ -46,7 +46,7 @@ CREATE TABLE national_payroll_rule_versions (
   rule_kind text NOT NULL
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
                          'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
-                         'YEAR_END_BONUS_AND_CASH_GIFT')),
+                         'YEAR_END_BONUS_AND_CASH_GIFT','COMMUTABLE_RATA')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -90,7 +90,12 @@ neither is loaded until its issuance is read (section 9).
 `YEAR_END_BONUS_AND_CASH_GIFT` is one fiscal year's year-end bonus and cash
 gift rule (FY 2026 GAA sec. 75); its parameters are `serviceFrom`, `asOf`,
 `minimumServiceMonths`, `bonusMonthsOfBasicSalary`, `cashGiftAmount`, and
-`grantsSeparatedBeforeAsOf` (section 8).
+`grantsSeparatedBeforeAsOf` (section 8). `COMMUTABLE_RATA` is one fiscal
+year's commutable RATA rule (FY 2026 GAA sec. 71; DBM NBC No. 593); its
+parameters are `ranks`, each with its `rank`, the eligible `positionTitles`, and
+the monthly `representationAllowance` and `transportationAllowance`, and
+`actualWorkSchedule`, NBC 593's bands of `minimumDays` and `share`, rising to a
+share of 1 (section 8).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -229,6 +234,13 @@ finalized Document Version of the Agency. A lookup for a component, date, and
 optional Employee answers applicable, not applicable, or expired, preferring
 the Employee's own record over the Agency-wide one. An unconditional component
 is applicable with no record.
+
+An official-vehicle assignment is an applicability record of the
+`OFFICIAL_VEHICLE_ASSIGNMENT` component for one named Employee, whose authority
+is the assignment's Document Version (#343). Migration 0169 adds it to the
+catalogue as conditional, so it takes a record, `INFORMATIONAL`, so it writes
+no line, and not GAA-revalidated. It still needs a funding reference, which an
+assignment does not have.
 
 Migration 0156 creates `authorized_payroll_component_inputs` (#346), and
 migration 0157 adds the `consumed_by_payroll_period_id` foreign key to
@@ -854,6 +866,31 @@ because no rule on record prorates the bonus and the record does not show a
 separation from government service rather than a transfer, a part-time cash
 gift, a casual daily wage bonus, an `INDETERMINATE` basis on October 31, and a
 schedule the snapshot did not freeze.
+
+The `REPRESENTATION_ALLOWANCE` and `TRANSPORTATION_ALLOWANCE` components, which
+migration 0169 adds with the `COMMUTABLE_RATA` rule kind (#343), pay
+commutable RATA in a regular period as two `EARNING` lines. An Employee is
+eligible when the Plantilla Position of their Service Segment carries a title
+the version lists under a rank, compared trimmed, with one space and in any
+case, and is paid that rank's monthly rates. Personnel supplies the title.
+`quantity` is the share NBC 593's schedule gives the month's days of actual
+work, `rate` the monthly rate, and `source_snapshot.taxTreatment` is
+`NON_TAXABLE` (RR No. 11-2018 sec. 2.79(B)). The days come from the Attendance
+facts published at or before the cutoff for the period's Work Dates, each
+fact at its latest publication: a Work Date the Employee worked with no posted
+leave, absence, approved absence, or CTO counts, and one wholly on those does
+not. An `OFFICIAL_VEHICLE_ASSIGNMENT` record covering every served date of the
+month leaves out the transportation line. A position whose title no rank
+lists, such as an officer-in-charge's own, gets no line; reimbursable RATA is
+an authorized input (#346). Every case no recorded rule settles blocks and
+writes no line: no version in effect on every date of the month, or one that
+changes in it; a rank that changes or ends in the month; a part-time or casual
+pay basis; days that could change the share whose count as actual work no
+rule settles, which are official business, travel, or training with no work
+that day, a day partly on leave, absent, or on CTO, and a date no published
+Attendance Period covers yet; a vehicle assignment for part of the month; and
+an amount that is not whole centavos. With no version in effect, every Employee
+blocks, since eligibility comes from the version.
 
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line

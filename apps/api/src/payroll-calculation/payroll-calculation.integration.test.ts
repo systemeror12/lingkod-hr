@@ -63,6 +63,8 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     new GsisContributionCalculator(),
     new EmployeesCompensationCalculator(),
   ] as const;
+  // RATA has its own test; here no RATA rule is loaded, so it would block everyone.
+  const noRata = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
     new BasicSalaryCalculator(),
@@ -70,6 +72,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     new DaysWithoutPayCalculator(),
     ...contributions,
     new YearEndBonusCalculator(),
+    noRata,
   );
   let admin: PrismaClient;
   let scheduleId: string;
@@ -531,6 +534,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       new DaysWithoutPayCalculator(),
       ...contributions,
       new YearEndBonusCalculator(),
+      noRata,
     );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({
