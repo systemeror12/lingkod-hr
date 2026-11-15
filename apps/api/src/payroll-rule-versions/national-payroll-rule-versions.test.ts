@@ -16,6 +16,7 @@ import {
   nationalPayrollRuleVersionFileSchema,
   sharesDateInEffect,
 } from './national-payroll-rule-versions';
+import { ReadNationalPayrollRuleVersionsService } from './read-national-payroll-rule-versions.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -280,6 +281,68 @@ describe.skipIf(!enabled)('National Payroll Rule Versions in PostgreSQL', () => 
     await expect(
       load(scheduleFile('INVALID', '2906-01-01', null, { parameters: { divisor: 22 } })),
     ).rejects.toBeInstanceOf(LoadRuleVersionError);
+  });
+
+  it('reads versions with authority, effectivity, supersession, and rates as the application', async () => {
+    const reader = new ReadNationalPayrollRuleVersionsService();
+    const context = {
+      requestId: 'rule-version-read',
+      userId: '00000000-0000-4000-8000-000000000002',
+      agencyId: '00000000-0000-4000-8000-000000000001',
+      membershipId: '00000000-0000-4000-8000-000000000003',
+      primaryOrganizationUnitId: null,
+      permissions: [{ code: 'payroll.compensation.read', scopePolicy: 'AGENCY' as const }],
+    };
+    const first = await load(
+      scheduleFile('READ-1', '2897-01-01', '2897-12-31', {
+        salaryGradeRates: [
+          { salaryGrade: 2, salaryStep: 1, monthlyRate: '2000' },
+          { salaryGrade: 1, salaryStep: 2, monthlyRate: '1010.5' },
+          { salaryGrade: 1, salaryStep: 1, monthlyRate: '1000' },
+        ],
+      }),
+    );
+    const second = await load(
+      scheduleFile('READ-2', '2897-07-01', '2897-12-31', { supersedesCode: `${prefix}READ-1` }),
+    );
+
+    const { versions } = await reader.list(context);
+    const byCode = new Map(versions.map((version) => [version.code, version]));
+    expect(byCode.get(`${prefix}READ-1`)).toEqual({
+      id: first.id,
+      ruleKind: 'SALARY_SCHEDULE',
+      code: `${prefix}READ-1`,
+      name: 'Test salary schedule READ-1',
+      issuingAuthority: 'Test authority',
+      issuanceReference: 'Test fixture, not an issuance',
+      sourceUrl: 'https://example.test/salary-schedule',
+      verifiedOn: '2026-11-15',
+      verifiedBy: 'LingkodHR test fixture',
+      effectiveFrom: '2897-01-01',
+      effectiveTo: '2897-12-31',
+      loadedAt: expect.any(String),
+      supersedes: null,
+      supersededBy: { id: second.id, code: `${prefix}READ-2`, effectiveFrom: '2897-07-01' },
+      salaryGradeRateCount: 3,
+    });
+    expect(byCode.get(`${prefix}READ-2`)).toMatchObject({
+      supersedes: { id: first.id, code: `${prefix}READ-1` },
+      supersededBy: null,
+    });
+    // Latest effective first within a kind.
+    const ids = versions.map((version) => version.id);
+    expect(ids.indexOf(second.id)).toBeLessThan(ids.indexOf(first.id));
+
+    const detail = await reader.get(context, first.id);
+    expect(detail.parameters).toEqual({});
+    expect(detail.salaryGradeRates).toEqual([
+      { salaryGrade: 1, salaryStep: 1, monthlyRate: '1000.0000' },
+      { salaryGrade: 1, salaryStep: 2, monthlyRate: '1010.5000' },
+      { salaryGrade: 2, salaryStep: 1, monthlyRate: '2000.0000' },
+    ]);
+    await expect(reader.get(context, '00000000-0000-4000-8000-000000000331')).rejects.toMatchObject(
+      { statusCode: 404, code: 'RULE_VERSION_NOT_FOUND' },
+    );
   });
 
   it('rejects every edit and delete of a loaded version and its rates', async () => {

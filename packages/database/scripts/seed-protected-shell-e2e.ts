@@ -9,6 +9,8 @@
  *   `E2E-MOVE-001`. `E2E-FOREIGN-RECORDS` and `FOREIGN-0001` back Agency isolation checks.
  * - `seedDtrFixture()`: its own Agency `E2E-DTR`, Employee `E2E-DTR-0001`, and Attendance Period
  *   `E2E-DTR-2026-01`, locked through route `DTR-PERIOD-LOCK`.
+ * - `seedSyntheticRuleVersions()`: platform-wide National Payroll Rule Versions `E2E-SYNTHETIC-*`,
+ *   in effect only in 2850 so no real schedule or test date meets them. Their rates are not rates.
  * - `seededUserEmails` and `seedLocalCredentials()`: each seeded User's local passphrase, TOTP
  *   factor, and Recovery Codes, as the README documents.
  */
@@ -1067,6 +1069,7 @@ async function seed(): Promise<void> {
     await transaction.authorizedPayrollComponentInput.deleteMany({
       where: { agencyId: agency.id },
     });
+    await transaction.agencyPayrollApplicability.deleteMany({ where: { agencyId: agency.id } });
     await transaction.salnComplianceRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.employeeDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsOutputArtifact.deleteMany({ where: { agencyId: agency.id } });
@@ -3019,6 +3022,84 @@ async function seed(): Promise<void> {
     });
   });
   await seedDtrFixture();
+  await seedSyntheticRuleVersions();
+}
+
+/**
+ * Synthetic National Payroll Rule Versions for the Payroll workspace E2E
+ * (payroll-compensation.spec.ts). They are not issuances and their amounts are not rates: their
+ * names say so. They are in effect only in 2850, clear of any real schedule and of the API tests'
+ * dates: after the 2800-2803 Payroll Periods, whose refusals name the latest schedule that ended
+ * before them, and before the open-ended versions the rule version tests load from 2904. A loaded
+ * version is immutable, so a run that finds the codes keeps them. Schedule B supersedes A from
+ * 1 July, so the E2E Employee's compensation basis crosses a schedule change in that month.
+ */
+async function seedSyntheticRuleVersions(): Promise<void> {
+  const common = {
+    issuingAuthority: 'LingkodHR E2E fixture, not an authority',
+    issuanceReference: 'Synthetic E2E fixture, not an issuance',
+    sourceUrl: 'https://example.test/synthetic-payroll-rule-version',
+    verifiedOn: new Date('2026-11-15'),
+    verifiedBy: 'LingkodHR E2E fixture',
+    effectiveTo: new Date('2850-12-31'),
+  };
+  const schedule = async (
+    code: string,
+    effectiveFrom: string,
+    supersedesRuleVersionId: string | null,
+    rates: [number, number, string][],
+  ) =>
+    prisma.$transaction(async (transaction) => {
+      const existing = await transaction.nationalPayrollRuleVersion.findUnique({
+        where: { code },
+        select: { id: true },
+      });
+      if (existing) return existing.id;
+      // The rates go in with their version: a loaded schedule accepts no later rate.
+      const version = await transaction.nationalPayrollRuleVersion.create({
+        data: {
+          ...common,
+          ruleKind: 'SALARY_SCHEDULE',
+          code,
+          name: `Synthetic E2E salary schedule ${code.slice(-1)}, not real rates`,
+          effectiveFrom: new Date(effectiveFrom),
+          supersedesRuleVersionId,
+        },
+        select: { id: true },
+      });
+      await transaction.salaryGradeRate.createMany({
+        data: rates.map(([salaryGrade, salaryStep, monthlyRate]) => ({
+          ruleVersionId: version.id,
+          salaryGrade,
+          salaryStep,
+          monthlyRate,
+        })),
+      });
+      return version.id;
+    });
+  const first = await schedule('E2E-SYNTHETIC-SCHEDULE-2850-A', '2850-01-01', null, [
+    [11, 1, '1100.0000'],
+    [24, 1, '2400.0000'],
+    [24, 2, '2410.0000'],
+  ]);
+  await schedule('E2E-SYNTHETIC-SCHEDULE-2850-B', '2850-07-01', first, [
+    [11, 1, '1150.0000'],
+    [24, 1, '2450.0000'],
+    [24, 2, '2410.0000'],
+  ]);
+  const deductions = 'E2E-SYNTHETIC-DEDUCTIONS-2850';
+  if (!(await prisma.nationalPayrollRuleVersion.findUnique({ where: { code: deductions } }))) {
+    await prisma.nationalPayrollRuleVersion.create({
+      data: {
+        ...common,
+        ruleKind: 'AUTHORIZED_DEDUCTIONS',
+        code: deductions,
+        name: 'Synthetic E2E authorized deductions, not a GAA provision',
+        effectiveFrom: new Date('2850-01-01'),
+        parameters: { allowedPayeeCategories: ['GSIS', 'HDMF'] },
+      },
+    });
+  }
 }
 
 /**

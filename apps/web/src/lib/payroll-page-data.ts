@@ -41,3 +41,29 @@ export async function loadEmployeeOptions(session: ActiveSession): Promise<Emplo
       }))
     : [];
 }
+
+/** A finalized Document Version a Payroll record may name as its authority. */
+export interface AuthorityOption {
+  id: string;
+  label: string;
+}
+
+interface LinkableVersion {
+  documentNo: string | null;
+  documentType: string;
+  version: { id: string; versionNo: number };
+}
+
+/**
+ * The Agency's Document Versions a recorder may name as an authority, or none when the membership
+ * cannot read Document evidence. The API still refuses one that is not finalized.
+ */
+export async function loadAuthorityOptions(session: ActiveSession): Promise<AuthorityOption[]> {
+  if (!hasPermission(session, 'documents.evidence.read')) return [];
+  const { value } = await getAgencyJson(session, '/documents/versions');
+  const documents = (value as { documents?: LinkableVersion[] } | null)?.documents ?? [];
+  return documents.map((document) => ({
+    id: document.version.id,
+    label: `${document.documentNo ?? document.documentType} · v${document.version.versionNo}`,
+  }));
+}

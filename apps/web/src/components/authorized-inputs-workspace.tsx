@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent, type ReactNode } from 'react';
-import type { EmployeeOption } from '../lib/payroll-page-data';
+import type { AuthorityOption, EmployeeOption } from '../lib/payroll-page-data';
 import {
   authorizedInputStatusDisplay,
   decimalLabel,
@@ -58,12 +58,6 @@ export interface AuthorizedInputList {
   inputs: AuthorizedInput[];
   /** The catalogue components that accept an Authorized Payroll Component Input. */
   payComponents: { id: string; code: string; name: string; category: string }[];
-}
-
-/** A finalized Document Version the recorder may name as the authority. */
-export interface AuthorityOption {
-  id: string;
-  label: string;
 }
 
 const scopeLabel: Record<Scope, string> = { AGENCY: 'Whole Agency', EMPLOYEE: 'One Employee' };

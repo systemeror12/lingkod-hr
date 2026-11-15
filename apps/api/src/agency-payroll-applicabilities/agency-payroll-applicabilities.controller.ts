@@ -1,4 +1,13 @@
-import { Body, Controller, HttpException, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpException,
+  Inject,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
@@ -15,6 +24,10 @@ import type {
   RecordApplicability,
 } from './agency-payroll-applicabilities.schemas';
 import { EndAgencyPayrollApplicabilityService } from './end-agency-payroll-applicability.service';
+import {
+  ListAgencyPayrollApplicabilitiesService,
+  type ApplicabilityList,
+} from './list-agency-payroll-applicabilities.service';
 import { RecordAgencyPayrollApplicabilityService } from './record-agency-payroll-applicability.service';
 
 @Controller('agencies')
@@ -25,7 +38,23 @@ export class AgencyPayrollApplicabilitiesController {
     private readonly recordService: RecordAgencyPayrollApplicabilityService,
     @Inject(EndAgencyPayrollApplicabilityService)
     private readonly endService: EndAgencyPayrollApplicabilityService,
+    @Inject(ListAgencyPayrollApplicabilitiesService)
+    private readonly listService: ListAgencyPayrollApplicabilitiesService,
   ) {}
+
+  /**
+   * Readable with either `payroll.compensation.read` or
+   * `payroll.compensation.manage`, so the guard cannot require one; the
+   * service checks that one of them is held Agency-wide.
+   */
+  @Get(':agencyId/agency-payroll-applicabilities')
+  async list(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<ApplicabilityList> {
+    assertAgency(agencyId, context);
+    return translate(() => this.listService.execute(context), context);
+  }
 
   /** The services validate the body; a missing field is refused there. */
   @Post(':agencyId/agency-payroll-applicabilities')

@@ -127,3 +127,18 @@ it('orders every stage along the personnel lifecycle', () => {
   expect(groups.map(({ stage }) => stage)).toEqual(lifecycleStages);
   expect(groups.at(-1)!.destinations.map(({ href }) => href)).toEqual(['/users-access']);
 });
+
+it('shows Payroll compensation pages to readers, and Applicability to its managers too', () => {
+  const hrefs = (permissions: readonly string[]) =>
+    authorizedDestinations(session('payroll_preparer', permissions))
+      .filter(({ stage }) => stage === 'Payroll')
+      .map(({ href }) => href);
+
+  expect(hrefs(['payroll.compensation.read'])).toEqual([
+    '/compensation',
+    '/payroll-applicability',
+    '/salary-rules',
+  ]);
+  expect(hrefs(['payroll.compensation.manage'])).toEqual(['/payroll-applicability']);
+  expect(hrefs([])).toEqual([]);
+});
