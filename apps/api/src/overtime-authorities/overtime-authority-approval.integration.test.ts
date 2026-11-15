@@ -2,10 +2,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { createAdminClient } from '../attendance-test-fixtures';
 import { requestDatabaseContext } from '../database-context';
-import {
-  OVERTIME_PAY_UNAVAILABLE_REASON,
-  type EligibilitySnapshot,
-} from './overtime-authorities.types';
+import type { CompensationMethod, EligibilitySnapshot } from './overtime-authorities.types';
 import {
   addMember,
   APPROVER_GRANTS,
@@ -101,15 +98,16 @@ async function setup(
   ]);
   const attestations = attestationsFor(home.member.id, home.chief.id);
 
-  const prepare = async (authorityNo: string) => {
+  // A proposed COC draft carries no funding reference, since COC uses no funds.
+  const prepare = async (authorityNo: string, method: CompensationMethod = 'OVERTIME_PAY') => {
     const draft = await all.create.execute(preparer, {
       authorityNo,
       requestingUnitId: home.division.id,
       purpose: 'Year-end closing of accounts.',
       workDateFrom: '2030-06-01',
       workDateTo: '2030-06-30',
-      compensationMethod: 'OVERTIME_PAY',
-      fundingReference: 'GAA 2030 MOOE',
+      compensationMethod: method,
+      fundingReference: method === 'OVERTIME_PAY' ? 'GAA 2030 MOOE' : null,
       employees: [
         { employeeId: home.member.id, authorizedHours: '16' },
         { employeeId: home.chief.id, authorizedHours: '8' },
@@ -118,8 +116,8 @@ async function setup(
     await all.submit.execute(preparer, draft.id);
     return draft;
   };
-  const prepareReviewed = async (authorityNo: string) => {
-    const draft = await prepare(authorityNo);
+  const prepareReviewed = async (authorityNo: string, method?: CompensationMethod) => {
+    const draft = await prepare(authorityNo, method);
     await all.review.execute(reviewer, draft.id, { attestations });
     const request = await admin.approvalRequest.findFirstOrThrow({
       where: { agencyId: home.agency.id, subjectType: 'OVERTIME_AUTHORITY', subjectId: draft.id },
@@ -372,7 +370,7 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
-  'approves as COC, refusing self-approval and overtime pay, and snapshots eligibility',
+  'approves as COC, refusing self-approval, and snapshots eligibility',
   async () => {
     const f = await setup('APR');
     try {
@@ -390,26 +388,6 @@ it.skipIf(!enabled)(
         status: 403,
         body: { error: { code: 'OVERTIME_AUTHORITY_SEGREGATION_REQUIRED' } },
       });
-      // Overtime pay waits for Payroll (#347).
-      expect(
-        await errorOf(
-          f.controller.approve(
-            f.home.agency.id,
-            draft.id,
-            { compensationMethod: 'OVERTIME_PAY' },
-            f.approver,
-          ),
-        ),
-      ).toMatchObject({
-        status: 409,
-        body: {
-          error: {
-            code: 'OVERTIME_AUTHORITY_OVERTIME_PAY_BLOCKED_BY_PAYROLL',
-            message: expect.stringContaining(OVERTIME_PAY_UNAVAILABLE_REASON),
-          },
-        },
-      });
-
       const approved = await f.controller.approve(
         f.home.agency.id,
         draft.id,
@@ -473,6 +451,48 @@ it.skipIf(!enabled)(
   60_000,
 );
 
+it.skipIf(!enabled)(
+  'approves overtime pay with a funding reference and refuses it without one',
+  async () => {
+    const f = await setup('PAY');
+    try {
+      const unfunded = await f.prepareReviewed('OT-PAY-1', 'COC');
+      expect(
+        await errorOf(
+          f.controller.approve(
+            f.home.agency.id,
+            unfunded.draft.id,
+            { compensationMethod: 'OVERTIME_PAY' },
+            f.approver,
+          ),
+        ),
+      ).toMatchObject({
+        status: 422,
+        body: { error: { code: 'OVERTIME_AUTHORITY_FUNDING_REQUIRED' } },
+      });
+      expect(
+        await f.admin.overtimeAuthority.findUniqueOrThrow({ where: { id: unfunded.draft.id } }),
+      ).toMatchObject({ status: 'FOR_REVIEW', compensationMethod: 'COC' });
+
+      const funded = await f.prepareReviewed('OT-PAY-2');
+      expect(
+        await f.controller.approve(
+          f.home.agency.id,
+          funded.draft.id,
+          { compensationMethod: 'OVERTIME_PAY' },
+          f.approver,
+        ),
+      ).toMatchObject({
+        status: 'APPROVED',
+        compensationMethod: 'OVERTIME_PAY',
+        fundingReference: 'GAA 2030 MOOE',
+      });
+    } finally {
+      await f.teardown();
+    }
+  },
+  60_000,
+);
 it.skipIf(!enabled)(
   'gives an approved authority no edit path',
   async () => {

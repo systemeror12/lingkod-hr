@@ -1959,7 +1959,7 @@ export function LeaveApplicationWorkspace({
                               void review(
                                 'posting',
                                 {},
-                                'The Leave Application was posted to Leave and Attendance.',
+                                'The Leave Application was posted.',
                                 'The Leave Application could not be posted.',
                               )
                             }
@@ -2039,7 +2039,9 @@ export function LeaveApplicationWorkspace({
                         <p className="m-0 text-small" key={effect.effectKey}>
                           {effect.effectKind === 'LEDGER_ENTRY'
                             ? 'Leave Ledger Entry'
-                            : 'Attendance input'}{' '}
+                            : effect.effectKind === 'PAYROLL_INPUT'
+                              ? 'Payroll Input'
+                              : 'Attendance input'}{' '}
                           · {effect.ownerRecordId}
                         </p>
                       ))}

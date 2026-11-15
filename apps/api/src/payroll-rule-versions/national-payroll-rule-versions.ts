@@ -6,7 +6,33 @@ import { z } from 'zod';
  * (ADR 0013). Each rule kind has one calculator in code; a version carries
  * only that kind's typed parameters, validated here at load.
  */
-export type NationalPayrollRuleKind = 'SALARY_SCHEDULE';
+export type NationalPayrollRuleKind = 'SALARY_SCHEDULE' | 'AUTHORIZED_DEDUCTIONS';
+
+/**
+ * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
+ * PhilHealth, GSIS and HDMF; (b) the National Government under a final and
+ * executory COA decision; and items (c) to (g), the employee associations,
+ * provident funds, government financial institutions, licensed insurers, and
+ * thrift and rural banks (docs/research/salary-overpayment-recovery-authorities.md
+ * R6; research/official-personnel-compensation-boundaries.md §6). A version
+ * lists the ones its GAA allows; a later GAA that names another category
+ * needs a code change here.
+ */
+export const deductionPayeeCategories = [
+  'BIR',
+  'PHILHEALTH',
+  'GSIS',
+  'HDMF',
+  'NATIONAL_GOVERNMENT_COA_DECISION',
+  'EMPLOYEE_COOPERATIVE_OR_ASSOCIATION',
+  'EMPLOYEE_PROVIDENT_FUND',
+  'GOVERNMENT_FINANCIAL_INSTITUTION',
+  'LICENSED_INSURER',
+  'THRIFT_OR_RURAL_BANK',
+] as const;
+
+export type DeductionPayeeCategory = (typeof deductionPayeeCategories)[number];
+export const deductionPayeeCategorySchema = z.enum(deductionPayeeCategories);
 
 const text = (maximum: number) => z.string().trim().min(1).max(maximum);
 const isoDate = z.iso.date();
@@ -58,9 +84,29 @@ const salaryScheduleFile = z
     { message: 'A Salary Grade and step appear once.', path: ['salaryGradeRates'] },
   );
 
+/** The GAA's authorized-deduction rule. It holds the allowed payee categories. */
+const authorizedDeductionsParameters = z
+  .object({
+    allowedPayeeCategories: z
+      .array(deductionPayeeCategorySchema)
+      .min(1)
+      .refine((categories) => new Set(categories).size === categories.length, {
+        message: 'A payee category appears once.',
+      }),
+  })
+  .strict();
+
+const authorizedDeductionsFile = z
+  .object({
+    ruleKind: z.literal('AUTHORIZED_DEDUCTIONS'),
+    ...ruleVersionFields,
+    parameters: authorizedDeductionsParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
-  .discriminatedUnion('ruleKind', [salaryScheduleFile])
+  .discriminatedUnion('ruleKind', [salaryScheduleFile, authorizedDeductionsFile])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',
     path: ['effectiveTo'],
@@ -162,6 +208,28 @@ type SalaryGradeRateReader = Pick<
 >;
 
 /**
+ * The one version of a kind in effect on `on`, or null. It never falls back to
+ * an older or superseded version.
+ */
+async function findRuleVersionInEffect(
+  database: RuleVersionReader,
+  ruleKind: NationalPayrollRuleKind,
+  on: string,
+): Promise<RuleVersionWithEffectivity | null> {
+  const onDate = new Date(`${on}T00:00:00.000Z`);
+  const candidates = await listRuleVersionEffectivity(database, ruleKind, {
+    effectiveFrom: { lte: onDate },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: onDate } }],
+  });
+  const inEffect = candidates.filter((version) => isInEffectOn(version, on));
+  if (inEffect.length > 1) {
+    // The load refuses this; reaching it means the table was written around the load.
+    throw new Error(`More than one ${ruleKind} version is in effect on ${on}.`);
+  }
+  return inEffect[0] ?? null;
+}
+
+/**
  * The monthly rate of a Salary Grade and step under the salary schedule in
  * effect on `on`. With no schedule in effect it returns `MISSING_RULE`, and a
  * schedule without the grade and step returns `MISSING_RATE`: it never falls
@@ -172,17 +240,7 @@ export async function findSalaryGradeRate(
   input: { salaryGrade: number; salaryStep: number; on: string },
 ): Promise<SalaryGradeRateLookup> {
   const on = isoDate.parse(input.on);
-  const onDate = new Date(`${on}T00:00:00.000Z`);
-  const candidates = await listRuleVersionEffectivity(database, 'SALARY_SCHEDULE', {
-    effectiveFrom: { lte: onDate },
-    OR: [{ effectiveTo: null }, { effectiveTo: { gte: onDate } }],
-  });
-  const inEffect = candidates.filter((version) => isInEffectOn(version, on));
-  if (inEffect.length > 1) {
-    // The load refuses this; reaching it means the table was written around the load.
-    throw new Error(`More than one salary schedule is in effect on ${on}.`);
-  }
-  const version = inEffect[0];
+  const version = await findRuleVersionInEffect(database, 'SALARY_SCHEDULE', on);
   if (!version) return { status: 'MISSING_RULE', ruleKind: 'SALARY_SCHEDULE', on };
 
   const { salaryGrade, salaryStep } = input;
@@ -201,4 +259,36 @@ export async function findSalaryGradeRate(
   return rate
     ? { status: 'FOUND', ...found, monthlyRate: rate.monthlyRate }
     : { status: 'MISSING_RATE', ...found };
+}
+
+export type AuthorizedDeductionsLookup =
+  | {
+      status: 'FOUND';
+      ruleVersionId: string;
+      ruleVersionCode: string;
+      allowedPayeeCategories: DeductionPayeeCategory[];
+    }
+  | { status: 'MISSING_RULE'; ruleKind: 'AUTHORIZED_DEDUCTIONS'; on: string };
+
+/**
+ * The payee categories the authorized-deductions version in effect on `on`
+ * allows. With no version in effect it returns `MISSING_RULE`.
+ */
+export async function findAuthorizedDeductions(
+  database: RuleVersionReader,
+  input: { on: string },
+): Promise<AuthorizedDeductionsLookup> {
+  const on = isoDate.parse(input.on);
+  const version = await findRuleVersionInEffect(database, 'AUTHORIZED_DEDUCTIONS', on);
+  if (!version) return { status: 'MISSING_RULE', ruleKind: 'AUTHORIZED_DEDUCTIONS', on };
+  const { parameters } = await database.nationalPayrollRuleVersion.findUniqueOrThrow({
+    where: { id: version.id },
+    select: { parameters: true },
+  });
+  return {
+    status: 'FOUND',
+    ruleVersionId: version.id,
+    ruleVersionCode: version.code,
+    allowedPayeeCategories: authorizedDeductionsParameters.parse(parameters).allowedPayeeCategories,
+  };
 }

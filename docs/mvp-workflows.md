@@ -422,7 +422,9 @@ evidenced route provides otherwise.
 
 Posting is a separate atomic Leave-owned command. It uses stable effect keys and
 owning application services to create every required ledger, Attendance, and
-Payroll effect. An authoritative failure rolls back the command and leaves the
+Payroll effect. Each leave-without-pay line becomes one Payroll Input carrying
+its day quantity on each Work Date. An authoritative failure, including a
+rejected or retryable Payroll answer, rolls back the command and leaves the
 application approved for retry. Notifications and document delivery use the
 outbox after commit.
 
@@ -594,7 +596,7 @@ flowchart TD
     I --> J{Certifier certifies?}
     J -- No --> N[Record reason; NOT_CERTIFIED]
     J -- Yes --> K{Method}
-    K -- Overtime pay --> L[Payroll Input, refused until Payroll supports it]
+    K -- Overtime pay --> L[Same transaction sends Certified Overtime Hours to Payroll as a Payroll Input]
     K -- COC --> M1[HR prepares monthly Certificate of COC Earned]
     M1 --> M2[Approving Official approves certificate]
     M2 --> M[COC module credits COC, applying ratio, caps, and validity]

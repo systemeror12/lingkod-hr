@@ -269,20 +269,12 @@ test('prepares and approves a Certificate of COC Earned and shows the COC balanc
     }),
   );
 
-  // Overtime pay shows as unavailable, in the API's words.
+  // An overtime-pay authority is paid through Payroll, not by certificate.
   const ui = preparer.page;
-  const payReason = (
-    await apiBody<{
-      authorities: Array<{ authorityNo: string; overtimePayUnavailableReason: string }>;
-    }>(
-      await ui.request.get(`${agencyBase}/overtime-authorities`, {
-        headers: { origin: new URL(ui.url()).origin },
-      }),
-    )
-  ).authorities.find((row) => row.authorityNo === authorityNo.pay)?.overtimePayUnavailableReason;
-  expect(payReason).toContain('Payroll');
   await openCompensation(ui, authorityNo.pay);
-  await expect(ui.getByRole('note')).toHaveText(`Overtime pay is unavailable. ${payReason}`);
+  await expect(ui.getByRole('note')).toHaveText(
+    'This authority compensates by overtime pay. Certifying service sends its Certified Overtime Hours to Payroll; Certificates of COC Earned do not cover it.',
+  );
   await expect(ui.getByRole('button', { name: /Prepare certificate/ })).toHaveCount(0);
 
   // Before any certificate, the API reads a zero balance with no account.

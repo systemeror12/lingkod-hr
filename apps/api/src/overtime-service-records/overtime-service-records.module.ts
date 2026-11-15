@@ -5,11 +5,12 @@ import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
   overtimeAuthorityAuditWriter,
 } from '../overtime-authorities/overtime-authorities.audit';
+import { PayrollInputsModule } from '../payroll-inputs/payroll-inputs.module';
 import { OvertimeServiceRecordsController } from './overtime-service-records.controller';
 import { OvertimeServiceRecordsService } from './overtime-service-records.service';
 
 @Module({
-  imports: [AuthModule, AttendanceLockedDaysModule],
+  imports: [AuthModule, AttendanceLockedDaysModule, PayrollInputsModule],
   controllers: [OvertimeServiceRecordsController],
   providers: [
     OvertimeServiceRecordsService,

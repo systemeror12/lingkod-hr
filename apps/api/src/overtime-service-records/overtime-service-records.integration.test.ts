@@ -9,6 +9,7 @@ import {
   lockAttendancePeriod,
 } from '../attendance-test-fixtures';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 import {
   APPROVER_GRANTS,
   addMember,
@@ -32,6 +33,7 @@ import {
 const service = new OvertimeServiceRecordsService(
   overtimeAuthorityAuditWriter,
   new AttendanceLockedDaysService(),
+  new PayrollInputsService(),
 );
 const controller = new OvertimeServiceRecordsController(service);
 

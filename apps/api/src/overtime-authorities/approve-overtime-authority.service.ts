@@ -11,7 +11,6 @@ import {
   type OvertimeAuthorityAuditWriter,
 } from './overtime-authorities.audit';
 import {
-  OVERTIME_PAY_UNAVAILABLE_REASON,
   OvertimeAuthorityServiceError,
   type OvertimeAuthorityApproveInput,
   type OvertimeAuthoritySummary,
@@ -56,11 +55,12 @@ export class ApproveOvertimeAuthorityService {
         );
         assertStatus(current, 'FOR_REVIEW', 'approved');
         await assertNotPreparer(transaction, context, authorityId);
-        if (input.compensationMethod === 'OVERTIME_PAY') {
+        // COC uses no funds, so only overtime pay needs the funding reference.
+        if (input.compensationMethod === 'OVERTIME_PAY' && !current.fundingReference) {
           throw new OvertimeAuthorityServiceError(
-            `${OVERTIME_PAY_UNAVAILABLE_REASON} Approve it as COC or reject it.`,
-            409,
-            'OVERTIME_AUTHORITY_OVERTIME_PAY_BLOCKED_BY_PAYROLL',
+            'Overtime pay needs a funding reference, and this authority has none. Approve it as COC or reject it.',
+            422,
+            'OVERTIME_AUTHORITY_FUNDING_REQUIRED',
           );
         }
         await assertDraftValid(transaction, context.agencyId, current);

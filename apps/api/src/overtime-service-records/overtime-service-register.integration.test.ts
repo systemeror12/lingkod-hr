@@ -8,6 +8,7 @@ import {
   manilaDate,
 } from '../attendance-test-fixtures';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 import { enabled, errorOf } from '../overtime-authorities/overtime-authority-test-fixtures';
 import { OvertimeServiceRecordsController } from './overtime-service-records.controller';
 import { OvertimeServiceRecordsService } from './overtime-service-records.service';
@@ -20,6 +21,7 @@ import {
 const service = new OvertimeServiceRecordsService(
   overtimeAuthorityAuditWriter,
   new AttendanceLockedDaysService(),
+  new PayrollInputsService(),
 );
 const controller = new OvertimeServiceRecordsController(service);
 

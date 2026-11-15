@@ -16,6 +16,7 @@ import { GovernmentIdentifiersModule } from './government-identifiers/government
 import { PersonnelActionsModule } from './personnel-actions/personnel-actions.module';
 import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
 import { PayrollInputsModule } from './payroll-inputs/payroll-inputs.module';
+import { DeductionObligationsModule } from './deduction-obligations/deduction-obligations.module';
 import { PayrollPeriodsModule } from './payroll-periods/payroll-periods.module';
 import { AuthorizedPayrollComponentInputsModule } from './authorized-payroll-component-inputs/authorized-payroll-component-inputs.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
@@ -62,6 +63,7 @@ import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/att
     PersonnelActionsModule,
     PayrollBankAccountsModule,
     PayrollInputsModule,
+    DeductionObligationsModule,
     PayrollPeriodsModule,
     AuthorizedPayrollComponentInputsModule,
     SalnComplianceModule,

@@ -750,9 +750,7 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
   expect(approverPosting.status()).toBe(403);
   await certifier.page.goto(`/leave-applications?record=${postingApplicationId}`);
   await certifierDetail.getByRole('button', { name: 'Post leave' }).click();
-  await expect(certifierDetail).toContainText(
-    'The Leave Application was posted to Leave and Attendance.',
-  );
+  await expect(certifierDetail).toContainText('The Leave Application was posted.');
   await expect(certifierDetail).toContainText('POSTED');
   const effects = certifierDetail.getByRole('region', { name: 'Posting effects' });
   await expect(effects).toContainText('Leave Ledger Entry');

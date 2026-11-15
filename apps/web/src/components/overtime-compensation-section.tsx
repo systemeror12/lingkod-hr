@@ -98,7 +98,6 @@ export function OvertimeCompensationSection({
     id: string;
     status: string;
     compensationMethod: 'COC' | 'OVERTIME_PAY';
-    overtimePayUnavailableReason: string | null;
     workDateFrom: string;
     workDateTo: string;
     employees: Array<{ employeeId: string; employeeNumber: string; employeeName: string }>;
@@ -203,11 +202,10 @@ export function OvertimeCompensationSection({
 
   if (!coc) {
     return (
-      <StateSurface compact label="Overtime pay unavailable">
+      <StateSurface compact label="Overtime pay">
         <p className="m-0" role="note">
-          {authority.overtimePayUnavailableReason
-            ? `Overtime pay is unavailable. ${authority.overtimePayUnavailableReason}`
-            : 'This authority compensates by overtime pay, which Certificates of COC Earned do not cover.'}
+          This authority compensates by overtime pay. Certifying service sends its Certified
+          Overtime Hours to Payroll; Certificates of COC Earned do not cover it.
         </p>
       </StateSurface>
     );

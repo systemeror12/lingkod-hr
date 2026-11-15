@@ -1,5 +1,6 @@
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import type { Prisma } from '@prisma/client';
 import { expect, it } from 'vitest';
 import {
   approvalAuditWriter,
@@ -23,7 +24,9 @@ import {
   manilaInstant,
   type AttendanceWorkflowFixture,
 } from '../attendance-test-fixtures';
+import { requestDatabaseContext } from '../database-context';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
+import { PayrollInputsService } from '../payroll-inputs/payroll-inputs.service';
 import {
   cleanup,
   context,
@@ -32,7 +35,10 @@ import {
   errorOf,
 } from '../overtime-authorities/overtime-authority-test-fixtures';
 import { OvertimeServiceRecordsController } from './overtime-service-records.controller';
-import { OvertimeServiceRecordsService } from './overtime-service-records.service';
+import {
+  OvertimeServiceRecordsService,
+  overtimePayInput,
+} from './overtime-service-records.service';
 import {
   approvedAuthority,
   cleanupAttendanceOvertime,
@@ -43,6 +49,7 @@ import {
 const service = new OvertimeServiceRecordsService(
   overtimeAuthorityAuditWriter,
   new AttendanceLockedDaysService(),
+  new PayrollInputsService(),
 );
 const controller = new OvertimeServiceRecordsController(service);
 
@@ -59,7 +66,11 @@ const OVERTIME_EVENTS = [
  * Date, so a test can reach facts a fixture cannot easily lock. Everything else,
  * including the certification write and its locks, stays real.
  */
-function serviceReading(fixture: AttendanceWorkflowFixture, facts: Partial<LockedAttendanceDay>) {
+function serviceReading(
+  fixture: AttendanceWorkflowFixture,
+  facts: Partial<LockedAttendanceDay>,
+  payrollInputs = new PayrollInputsService(),
+) {
   const lockedDays = {
     readInTransaction: async (
       _transaction: unknown,
@@ -82,7 +93,7 @@ function serviceReading(fixture: AttendanceWorkflowFixture, facts: Partial<Locke
       },
     ],
   } as unknown as AttendanceLockedDaysService;
-  return new OvertimeServiceRecordsService(overtimeAuthorityAuditWriter, lockedDays);
+  return new OvertimeServiceRecordsService(overtimeAuthorityAuditWriter, lockedDays, payrollInputs);
 }
 
 /** The fixture's HR Administrator, who is not the Employee, holding every service permission. */
@@ -100,7 +111,11 @@ function hrOf(fixture: AttendanceWorkflowFixture): RequestContext {
   };
 }
 
-function authorityFor(fixture: AttendanceWorkflowFixture, authorizedHours?: string) {
+function authorityFor(
+  fixture: AttendanceWorkflowFixture,
+  authorizedHours?: string,
+  compensationMethod?: 'COC' | 'OVERTIME_PAY',
+) {
   const dateFrom = manilaDate(-29);
   return approvedAuthority(fixture.admin, {
     agencyId: fixture.agencyId,
@@ -111,6 +126,7 @@ function authorityFor(fixture: AttendanceWorkflowFixture, authorizedHours?: stri
     workDateTo: manilaDate(0),
     employeeIds: [fixture.employeeId],
     ...(authorizedHours ? { authorizedHours } : {}),
+    ...(compensationMethod ? { compensationMethod } : {}),
   });
 }
 
@@ -735,6 +751,146 @@ it.skipIf(!enabled)(
       ).toBe(0);
     } finally {
       await cleanup(admin, [home.agency.id, foreign.agency.id], suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'sends certified overtime pay to Payroll in the same transaction, and certifies nothing Payroll refuses',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, agencyId, employeeId, workDate } = fixture;
+    try {
+      const authorityId = await authorityFor(fixture, undefined, 'OVERTIME_PAY');
+      const hr = hrOf(fixture);
+      const payroll = new PayrollInputsService();
+      // Payroll cannot accept the first submission yet, then accepts as usual.
+      let unavailable = true;
+      const flaky = {
+        acceptInTransaction: (
+          transaction: Prisma.TransactionClient,
+          submission: Parameters<PayrollInputsService['acceptInTransaction']>[1],
+        ) => {
+          if (!unavailable) return payroll.acceptInTransaction(transaction, submission);
+          unavailable = false;
+          return Promise.resolve({
+            outcome: 'RETRYABLE_FAILURE' as const,
+            code: 'PAYROLL_TEST_UNAVAILABLE',
+            reason: 'Payroll cannot accept inputs right now.',
+          });
+        },
+      } as unknown as PayrollInputsService;
+      const reading = serviceReading(fixture, { holidayClassification: 'REGULAR_HOLIDAY' }, flaky);
+      const dates = [-1, -2, -3, -4]
+        .map((days) => manilaDate(days))
+        .filter((date) => date !== workDate)
+        .slice(0, 3);
+      const submitted = [];
+      for (const date of dates) {
+        const recorded = await recordFor(reading, fixture, authorityId, date);
+        submitted.push(await reading.submit(hr, recorded.id));
+      }
+      const [retried, conflicting, duplicate] = submitted;
+      if (!retried || !conflicting || !duplicate) throw new Error('Expected three Work Dates.');
+      const inputsFor = (recordId: string) =>
+        admin.payrollInput.findMany({ where: { agencyId, sourceId: recordId } });
+      const certifiedEvents = (recordId: string) =>
+        admin.auditEvent.findMany({
+          where: { entityId: recordId, action: 'OVERTIME_SERVICE_CERTIFIED' },
+        });
+      const expectUncertified = async (recordId: string) => {
+        expect(
+          await admin.overtimeServiceRecord.findUniqueOrThrow({ where: { id: recordId } }),
+        ).toMatchObject({
+          status: 'FOR_CERTIFICATION',
+          certifiedMinutes: null,
+          certifiedByMembershipId: null,
+          certifiedAt: null,
+        });
+        expect(await certifiedEvents(recordId)).toHaveLength(0);
+      };
+
+      // A retryable answer certifies nothing and says so; the retry certifies once.
+      await expect(reading.certify(hr, retried.id, { certifiedMinutes: 45 })).rejects.toMatchObject(
+        {
+          statusCode: 503,
+          code: 'OVERTIME_SERVICE_PAYROLL_INPUT_RETRYABLE',
+          message: `Payroll did not accept the overtime pay for ${retried.workDate} (PAYROLL_TEST_UNAVAILABLE): Payroll cannot accept inputs right now. The service was not certified; certify it again later.`,
+        },
+      );
+      await expectUncertified(retried.id);
+      expect(await inputsFor(retried.id)).toHaveLength(0);
+      expect(await reading.certify(hr, retried.id, { certifiedMinutes: 45 })).toMatchObject({
+        status: 'CERTIFIED',
+        compensationMethod: 'OVERTIME_PAY',
+        certifiedMinutes: 45,
+      });
+      const [sent] = await inputsFor(retried.id);
+      expect(await inputsFor(retried.id)).toHaveLength(1);
+      // Quantities, classification, and provenance; never an amount.
+      expect(sent).toMatchObject({
+        employeeId,
+        sourceModule: 'OVERTIME',
+        inputKind: 'OVERTIME_HOURS',
+        sourceKey: `overtime-service-record:${retried.id}`,
+        sourceType: 'OvertimeServiceRecord',
+        sourceId: retried.id,
+        effectiveDate: new Date(`${retried.workDate}T00:00:00.000Z`),
+        amount: null,
+        status: 'PENDING',
+        consumedByPayrollPeriodId: null,
+        payloadSnapshot: {
+          quantityUnit: 'MINUTE',
+          certifiedMinutes: 45,
+          dayClassification: 'REGULAR_HOLIDAY',
+          workDate: retried.workDate,
+          overtimeAuthorityId: authorityId,
+          authorityNo: retried.authorityNo,
+          sourceAttendanceDayId: fixture.attendanceDayId,
+          attendancePeriodVersionId: fixture.periodId,
+        },
+      });
+      expect(sent?.quantity?.toFixed(4)).toBe('45.0000');
+      expect((await certifiedEvents(retried.id))[0]?.metadata).toMatchObject({
+        payrollInputId: sent?.id,
+      });
+
+      // The record's source key already names another payload: Payroll rejects
+      // it, and the certification rolls back with Payroll's reason.
+      const post = (submission: Parameters<PayrollInputsService['acceptInTransaction']>[1]) =>
+        withDatabaseContext(requestDatabaseContext(hr), (transaction) =>
+          payroll.acceptInTransaction(transaction, submission),
+        );
+      expect(await post(overtimePayInput(conflicting, 1, fixture.periodId))).toMatchObject({
+        outcome: 'ACCEPTED',
+      });
+      await expect(
+        reading.certify(hr, conflicting.id, { certifiedMinutes: 45 }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'OVERTIME_SERVICE_PAYROLL_INPUT_REJECTED',
+        message: `Payroll did not accept the overtime pay for ${conflicting.workDate} (PAYROLL_INPUT_SOURCE_KEY_CONFLICT): The source key already names a Payroll Input with a different payload. The service was not certified.`,
+      });
+      await expectUncertified(conflicting.id);
+      const kept = await inputsFor(conflicting.id);
+      expect(kept.map((input) => input.quantity?.toFixed(4))).toEqual(['1.0000']);
+
+      // The same key with the same payload is the input already sent, so
+      // certification goes ahead and reuses it.
+      const existing = await post(overtimePayInput(duplicate, 30, fixture.periodId));
+      expect(existing).toMatchObject({ outcome: 'ACCEPTED' });
+      expect(await reading.certify(hr, duplicate.id, { certifiedMinutes: 30 })).toMatchObject({
+        status: 'CERTIFIED',
+      });
+      const reused = await inputsFor(duplicate.id);
+      expect(reused).toHaveLength(1);
+      expect('payrollInputId' in existing && existing.payrollInputId).toBe(reused[0]?.id);
+      expect((await certifiedEvents(duplicate.id))[0]?.metadata).toMatchObject({
+        payrollInputId: reused[0]?.id,
+      });
+    } finally {
+      await cleanupAttendanceOvertime(fixture);
       await admin.$disconnect();
     }
   },
