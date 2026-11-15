@@ -6,11 +6,30 @@ import {
   type CompensationBasis,
   CompensationBasisService,
 } from '../compensation-basis/compensation-basis.service';
+import { readPositionTitlesInTransaction } from '../personnel-salary-facts/position-titles';
 import { leaveWithoutPayDays } from './days-without-pay.calculator';
-import type { EmployeePayrollSources, PendingPayrollInput } from './payroll-calculator';
+import type {
+  EmployeePayrollSources,
+  OfficialVehicleAssignment,
+  PendingPayrollInput,
+} from './payroll-calculator';
+import { OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE } from './commutable-rata.calculator';
 
 /** The input kinds a calculator takes; any other kind stays for its own calculator. */
 const SALARY_INPUT_KINDS = ['LEAVE_WITHOUT_PAY', 'UNPAID_DEFICIT_REMAINDER'];
+
+/** The period a calculation covers and the Agency Payroll Applicabilities its snapshot froze. */
+export interface CalculationScope {
+  runType: string;
+  periodFrom: string;
+  periodTo: string;
+  agencyPayrollApplicabilityIds: readonly string[];
+}
+
+type MonthSources = Pick<
+  EmployeePayrollSources,
+  'positionTitles' | 'periodAttendance' | 'officialVehicleAssignments'
+>;
 
 /** What one calculation takes at its cutoff, for every Employee of the Agency. */
 export interface AgencyPayrollSources {
@@ -24,6 +43,11 @@ export interface AgencyPayrollSources {
  * consumed, and Leave's report of deficit facts owed a charge in those
  * publications (ADR 0012). Attendance is read only through Attendance's
  * application service, and deficit charges only through Leave's.
+ *
+ * For a regular period's month it also reads the position titles Personnel
+ * records, the Attendance published for its Work Dates by the cutoff, and the
+ * official-vehicle assignments the snapshot froze, which commutable RATA takes.
+ * A special period pays no RATA, so it reads none of them.
  */
 @Injectable()
 export class PayrollSourcesReader {
@@ -38,6 +62,7 @@ export class PayrollSourcesReader {
     transaction: Prisma.TransactionClient,
     agencyId: string,
     cutoffAt: Date,
+    scope: CalculationScope,
   ): Promise<AgencyPayrollSources> {
     const inputs = await transaction.payrollInput.findMany({
       where: {
@@ -89,6 +114,11 @@ export class PayrollSourcesReader {
       }
     }
 
+    const month =
+      scope.runType === 'REGULAR'
+        ? await this.monthSourcesInTransaction(transaction, agencyId, cutoffAt, scope)
+        : null;
+
     return {
       forEmployee: (employeeId) => ({
         payrollInputs: inputs
@@ -106,8 +136,86 @@ export class PayrollSourcesReader {
           (fact) => fact.employeeId === employeeId && !consumed.has(fact.id),
         ),
         unchargedDeficitFacts: uncharged.get(employeeId) ?? [],
+        ...(month?.(employeeId) ?? {
+          positionTitles: [],
+          periodAttendance: { coveredDates: [], workDates: [] },
+          officialVehicleAssignments: [],
+        }),
       }),
     };
+  }
+
+  /** RATA's sources for a regular period's month, grouped by Employee. */
+  private async monthSourcesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    cutoffAt: Date,
+    scope: CalculationScope,
+  ) {
+    const positionTitles = await readPositionTitlesInTransaction(
+      transaction,
+      agencyId,
+      scope.periodFrom,
+      scope.periodTo,
+    );
+    const attendance = await this.attendance.payrollWorkDatesByCutoffInTransaction(
+      transaction,
+      agencyId,
+      cutoffAt,
+      scope.periodFrom,
+      scope.periodTo,
+    );
+    const vehicleComponent = await transaction.payComponent.findUniqueOrThrow({
+      where: { code: OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE },
+      select: { id: true },
+    });
+    const vehicleAssignments = await transaction.agencyPayrollApplicability.findMany({
+      where: {
+        agencyId,
+        id: { in: [...scope.agencyPayrollApplicabilityIds] },
+        payComponentId: vehicleComponent.id,
+      },
+      orderBy: { effectiveFrom: 'asc' },
+      select: {
+        id: true,
+        scope: true,
+        employeeId: true,
+        authorityDocumentVersionId: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+      },
+    });
+    const assignments = vehicleAssignments.map((row) => ({
+      employeeId: row.employeeId,
+      assignment: {
+        agencyPayrollApplicabilityId: row.id,
+        scope: row.scope as OfficialVehicleAssignment['scope'],
+        authorityDocumentVersionId: row.authorityDocumentVersionId,
+        effectiveFrom: row.effectiveFrom.toISOString().slice(0, 10),
+        effectiveTo: row.effectiveTo?.toISOString().slice(0, 10) ?? null,
+      } satisfies OfficialVehicleAssignment,
+    }));
+    const agencyWide = assignments.filter(({ employeeId }) => employeeId === null);
+
+    const byEmployee = new Map<string, MonthSources>();
+    const of = (employeeId: string) => {
+      let sources = byEmployee.get(employeeId);
+      if (!sources) {
+        sources = {
+          positionTitles: [],
+          periodAttendance: { coveredDates: attendance.coveredDates, workDates: [] },
+          officialVehicleAssignments: agencyWide.map(({ assignment }) => assignment),
+        };
+        byEmployee.set(employeeId, sources);
+      }
+      return sources;
+    };
+    for (const stretch of positionTitles) of(stretch.employeeId).positionTitles.push(stretch);
+    for (const day of attendance.workDates) of(day.employeeId).periodAttendance.workDates.push(day);
+    for (const { employeeId, assignment } of assignments) {
+      if (employeeId) of(employeeId).officialVehicleAssignments.push(assignment);
+    }
+    return (employeeId: string) => of(employeeId);
   }
 
   /**

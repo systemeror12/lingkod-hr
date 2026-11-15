@@ -7,7 +7,8 @@ export type RuleKind =
   | 'GSIS_CONTRIBUTION'
   | 'EMPLOYEES_COMPENSATION'
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
-  | 'PERA';
+  | 'PERA'
+  | 'COMMUTABLE_RATA';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -47,6 +48,7 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   EMPLOYEES_COMPENSATION: "Employees' Compensation",
   YEAR_END_BONUS_AND_CASH_GIFT: 'Year-end bonus and cash gift',
   PERA: 'PERA',
+  COMMUTABLE_RATA: 'Commutable RATA',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */

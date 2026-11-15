@@ -1,10 +1,14 @@
 import type { UnchargedDeficitFact } from '../attendance-deficit-charges/attendance-deficit-charges.service';
-import type { AttendanceAbsenceFact } from '../attendance-periods/attendance-periods.types';
+import type {
+  AttendanceAbsenceFact,
+  AttendanceWorkDatesByCutoff,
+} from '../attendance-periods/attendance-periods.types';
 import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
 import type {
   NationalPayrollRuleKind,
   RuleVersionWithEffectivity,
 } from '../payroll-rule-versions/national-payroll-rule-versions';
+import type { PositionTitleStretch } from '../personnel-salary-facts/position-titles';
 
 /**
  * A National Payroll Rule Version as the snapshot froze it. Its successor
@@ -52,6 +56,21 @@ export interface EmployeePayrollSources {
   /** Leave's report of the Employee's deficit facts owed a charge (ADR 0012). */
   unchargedDeficitFacts: (UnchargedDeficitFact & { publicationId: string })[];
   valuationBases: CompensationBasis[];
+  /** The titles of the Plantilla Positions the Employee holds in the period, from Personnel. */
+  positionTitles: PositionTitleStretch[];
+  /** The period's Work Dates in Attendance published by the cutoff, for this Employee. */
+  periodAttendance: AttendanceWorkDatesByCutoff;
+  /** The snapshot's official-vehicle assignments for this Employee or the whole Agency (#618). */
+  officialVehicleAssignments: OfficialVehicleAssignment[];
+}
+
+/** An Agency Payroll Applicability of `OFFICIAL_VEHICLE_ASSIGNMENT` the rule snapshot froze. */
+export interface OfficialVehicleAssignment {
+  agencyPayrollApplicabilityId: string;
+  scope: 'AGENCY' | 'EMPLOYEE';
+  authorityDocumentVersionId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
 }
 
 export type LineType = 'EARNING' | 'DEDUCTION' | 'EMPLOYER_SHARE' | 'INFORMATIONAL';

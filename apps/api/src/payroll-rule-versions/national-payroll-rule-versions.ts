@@ -12,7 +12,8 @@ export type NationalPayrollRuleKind =
   | 'GSIS_CONTRIBUTION'
   | 'EMPLOYEES_COMPENSATION'
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
-  | 'PERA';
+  | 'PERA'
+  | 'COMMUTABLE_RATA';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -231,6 +232,72 @@ const peraFile = z
   })
   .strict();
 
+/** A share of a monthly rate, as a fraction up to 1: `0.25` is 25%, `1` is all of it. */
+const scheduleShare = z
+  .string()
+  .regex(/^(0\.\d{1,4}|1(\.0{1,4})?)$/, 'A share is a fraction up to 1, such as 0.25 or 1.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'A share is greater than zero.');
+
+/** How a version and the calculator compare position titles: trimmed, one space, any case. */
+export const normalizedPositionTitle = (title: string) =>
+  title.trim().replace(/\s+/g, ' ').toUpperCase();
+
+/**
+ * One fiscal year's commutable RATA rule (FY 2026 GAA sec. 71; DBM NBC No.
+ * 593; research native-payroll-component-authorities.md, RATA row). `ranks`
+ * holds the GAA's monthly representation and transportation allowance for
+ * each rank, with the Plantilla Position titles the reviewed file finds
+ * eligible at that rank. `actualWorkSchedule` is NBC 593's schedule: a month
+ * with at least `minimumDays` days of actual work pays `share` of each
+ * allowance, so its bands rise in both days and share and end at 1.
+ */
+export const commutableRataParameters = z
+  .object({
+    ranks: z
+      .array(
+        z
+          .object({
+            rank: text(255),
+            positionTitles: z.array(text(255)).min(1),
+            representationAllowance: pesoAmount,
+            transportationAllowance: pesoAmount,
+          })
+          .strict(),
+      )
+      .min(1)
+      .refine(
+        (ranks) => {
+          const titles = ranks.flatMap((rank) => rank.positionTitles.map(normalizedPositionTitle));
+          return new Set(titles).size === titles.length;
+        },
+        { message: 'A position title belongs to one rank, once.' },
+      ),
+    actualWorkSchedule: z
+      .array(z.object({ minimumDays: z.int().positive(), share: scheduleShare }).strict())
+      .min(1)
+      .refine(
+        (bands) =>
+          bands.every(
+            (band, index) =>
+              index === 0 ||
+              (band.minimumDays > bands[index - 1]!.minimumDays &&
+                new Prisma.Decimal(band.share).gt(bands[index - 1]!.share)),
+          ) && new Prisma.Decimal(bands.at(-1)!.share).equals(1),
+        { message: 'Bands rise in minimumDays and share, and the last pays a share of 1.' },
+      ),
+  })
+  .strict();
+
+export type CommutableRataParameters = z.infer<typeof commutableRataParameters>;
+
+const commutableRataFile = z
+  .object({
+    ruleKind: z.literal('COMMUTABLE_RATA'),
+    ...ruleVersionFields,
+    parameters: commutableRataParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
   .discriminatedUnion('ruleKind', [
@@ -240,6 +307,7 @@ export const nationalPayrollRuleVersionFileSchema = z
     employeesCompensationFile,
     yearEndBonusAndCashGiftFile,
     peraFile,
+    commutableRataFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',
