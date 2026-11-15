@@ -258,7 +258,9 @@ owning services and copies neither here (#329, #619).
 An input belongs to no period when accepted. After acceptance a trigger allows
 only the status change and `consumed_by_payroll_period_id`, which the
 finalization transaction sets. Consumed inputs are immutable, apart from the
-return to `PENDING` when their payroll is voided.
+return to `PENDING` when their payroll is voided. The migration that creates
+`payroll_periods` adds the foreign key on `consumed_by_payroll_period_id`, which
+until then has only its CHECK (#338).
 
 A source module corrects an effect it posted by asking Payroll to withdraw the
 input, in its own transaction and idempotently by a stable correction key

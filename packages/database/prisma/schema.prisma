@@ -2077,6 +2077,7 @@ model Employee {
   attendancePayrollFacts AttendancePayrollFact[]  @relation("AttendancePayrollFactEmployee")
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
+  payrollInputs          PayrollInput[]          @relation("PayrollInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
   mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
   overtimeAuthorityCoverage      OvertimeAuthorityEmployee[]     @relation("OvertimeAuthorityEmployeeEmployee")
@@ -5535,4 +5536,36 @@ model PayComponent {
   reportingCategory      String? @map("reporting_category")
 
   @@map("pay_components")
+}
+
+/// A Payroll Input (payroll-schema.md §4): one idempotent effect that Leave or
+/// Overtime posts through the Payroll inbox. Only status and its consuming
+/// period change after acceptance.
+model PayrollInput {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  employeeId                 String   @map("employee_id") @db.Uuid
+  sourceModule               String   @map("source_module")
+  inputKind                  String   @map("input_kind")
+  sourceKey                  String   @map("source_key") @db.Citext
+  sourceType                 String   @map("source_type")
+  sourceId                   String   @map("source_id") @db.Uuid
+  effectiveDate              DateTime @map("effective_date") @db.Date
+  quantity                   Decimal? @db.Decimal(12, 4)
+  amount                     Decimal? @db.Decimal(19, 4)
+  status                     String
+  payloadSnapshot            Json     @map("payload_snapshot")
+  payloadHash                String   @map("payload_hash")
+  acceptedAt                 DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+  consumedByPayrollPeriodId  String?  @map("consumed_by_payroll_period_id") @db.Uuid
+  replacesPayrollInputId     String?  @map("replaces_payroll_input_id") @db.Uuid
+
+  employee     Employee       @relation("PayrollInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  replaces     PayrollInput?  @relation("PayrollInputReplacement", fields: [agencyId, replacesPayrollInputId], references: [agencyId, id], onDelete: Restrict)
+  replacements PayrollInput[] @relation("PayrollInputReplacement")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, sourceModule, sourceKey])
+  @@index([agencyId, sourceModule, status, acceptedAt], map: "payroll_inputs_source_status_idx")
+  @@map("payroll_inputs")
 }
