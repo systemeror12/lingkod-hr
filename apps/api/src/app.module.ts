@@ -19,6 +19,7 @@ import { PayrollInputsModule } from './payroll-inputs/payroll-inputs.module';
 import { DeductionObligationsModule } from './deduction-obligations/deduction-obligations.module';
 import { PayrollPeriodsModule } from './payroll-periods/payroll-periods.module';
 import { AuthorizedPayrollComponentInputsModule } from './authorized-payroll-component-inputs/authorized-payroll-component-inputs.module';
+import { AgencyPayrollApplicabilitiesModule } from './agency-payroll-applicabilities/agency-payroll-applicabilities.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
@@ -66,6 +67,7 @@ import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/att
     DeductionObligationsModule,
     PayrollPeriodsModule,
     AuthorizedPayrollComponentInputsModule,
+    AgencyPayrollApplicabilitiesModule,
     SalnComplianceModule,
     ServiceRecordsModule,
     ApprovalModule,

@@ -205,6 +205,14 @@ GAA-revalidated component, an `effective_to` no later than 31 December of the
 year of `effective_from`. After insert, only `effective_to` may move, and only
 earlier.
 
+Migration 0159 creates `agency_payroll_applicabilities` (#618). The record and
+end services each need `payroll.compensation.manage` for the whole Agency and
+write an Audit Event; ending takes a reason for that event. The authority is a
+finalized Document Version of the Agency. A lookup for a component, date, and
+optional Employee answers applicable, not applicable, or expired, preferring
+the Employee's own record over the Agency-wide one. An unconditional component
+is applicable with no record.
+
 Migration 0156 creates `authorized_payroll_component_inputs` (#346), and
 migration 0157 adds the `consumed_by_payroll_period_id` foreign key to
 `payroll_periods`. Marking a `ONCE` input consumed is #626.
@@ -520,8 +528,9 @@ covers and never refuses. `SALARY_SCHEDULE` is the only kind yet.
 Migration 0157 adds `authorized_payroll_component_input_id` with its foreign
 key and UNIQUE, and replaces `payroll_rule_snapshot_items_one_source_check`
 with one that counts it beside `national_payroll_rule_version_id` (#346).
-`agency_payroll_applicability_id` (#618) arrives with its own migration, which
-adds the column, its foreign key and UNIQUE, and replaces the CHECK again.
+Migration 0159 adds `agency_payroll_applicability_id` with its foreign key and
+UNIQUE, and replaces the CHECK again (#618). The snapshot references every
+applicability record of the Agency whose effective period overlaps the period.
 
 ---
 

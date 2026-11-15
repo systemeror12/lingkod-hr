@@ -1804,7 +1804,9 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 `payroll.periods.void` requests a void, and `payroll.periods.approve_void`
 approves or declines it. `payroll.inputs.adjust` opens a Payroll Adjustment for
 recalculation, where it enters no amount, and records or approves an Authorized
-Payroll Component Input (#346). `payroll.deductions.manage`, held Agency-wide,
+Payroll Component Input (#346). `payroll.compensation.manage`, held
+Agency-wide, records and ends an Agency Payroll Applicability (#618).
+`payroll.deductions.manage`, held Agency-wide,
 records, changes, and ends an Employee's Deduction Obligations
 (payroll-schema.md §9). There is no `payroll.payslips.supersede`:
 the system supersedes a Payslip when its payroll is voided (§5.21).
