@@ -65,3 +65,22 @@ export const payrollPeriodCalculationStartSchema = z.object({ rowVersion }).stri
 export type PayrollPeriodCalculationStartInput = z.input<
   typeof payrollPeriodCalculationStartSchema
 >;
+
+const calculationHash = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/, 'Enter the 64-character calculation hash.');
+
+/**
+ * Certify the calculation version, and its hash, that the HR Certifier
+ * reviewed. Both bind the certification, so no row version is needed.
+ */
+export const payrollPeriodCertifySchema = z
+  .object({ calculationVersion: z.number().int().positive(), calculationHash })
+  .strict();
+
+export type PayrollPeriodCertifyInput = z.input<typeof payrollPeriodCertifySchema>;
+
+/** Revoke a certification, or return a period for correction, with a reason. */
+export const payrollPeriodReasonedCommandSchema = z.object({ reason, rowVersion }).strict();
+
+export type PayrollPeriodReasonedCommandInput = z.input<typeof payrollPeriodReasonedCommandSchema>;

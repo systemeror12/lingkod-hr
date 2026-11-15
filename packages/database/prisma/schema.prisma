@@ -5645,11 +5645,12 @@ model PayrollPeriod {
   voidedAt                    DateTime? @map("voided_at") @db.Timestamptz(6)
   rowVersion                  Int       @default(1) @map("row_version")
 
-  components    PayrollPeriodComponent[]
-  actors        PayrollPeriodActor[]
-  ruleSnapshots PayrollRuleSnapshot[]
-  employees     PayrollEmployee[]
-  exceptions    PayrollException[]
+  components     PayrollPeriodComponent[]
+  actors         PayrollPeriodActor[]
+  ruleSnapshots  PayrollRuleSnapshot[]
+  employees      PayrollEmployee[]
+  exceptions     PayrollException[]
+  certifications PayrollCertification[]
 
   @@unique([agencyId, code])
   @@unique([agencyId, id])
@@ -5680,6 +5681,26 @@ model PayrollPeriodActor {
 
   @@id([payrollPeriodId, membershipId])
   @@map("payroll_period_actors")
+}
+
+/// An HR certification of one calculation version and its hash; revoked, never deleted (#334).
+model PayrollCertification {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  payrollPeriodId         String    @map("payroll_period_id") @db.Uuid
+  calculationVersion      Int       @map("calculation_version")
+  calculationHash         String    @map("calculation_hash")
+  certifiedByMembershipId String    @map("certified_by_membership_id") @db.Uuid
+  certifiedAt             DateTime  @default(now()) @map("certified_at") @db.Timestamptz(6)
+  revokedByMembershipId   String?   @map("revoked_by_membership_id") @db.Uuid
+  revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revocationReason        String?   @map("revocation_reason")
+
+  payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_certifications_period_fkey")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, payrollPeriodId], map: "payroll_certifications_period_idx")
+  @@map("payroll_certifications")
 }
 
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).

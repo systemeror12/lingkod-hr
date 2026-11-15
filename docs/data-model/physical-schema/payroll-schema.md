@@ -556,6 +556,53 @@ refuses when the stored function differs. The primary key makes the rule hold
 under concurrency, and a trigger rejects every `UPDATE` and `DELETE`. The
 functions and their commands are in `hris-controls.md` §5.20.
 
+```sql
+CREATE TABLE payroll_certifications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  calculation_version integer NOT NULL CHECK (calculation_version > 0),
+  calculation_hash text NOT NULL CHECK (calculation_hash ~ '^[0-9a-f]{64}$'),
+  certified_by_membership_id uuid NOT NULL,
+  certified_at timestamptz NOT NULL DEFAULT now(),
+  revoked_by_membership_id uuid,
+  revoked_at timestamptz,
+  revocation_reason text,
+  CHECK (
+    (revoked_at IS NULL AND revoked_by_membership_id IS NULL AND revocation_reason IS NULL)
+    OR (revoked_at IS NOT NULL AND revoked_by_membership_id IS NOT NULL
+        AND btrim(revocation_reason) <> '')
+  ),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, certified_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, revoked_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX payroll_certifications_one_current_key
+  ON payroll_certifications (payroll_period_id)
+  WHERE revoked_at IS NULL;
+```
+
+A Payroll Certification records that the HR Certifier certified one
+calculation version and its calculation hash (#334). The certification's
+`calculation_hash` is the SHA-256 of the canonical JSON of that version's
+Payroll Employee Results, each as its `employee_id` and `calculation_hash`, in
+Employee order. The certify command takes the version and hash the certifier
+reviewed and refuses either when it is no longer the period's, and refuses
+while the version has an open blocking exception.
+
+A period has at most one certification in force. Revoking it records the
+actor, time, and reason on the row, once; a trigger admits a row only while
+its period is `FOR_REVIEW` at the version it names, lets an `UPDATE` change
+only the revocation columns from empty, and rejects every `DELETE`. Migration
+0168 creates the table. The Certified Payroll Review Export (#636) binds the
+certification in force, and revoking it supersedes that export and revokes its
+checkpoint reviews.
+
 ---
 
 ## 6. Rule Snapshots

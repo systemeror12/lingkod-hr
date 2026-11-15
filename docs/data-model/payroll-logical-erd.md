@@ -642,6 +642,34 @@ The one payroll function each person has acted in on one Payroll Period (#330)
 
 **Deletion behavior:** Immutable.
 
+## `payroll_certifications`
+
+Payroll Certification: the HR Certifier's certification of one calculation
+version of a Payroll Period (#334)
+
+| Column                     | Logical type | Null? | Key / rule            | Description                                                        |
+| -------------------------- | ------------ | ----- | --------------------- | ------------------------------------------------------------------ |
+| id                         | uuid         | No    | PK                    | Certification                                                      |
+| agency_id                  | uuid         | No    | FK agencies           | Tenant                                                             |
+| payroll_period_id          | uuid         | No    | FK payroll_periods    | Period                                                             |
+| calculation_version        | integer      | No    |                       | The version certified                                              |
+| calculation_hash           | text         | No    | SHA-256 hex           | The hash of that version's Payroll Employee Results                |
+| certified_by_membership_id | uuid         | No    | FK agency_memberships | The HR Certifier                                                   |
+| certified_at               | datetime     | No    |                       | When it was certified                                              |
+| revoked_by_membership_id   | uuid         | Yes   | FK agency_memberships | Who revoked it                                                     |
+| revoked_at                 | datetime     | Yes   |                       | When it was revoked                                                |
+| revocation_reason          | text         | Yes   |                       | Why it was revoked; required with the other two revocation columns |
+
+**Constraints and indexes**
+
+- At most one certification per period has no `revoked_at`.
+- A certification is written while its period is `FOR_REVIEW` at the version
+  it names. Certifying is refused while that version has an open blocking
+  exception, or when the version or hash the certifier reviewed is no longer
+  the period's.
+
+**Deletion behavior:** Retain. Only the revocation is recorded, once.
+
 ## `payroll_lines`
 
 Payroll Line: one calculated earning, deduction, employer share, or

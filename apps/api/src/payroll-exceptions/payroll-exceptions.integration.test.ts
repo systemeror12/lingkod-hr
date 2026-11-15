@@ -297,14 +297,17 @@ describe.skipIf(!enabled)('Payroll checks and exception commands in PostgreSQL',
     });
     expect([steady, hired]).not.toContain(variance!.employeeId);
 
-    // Migration 0167 grants the read to the baseline roles that exist (controls §6.10).
+    // Migrations 0167 and 0168 grant the read to the baseline roles (controls §6.10).
     const grants = await admin.rolePermission.findMany({
       where: { permission: { code: 'payroll.periods.read' }, role: { agencyId: null } },
       select: { scopePolicy: true, role: { select: { code: true } } },
     });
     expect(grants.map((grant) => `${grant.role.code}:${grant.scopePolicy}`).sort()).toEqual([
+      'accounting_reviewer:AGENCY',
       'budget_officer:AGENCY',
+      'hr_certifier:AGENCY',
       'internal_auditor:AGENCY',
+      'payroll_approver:AGENCY',
       'payroll_preparer:AGENCY',
     ]);
 

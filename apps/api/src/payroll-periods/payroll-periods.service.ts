@@ -4,6 +4,7 @@ import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import type { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
+import { payrollCalculationHash } from '../payroll-calculation/calculation-hash';
 import { SPECIAL_PERIOD_COMPONENT_CODES } from '../payroll-calculation/payroll-calculation.service';
 import { claimPayrollFunction } from './payroll-period-actors';
 import { freezePayrollRuleSnapshot } from './payroll-rule-snapshots';
@@ -33,6 +34,25 @@ export interface PayrollPeriodSummary {
   rowVersion: number;
 }
 
+/** The Payroll Certification in force on a period. */
+export interface PayrollCertificationSummary {
+  id: string;
+  calculationVersion: number;
+  calculationHash: string;
+  certifiedByMembershipId: string;
+  certifiedAt: string;
+}
+
+/**
+ * A period as a reviewer reads it: its summary, the hash of its current
+ * calculation version (null before the first calculation completes and while
+ * one runs), and the certification in force.
+ */
+export interface PayrollPeriodDetail extends PayrollPeriodSummary {
+  calculationHash: string | null;
+  certification: PayrollCertificationSummary | null;
+}
+
 export class PayrollPeriodsServiceError extends Error {
   constructor(
     message: string,
@@ -44,7 +64,7 @@ export class PayrollPeriodsServiceError extends Error {
   }
 }
 
-const summarySelect = {
+export const summarySelect = {
   id: true,
   code: true,
   runType: true,
@@ -77,10 +97,55 @@ export function isOneCalendarMonth(periodFrom: string, periodTo: string): boolea
  * Payroll Period commands of the Payroll Preparer (hris-controls.md §5.20):
  * create a period, move its cutoff, cancel it, and start its calculation
  * while it is DRAFT. Each command claims the actor's PREPARATION function on
- * the period.
+ * the period. The review commands are `PayrollCertificationService`'s.
  */
 @Injectable()
 export class PayrollPeriodsService {
+  /** Read one period with what certifying it binds (`payroll.periods.read`). */
+  async read(context: RequestContext, periodId: string): Promise<PayrollPeriodDetail> {
+    if (!holdsAgencyWide(context, 'payroll.periods.read')) {
+      throw new PayrollPeriodsServiceError(
+        'Reading a Payroll Period needs the payroll.periods.read permission for the whole Agency.',
+        403,
+        'PAYROLL_PERIOD_READ_FORBIDDEN',
+      );
+    }
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const period = await transaction.payrollPeriod.findUnique({
+        where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
+        select: summarySelect,
+      });
+      if (!period) {
+        throw new PayrollPeriodsServiceError(
+          'The Payroll Period could not be found.',
+          404,
+          'PAYROLL_PERIOD_NOT_FOUND',
+        );
+      }
+      const certification = await transaction.payrollCertification.findFirst({
+        where: { agencyId: context.agencyId, payrollPeriodId: periodId, revokedAt: null },
+        select: {
+          id: true,
+          calculationVersion: true,
+          calculationHash: true,
+          certifiedByMembershipId: true,
+          certifiedAt: true,
+        },
+      });
+      const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
+      return {
+        ...toSummary(period),
+        calculationHash: calculated
+          ? await readCalculationHash(transaction, context, periodId, period.calculationVersion)
+          : null,
+        certification: certification && {
+          ...certification,
+          certifiedAt: certification.certifiedAt.toISOString(),
+        },
+      };
+    });
+  }
+
   async create(context: RequestContext, rawInput: unknown): Promise<PayrollPeriodSummary> {
     requireCreatePermission(context);
     const input = parse(payrollPeriodCreateSchema, rawInput);
@@ -328,7 +393,10 @@ function requireCreatePermission(context: RequestContext): void {
   }
 }
 
-function parse<Schema extends z.ZodType>(schema: Schema, rawInput: unknown): z.output<Schema> {
+export function parse<Schema extends z.ZodType>(
+  schema: Schema,
+  rawInput: unknown,
+): z.output<Schema> {
   const parsed = schema.safeParse(rawInput);
   if (parsed.success) return parsed.data;
   const issue = parsed.error.issues[0];
@@ -448,7 +516,25 @@ async function updateDraft(
   return toSummary(period);
 }
 
-function stale(): PayrollPeriodsServiceError {
+/**
+ * The hash a certification binds for one calculation version: see
+ * `payrollCalculationHash`. A version with no Payroll Employee Result hashes
+ * the empty list.
+ */
+export async function readCalculationHash(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  payrollPeriodId: string,
+  calculationVersion: number,
+): Promise<string> {
+  const results = await transaction.payrollEmployee.findMany({
+    where: { agencyId: context.agencyId, payrollPeriodId, calculationVersion },
+    select: { employeeId: true, calculationHash: true },
+  });
+  return payrollCalculationHash(results);
+}
+
+export function stale(): PayrollPeriodsServiceError {
   return new PayrollPeriodsServiceError(
     'The Payroll Period changed since it was read; reload it and try again.',
     409,
@@ -476,7 +562,7 @@ async function claimPreparation(
   }
 }
 
-function auditEvent(
+export function auditEvent(
   context: RequestContext,
   event: {
     action: string;
@@ -510,7 +596,7 @@ function auditData(summary: PayrollPeriodSummary): Prisma.InputJsonObject {
   };
 }
 
-function toSummary(row: PeriodRow): PayrollPeriodSummary {
+export function toSummary(row: PeriodRow): PayrollPeriodSummary {
   return {
     id: row.id,
     code: row.code,
