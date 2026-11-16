@@ -5837,6 +5837,27 @@ model ContributionLine {
   @@map("contribution_lines")
 }
 
+/// An issuer's validated billing of one Employee's contribution for a regular
+/// Payroll Period (#349). Insert-only: a correction names the row it
+/// supersedes. Migration 0175 holds its foreign keys, guard, and RLS.
+model ContributionBilling {
+  id                              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String   @map("agency_id") @db.Uuid
+  payrollPeriodId                 String   @map("payroll_period_id") @db.Uuid
+  employeeId                      String   @map("employee_id") @db.Uuid
+  contributionType                String   @map("contribution_type")
+  employeeShare                   Decimal  @map("employee_share") @db.Decimal(19, 4)
+  employerShare                   Decimal  @map("employer_share") @db.Decimal(19, 4)
+  evidenceDocumentVersionId       String   @map("evidence_document_version_id") @db.Uuid
+  supersedesContributionBillingId String?  @unique(map: "contribution_billings_supersedes_key") @map("supersedes_contribution_billing_id") @db.Uuid
+  recordedByMembershipId          String   @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                      DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "contribution_billings_agency_id_id_key")
+  @@index([agencyId, payrollPeriodId], map: "contribution_billings_period_idx")
+  @@map("contribution_billings")
+}
+
 /// A calculation warning or blocker of one calculation version. It names the
 /// Employee, not a result.
 model PayrollException {
