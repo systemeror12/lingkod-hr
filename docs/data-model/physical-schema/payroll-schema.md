@@ -1554,7 +1554,7 @@ A Payroll Export Contract Version is the immutable definition of one payroll
 Structured Export: its fields, meanings, formats, and control rules. It is
 platform-wide, with no `agency_id` and no row-level security; `hris_app`
 holds `SELECT` only, a trigger rejects every `UPDATE` and `DELETE`, and a
-change is a successor version added by migration. Migration 0176 adds
+change is a successor version added by migration. Migration 0178 adds
 `CERTIFIED_PAYROLL_REVIEW_EXPORT` version 1 (#636).
 
 A Certified Payroll Review Export is the artifact of one Payroll

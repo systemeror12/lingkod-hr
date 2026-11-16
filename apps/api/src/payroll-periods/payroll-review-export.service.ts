@@ -11,7 +11,7 @@ import {
 } from './payroll-export-reconciliation';
 import { PayrollPeriodsServiceError } from './payroll-periods.service';
 
-/** The contract version this code renders; migration 0176 defines it. */
+/** The contract version this code renders; migration 0178 defines it. */
 export const CERTIFIED_PAYROLL_REVIEW_EXPORT_CONTRACT = {
   code: 'CERTIFIED_PAYROLL_REVIEW_EXPORT',
   version: 1,
