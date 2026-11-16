@@ -214,12 +214,20 @@ export interface AttendanceAbsenceFact {
 }
 
 /**
+ * One NIGHT_DUTY fact as Payroll reads it by cutoff (ADR 0014): worked
+ * expected-duty minutes of its Work Date in the 18:00-06:00 window of RA No.
+ * 11701, overtime excluded (#328 decision 8).
+ */
+export type AttendanceNightDutyFact = Omit<AttendanceAbsenceFact, 'expectedMinutes'>;
+
+/**
  * What Payroll reads from Attendance at a cutoff: every publication published
- * at or before it, and their ABSENCE facts.
+ * at or before it, and their ABSENCE and NIGHT_DUTY facts.
  */
 export interface AttendancePayrollFactsByCutoff {
   publicationIds: string[];
   absenceFacts: AttendanceAbsenceFact[];
+  nightDutyFacts: AttendanceNightDutyFact[];
 }
 
 /** One Employee's current minutes on one Work Date, by fact type. */

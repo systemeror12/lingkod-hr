@@ -18,6 +18,7 @@ import {
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { LeaveMonetizationCalculator } from './leave-monetization.calculator';
+import { NightShiftDifferentialCalculator } from './night-shift-differential.calculator';
 import { PeraCalculator } from './pera.calculator';
 import type {
   CalculatedContribution,
@@ -119,8 +120,9 @@ export class PayrollCalculationService {
       pera,
       commutableRata,
       overtimePay,
-      // It pays frozen input amounts and needs no collaborator, so it is no constructor parameter.
+      // These need no collaborator, so they are no constructor parameter.
       new LeaveMonetizationCalculator(),
+      new NightShiftDifferentialCalculator(),
       gsis,
       employeesCompensation,
       philHealth,
@@ -185,7 +187,11 @@ export class PayrollCalculationService {
       select: {
         cutoffAt: true,
         items: {
-          select: { nationalPayrollRuleVersionId: true, agencyPayrollApplicabilityId: true },
+          select: {
+            nationalPayrollRuleVersionId: true,
+            agencyPayrollApplicabilityId: true,
+            authorizedPayrollComponentInputId: true,
+          },
         },
       },
     });
@@ -238,6 +244,9 @@ export class PayrollCalculationService {
         periodTo: context.periodTo,
         agencyPayrollApplicabilityIds: snapshot.items.flatMap(
           (item) => item.agencyPayrollApplicabilityId ?? [],
+        ),
+        authorizedPayrollComponentInputIds: snapshot.items.flatMap(
+          (item) => item.authorizedPayrollComponentInputId ?? [],
         ),
         paymentDate: period.payment_date,
       },

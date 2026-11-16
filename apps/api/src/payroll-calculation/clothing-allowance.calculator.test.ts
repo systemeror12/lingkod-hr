@@ -89,6 +89,8 @@ const agencyGrant: ClothingAllowanceGrant = {
 const sourcesOf = (overrides: Partial<EmployeePayrollSources> = {}): EmployeePayrollSources => ({
   payrollInputs: [],
   absenceFacts: [],
+  nightDutyFacts: [],
+  nightShiftDifferentialRates: [],
   unchargedDeficitFacts: [],
   valuationBases: [],
   positionTitles: [],

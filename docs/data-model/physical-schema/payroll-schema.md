@@ -49,7 +49,8 @@ CREATE TABLE national_payroll_rule_versions (
                          'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA',
                          'OVERTIME_PAY',
                          'CLOTHING_ALLOWANCE',
-                         'PHILHEALTH_CONTRIBUTION','PAGIBIG_CONTRIBUTION')),
+                         'PHILHEALTH_CONTRIBUTION','PAGIBIG_CONTRIBUTION',
+                         'NIGHT_SHIFT_DIFFERENTIAL')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -120,6 +121,12 @@ and `monthlyIncomeCeiling`, with the floor below the ceiling.
 Neither is established for 2027
 ([R19, R21](../../research/national-payroll-rule-versions-2027.md)), so
 neither is loaded until its issuance is read (section 9).
+`NIGHT_SHIFT_DIFFERENTIAL` is RA No. 11701, sec. 1, which has no expiry and
+whose funding alone rests on the GAA
+([R12](../../research/national-payroll-rule-versions-2027.md)); its parameters
+are `rateCeiling`, the highest share of the hourly basic rate the agency head
+may set, and `workingDaysPerMonth` and `workHoursPerDay`, the hourly basic
+rate's divisors. It carries no default rate (sections 3 and 8).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -289,11 +296,21 @@ The record and approve services each need `payroll.inputs.adjust` for the
 whole Agency and write an Audit Event. The recorder's authority is a finalized
 Document Version of the Agency.
 
-National ceilings, such as the 20% night-shift rate, are checked by the service
-that records the input (#43). No National Payroll Rule Version kind carries the
-RATA ceiling yet, so the service refuses every reimbursable RATA input
-(catalogue code `REIMBURSABLE_RATA`) until one is loaded. The night-shift rate
-ceiling arrives with its calculation (#627).
+National ceilings are checked by the service that records the input (#43). No
+National Payroll Rule Version kind carries the RATA ceiling yet, so the service
+refuses every reimbursable RATA input (catalogue code `REIMBURSABLE_RATA`)
+until one is loaded.
+
+Migration 0175 adds `NIGHT_SHIFT_DIFFERENTIAL` to the catalogue (#627): an
+`EARNING` that is not conditional, since its input carries its own authority
+and population (#328 decision 23), not GAA-revalidated, and the first
+component that accepts an authorized input. Its input is the agency head's
+rate: value kind `RATE`, a share such as `0.10` for 10%, paid
+`EACH_REGULAR_PERIOD`; the service refuses any other kind or schedule. The
+rate may not exceed the `rateCeiling` of any `NIGHT_SHIFT_DIFFERENTIAL` version
+in effect during the input's effective period, 20% under RA No. 11701, sec. 1;
+with no such version in effect the service refuses the input, since its
+ceiling cannot be checked. There is no default rate.
 
 ---
 
@@ -1042,6 +1059,29 @@ on the Work Date, a payload that disagrees with its input, a `WORK_SUSPENSION`
 or unmapped classification, an `INDETERMINATE` basis, part-time service, a
 casual daily wage, and an amount that is not whole centavos. The annual caps
 are checks (below).
+
+The `NIGHT_SHIFT_DIFFERENTIAL` component, which migration 0175 adds with its
+rule kind (#627), pays the `NIGHT_DUTY` Attendance Payroll Facts a regular
+period takes by cutoff: worked scheduled-duty minutes between 18:00 and 06:00,
+overtime excluded (#328 decision 8). A fact counts as its delta,
+`corrected − prior`, and a fact a finalized payroll consumed is not read
+again (ADR 0014). Each Work Date's rate is the approved `RATE` input of the
+component the rule snapshot froze that is in effect on it, the Employee's own
+before the Agency-wide one. The calculation writes one `EARNING` line per rate
+input, rule version, and salary: `quantity` the night minutes, `rate` the
+monthly salary on their Work Dates, and the amount
+`minutes ÷ 60 × rate ÷ 22 ÷ 8 × night-shift rate`, from the version in effect
+on each Work Date. The line rests in `payroll_line_sources` on its facts and on
+its rate input, and `source_snapshot` records the Work Dates, the rate, its
+scope and authority, and `taxTreatment` `SUPPLEMENTARY_COMPENSATION` (RR No.
+11-2018 secs. 2.78.1(B)(13) and 2.79(A)-(B)). An Employee with no night-duty
+fact gets no line and no exception. Every case no recorded rule settles blocks
+and writes no line: no rate in effect on the Work Date, or two of one scope;
+no version in effect, or a rate above its ceiling; an `INDETERMINATE` basis,
+part-time service, or a casual daily wage, for which RA No. 11701 defines no
+hourly basic rate; and an amount that is not whole centavos. Eligibility by
+rank (Division Chief and below) is the agency head's to scope through the
+input; Payroll holds no rank to check it against.
 
 The `CLOTHING_ALLOWANCE` component, which migration 0173 adds with the
 `CLOTHING_ALLOWANCE` rule kind (#631), pays the cash uniform/clothing

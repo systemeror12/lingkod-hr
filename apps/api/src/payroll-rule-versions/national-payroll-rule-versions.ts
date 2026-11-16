@@ -17,7 +17,8 @@ export type NationalPayrollRuleKind =
   | 'OVERTIME_PAY'
   | 'CLOTHING_ALLOWANCE'
   | 'PHILHEALTH_CONTRIBUTION'
-  | 'PAGIBIG_CONTRIBUTION';
+  | 'PAGIBIG_CONTRIBUTION'
+  | 'NIGHT_SHIFT_DIFFERENTIAL';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -417,6 +418,32 @@ const pagIbigContributionFile = z
   })
   .strict();
 
+/**
+ * The night-shift differential rule of RA No. 11701, sec. 1 (research
+ * national-payroll-rule-versions-2027.md R12; native-payroll-component-authorities.md,
+ * night-shift row): the agency head sets a rate of at most `rateCeiling` of
+ * the hourly basic rate, which is the basic monthly rate ÷
+ * `workingDaysPerMonth` ÷ `workHoursPerDay`. The rate itself is the Agency's
+ * Authorized Payroll Component Input; no version carries a default one.
+ */
+export const nightShiftDifferentialParameters = z
+  .object({
+    rateCeiling: shareRate,
+    workingDaysPerMonth: z.int().positive(),
+    workHoursPerDay: z.int().positive(),
+  })
+  .strict();
+
+export type NightShiftDifferentialParameters = z.infer<typeof nightShiftDifferentialParameters>;
+
+const nightShiftDifferentialFile = z
+  .object({
+    ruleKind: z.literal('NIGHT_SHIFT_DIFFERENTIAL'),
+    ...ruleVersionFields,
+    parameters: nightShiftDifferentialParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
   .discriminatedUnion('ruleKind', [
@@ -431,6 +458,7 @@ export const nationalPayrollRuleVersionFileSchema = z
     clothingAllowanceFile,
     philHealthContributionFile,
     pagIbigContributionFile,
+    nightShiftDifferentialFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',

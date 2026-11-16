@@ -392,11 +392,7 @@ function stretchOn(bases: readonly CompensationBasis[], workDate: string) {
 function uniqueSources(entries: readonly DayEntry[]): LineSourceRecord[] {
   const seen = new Map<string, LineSourceRecord>();
   for (const record of entries.flatMap((entry) => entry.sources)) {
-    const key =
-      'payrollInputId' in record
-        ? `input:${record.payrollInputId}`
-        : `fact:${record.attendancePayrollFactId}`;
-    seen.set(key, record);
+    seen.set(JSON.stringify(record), record);
   }
   return [...seen.values()];
 }

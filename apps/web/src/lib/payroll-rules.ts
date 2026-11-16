@@ -12,7 +12,8 @@ export type RuleKind =
   | 'OVERTIME_PAY'
   | 'CLOTHING_ALLOWANCE'
   | 'PHILHEALTH_CONTRIBUTION'
-  | 'PAGIBIG_CONTRIBUTION';
+  | 'PAGIBIG_CONTRIBUTION'
+  | 'NIGHT_SHIFT_DIFFERENTIAL';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -57,6 +58,7 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   CLOTHING_ALLOWANCE: 'Uniform/clothing allowance',
   PHILHEALTH_CONTRIBUTION: 'PhilHealth contribution',
   PAGIBIG_CONTRIBUTION: 'Pag-IBIG contribution',
+  NIGHT_SHIFT_DIFFERENTIAL: 'Night-shift differential',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */
