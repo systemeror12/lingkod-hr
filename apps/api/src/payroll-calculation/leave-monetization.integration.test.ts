@@ -24,7 +24,7 @@ import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 const enabled = process.env.DATABASE_E2E === 'true';
 
 describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () => {
-  // Test fixtures only: the rate is not from any issuance, and 2888 sits clear
+  // Test fixtures only: the rate is not from any issuance, and 2928 sits clear
   // of every other test's rule versions.
   const suffix = `${Date.now()}-monetize`;
   const scheduleCode = `${FIXTURE_PREFIX}MONETIZE-SCHEDULE-${suffix}`;
@@ -128,12 +128,12 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
     sourceKey: `MONETIZATION:${label}-${suffix}`,
     sourceType: 'MONETIZATION_POSTING',
     sourceId: crypto.randomUUID(),
-    effectiveDate: '2888-02-20',
+    effectiveDate: '2928-02-20',
     quantity: credits,
     payload: {
       calculatorKind: 'MCL_FIXED_FACTOR_0_0481927',
       factor: '0.0481927',
-      valuationDate: '2888-02-20',
+      valuationDate: '2928-02-20',
     },
   });
 
@@ -190,8 +190,8 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
           sourceUrl: 'https://example.test/salary-schedule',
           verifiedOn: new Date('2026-11-15'),
           verifiedBy: 'LingkodHR test fixture',
-          effectiveFrom: new Date('2888-01-01'),
-          effectiveTo: new Date('2888-12-31'),
+          effectiveFrom: new Date('2928-01-01'),
+          effectiveTo: new Date('2928-12-31'),
         },
       });
       await transaction.salaryGradeRate.create({
@@ -227,18 +227,18 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
     });
     const paid = await employeeFrom(tenant, unit.id, 'PAID', '2887-06-01');
     // Hired mid-March: a partial month blocks, so March returns to DRAFT for recalculation.
-    const partial = await employeeFrom(tenant, unit.id, 'PARTIAL', '2888-03-16');
+    const partial = await employeeFrom(tenant, unit.id, 'PARTIAL', '2928-03-16');
 
     const kept = await accept(monetization(agencyId, paid, 'KEPT', '10'));
     const withdrawn = await accept(monetization(agencyId, paid, 'WITHDRAWN', '5'));
 
     let march = await periods.create(preparer(tenant), {
-      code: `MON-2888-03-${suffix}`,
+      code: `MON-2928-03-${suffix}`,
       runType: 'REGULAR',
-      periodFrom: '2888-03-01',
-      periodTo: '2888-03-31',
+      periodFrom: '2928-03-01',
+      periodTo: '2928-03-31',
       cutoffAt: '2026-01-01T00:00:00+08:00',
-      paymentDate: '2888-03-31',
+      paymentDate: '2928-03-31',
     });
     const start = async (periodId: string) => {
       const row = await admin.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
@@ -339,12 +339,12 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
       });
     });
     const april = await periods.create(preparer(tenant), {
-      code: `MON-2888-04-${suffix}`,
+      code: `MON-2928-04-${suffix}`,
       runType: 'REGULAR',
-      periodFrom: '2888-04-01',
-      periodTo: '2888-04-30',
+      periodFrom: '2928-04-01',
+      periodTo: '2928-04-30',
       cutoffAt: new Date().toISOString(),
-      paymentDate: '2888-04-30',
+      paymentDate: '2928-04-30',
     });
     const third = await start(april.id);
     expect(await calculation.run(third)).toEqual({ outcome: 'FOR_REVIEW', results: 2 });

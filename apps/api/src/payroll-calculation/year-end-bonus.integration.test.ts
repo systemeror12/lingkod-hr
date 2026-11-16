@@ -282,10 +282,12 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
           line.amount.toString(),
           (line.sourceSnapshot as { taxTreatment?: string }).taxTreatment,
           line.ruleVersionId,
-        ]);
+        ])
+        // One transaction writes every line, so none has an order of its own.
+        .sort(([a], [b]) => String(a).localeCompare(String(b)));
     expect(paid(onTime)).toEqual([
-      ['YEAR_END_BONUS', '31705', 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS', ruleId],
       ['CASH_GIFT', '5000', 'DE_MINIMIS', ruleId],
+      ['YEAR_END_BONUS', '31705', 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS', ruleId],
     ]);
     expect(results.get(onTime)).toMatchObject({ status: 'CALCULATED' });
     expect(results.get(onTime)?.grossAmount.toString()).toBe('36705');
