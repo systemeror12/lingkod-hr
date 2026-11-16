@@ -64,6 +64,7 @@ export async function cleanupPayrollTenants(admin: PrismaClient, tenants: Payrol
       await transaction.taxLine.deleteMany({ where });
       await transaction.payrollException.deleteMany({ where });
       await transaction.payrollEmployee.deleteMany({ where });
+      await transaction.contributionBilling.deleteMany({ where });
       await transaction.payrollRuleSnapshotItem.deleteMany({ where });
       await transaction.payrollRuleSnapshot.deleteMany({ where });
       await transaction.payrollCertification.deleteMany({ where });
