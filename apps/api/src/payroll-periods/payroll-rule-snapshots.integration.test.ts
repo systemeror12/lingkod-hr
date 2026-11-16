@@ -88,8 +88,10 @@ describe.skipIf(!enabled)('Payroll rule snapshots in PostgreSQL', () => {
     home = await createPayrollTenant(admin, suffix, 'SNAPSHOT', 2);
     foreign = await createPayrollTenant(admin, suffix, 'SNAPSHOT-FOREIGN');
     componentId = (await createPayComponent(admin, suffix)).id;
-    // A tranche change on 2801-07-01; the second tranche ends with 2801.
-    firstTranche = (await ruleVersion('TRANCHE-1', '2801-01-01', null)).id;
+    // A tranche change on 2801-07-01; the second tranche ends with 2801. The
+    // first ends before it too: an open-ended version would mark every other
+    // test file's open periods as affected by its load (#624).
+    firstTranche = (await ruleVersion('TRANCHE-1', '2801-01-01', '2801-09-30')).id;
     secondTranche = (await ruleVersion('TRANCHE-2', '2801-07-01', '2801-12-31', firstTranche)).id;
 
     const recorder = home.persons[0]!.membership.id;

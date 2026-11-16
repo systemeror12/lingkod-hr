@@ -510,6 +510,15 @@ names a component and a calculator exists for each one it names; it runs only
 those calculators. A second start at the same
 `row_version` finds the period moved and is refused.
 
+A recalculation is the same start from `DRAFT`, after the calculation or a
+reviewer returned the period (#624). It takes the next version and a fresh
+snapshot, so it uses every rule version loaded since, and every earlier
+version's results, lines, exceptions, and snapshot stay readable and
+unchanged. From `FOR_REVIEW` onward the start is refused with what must come
+first: a return for correction, a revoked certification, or a return before
+finalization. A certified or approved version stands, and a `FINALIZED` period
+is corrected only by a Payroll Adjustment (#328).
+
 The committed `CALCULATING` period is the queued job. The calculation job
 reads every `CALCULATING` period through `payroll_calculations_due()`, a
 `SECURITY DEFINER` function that returns only identifiers and versions across
@@ -682,6 +691,11 @@ Each rule kind the calculators need must be in effect on every date of the
 period; a date with none refuses the snapshot, naming the version that ended
 if one did. A kind no calculator requires yet is referenced on the dates it
 covers and never refuses. `SALARY_SCHEDULE` is the only kind yet.
+
+A snapshot and a National Payroll Rule Version load serialize on one advisory
+lock, which the snapshot holds shared and the load exclusively (migration
+0170, #624). A snapshot frozen first is on a period the load then marks
+(section 10); one frozen after references the loaded version.
 
 Migration 0157 adds `authorized_payroll_component_input_id` with its foreign
 key and UNIQUE, and replaces `payroll_rule_snapshot_items_one_source_check`
@@ -1177,7 +1191,30 @@ Employee, not a result, because a blocked or held Employee may have none.
 Migration 0162 creates `payroll_exceptions` (#621). The calculation writes
 them, `OPEN`, with the cause in `details.message`; `reason` stays for an
 acknowledgement or resolution. A trigger admits one only while its period is
-`CALCULATING` at its version and rejects every `DELETE`.
+`CALCULATING` at its version, apart from the rule version mark below, and
+rejects every `DELETE`.
+
+A National Payroll Rule Version loaded after a snapshot never recalculates a
+period silently (#328). Migration 0170 marks each period the load affects, in
+the load's transaction (#624): a period of any Agency, past `DRAFT` and not
+`FINALIZED` or `VOIDED`, with a date the version is in effect on. The mark is a
+period-wide `RULE_VERSION_LOADED_AFTER_SNAPSHOT` exception on the current
+version, naming the version in `details`:
+
+- `CALCULATING` and `FOR_REVIEW`: `BLOCKING`. A queued calculation counts it
+  and returns to `DRAFT`, and certification is refused until the period is
+  calculated again. The load waits for a running calculation to commit and
+  marks what it committed.
+- `CERTIFIED` and `APPROVED`: `WARNING`. The snapshot stands and the period is
+  flagged.
+
+A `DRAFT` period's next snapshot takes the version, and a `FINALIZED` one is
+corrected only by a Payroll Adjustment. An `AFTER INSERT` trigger on
+`national_payroll_rule_versions` writes the mark through a `SECURITY DEFINER`
+function, whose owner policies expose only those periods, admit only row locks
+on them, and admit only this exception type. `hris_app` cannot write the type,
+and the insert trigger admits it only on the current version, naming no
+Employee, with the severity its status takes.
 
 After storing the lines, the calculation runs its checks (#623) in the same
 transaction and writes what they raise, so a blocking one returns the period

@@ -32,6 +32,7 @@ import {
   YearEndBonusCalculator,
 } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
+import { RULE_VERSION_LOADED_AFTER_SNAPSHOT } from '../payroll-periods/payroll-rule-snapshots';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
@@ -349,6 +350,10 @@ export class PayrollCalculationService {
         periodFrom: context.periodFrom,
       })
     ).blocking;
+    // A rule version loaded while this version was queued marked it (#624).
+    blockingExceptions += await transaction.payrollException.count({
+      where: { ...job, exceptionType: RULE_VERSION_LOADED_AFTER_SNAPSHOT },
+    });
 
     if (blockingExceptions > 0) {
       const reason = `${blockingExceptions} blocking exception${blockingExceptions === 1 ? '' : 's'} in calculation version ${job.calculationVersion}; correct the source or hold the Employee, then calculate again.`;
