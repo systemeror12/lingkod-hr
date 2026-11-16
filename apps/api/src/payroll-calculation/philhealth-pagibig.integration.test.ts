@@ -48,6 +48,8 @@ describe.skipIf(!enabled)('PhilHealth and Pag-IBIG contributions in PostgreSQL',
     new YearEndBonusCalculator(),
     nothing,
     nothing,
+    nothing,
+    nothing,
     new PhilHealthContributionCalculator(),
     new PagIbigContributionCalculator(),
   );

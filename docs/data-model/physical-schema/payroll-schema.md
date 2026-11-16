@@ -47,6 +47,8 @@ CREATE TABLE national_payroll_rule_versions (
     CHECK (rule_kind IN ('SALARY_SCHEDULE','AUTHORIZED_DEDUCTIONS',
                          'GSIS_CONTRIBUTION','EMPLOYEES_COMPENSATION',
                          'YEAR_END_BONUS_AND_CASH_GIFT','PERA','COMMUTABLE_RATA',
+                         'OVERTIME_PAY',
+                         'CLOTHING_ALLOWANCE',
                          'PHILHEALTH_CONTRIBUTION','PAGIBIG_CONTRIBUTION')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
@@ -99,6 +101,16 @@ sec. 71; DBM NBC No. 593); its parameters are `ranks`, each with its `rank`,
 the eligible `positionTitles`, and the monthly `representationAllowance` and
 `transportationAllowance`, and `actualWorkSchedule`, NBC 593's bands of
 `minimumDays` and `share`, rising to a share of 1 (section 8).
+`OVERTIME_PAY` is the Overtime Pay rule of CSC-DBM JC No. 2, s. 2015, which
+no GAA restates; its parameters are `workingDaysPerMonth` and
+`workHoursPerDay`, the hourly rate's divisors (item 9.3), `workdayPremium` and
+`nonWorkdayPremium` (item 9.4), `nonWorkdayPaidHoursLimit` (item 10.5), and
+`employeeAnnualCapShare` and `agencyAnnualCapShare` (items 10.6 and 10.7)
+(section 8).
+`CLOTHING_ALLOWANCE` is one fiscal year's cash uniform/clothing allowance rule
+(FY 2026 GAA sec. 64; DBM BC No. 2024-1); its parameters are the
+`annualAmount` for full-time service and the `minimumServiceDays` of service
+in the fiscal year, 180 for six months (section 8).
 `PHILHEALTH_CONTRIBUTION` (RA No. 11223, sec. 10; PhilHealth Circular No.
 2020-0005, Rev. 1) holds `employeeRate`, `employerRate`, `monthlyIncomeFloor`,
 and `monthlyIncomeCeiling`, with the floor below the ceiling.
@@ -254,6 +266,13 @@ catalogue as conditional, so it takes a record, `INFORMATIONAL`, so it writes
 no line, and not GAA-revalidated. It still needs a funding reference, which an
 assignment does not have.
 
+A cash uniform/clothing allowance grant is an applicability record of the
+`CLOTHING_ALLOWANCE` component for the whole Agency or one named Employee,
+whose authority is the Agency's internal guideline on the grant's form,
+qualification, and payment schedule (BC No. 2024-1 item 12.1; #631). Migration
+0171 adds it to the catalogue as a conditional, GAA-revalidated `EARNING`. An
+Agency that procures uniforms records none.
+
 Migration 0156 creates `authorized_payroll_component_inputs` (#346), and
 migration 0157 adds the `consumed_by_payroll_period_id` foreign key to
 `payroll_periods`. Marking a `ONCE` input consumed is #626.
@@ -332,7 +351,14 @@ owns is an Authorized Payroll Component Input in its own table (#27, #328).
 Payroll reads Attendance Payroll Facts and Personnel salary facts through their
 owning services and copies neither here (#329, #619).
 
-An input belongs to no period when accepted. After acceptance a trigger allows
+An input belongs to no period when accepted. Acceptance holds the Agency's
+payroll input acceptance lock in shared mode, which a calculation start takes
+exclusively (section 5), and stamps `accepted_at` from the clock while holding
+it, not from its transaction's start. An input therefore commits before a
+start fixes its cutoff, or is accepted after that cutoff, and every
+calculation version at one cutoff takes the same inputs (ADR 0014). A
+withdrawal takes the same shared lock before it locks the open periods. After
+acceptance a trigger allows
 only the status change, `consumed_by_payroll_period_id`, which the
 finalization transaction sets, and `source_correction_key`, which a withdrawal
 sets. Consumed inputs are immutable, apart from the
@@ -503,13 +529,24 @@ period to name none.
 start a calculation before it.
 
 Starting a calculation needs `payroll.periods.calculate` and claims the
-Payroll Preparer's `PREPARATION` function (#621). In one transaction it moves
+Payroll Preparer's `PREPARATION` function (#621). It first takes the Agency's
+payroll input acceptance lock exclusively, so Payroll Inputs being accepted
+commit first (section 4). In one transaction it moves
 the period from `DRAFT` to `CALCULATING`, advances `calculation_version`, and
 freezes that version's rule snapshot (section 6); a missing required rule
 refuses the start and changes nothing. A special period is refused unless it
 names a component and a calculator exists for each one it names; it runs only
 those calculators. A second start at the same
 `row_version` finds the period moved and is refused.
+
+A recalculation is the same start from `DRAFT`, after the calculation or a
+reviewer returned the period (#624). It takes the next version and a fresh
+snapshot, so it uses every rule version loaded since, and every earlier
+version's results, lines, exceptions, and snapshot stay readable and
+unchanged. From `FOR_REVIEW` onward the start is refused with what must come
+first: a return for correction, a revoked certification, or a return before
+finalization. A certified or approved version stands, and a `FINALIZED` period
+is corrected only by a Payroll Adjustment (#328).
 
 The committed `CALCULATING` period is the queued job. The calculation job
 reads every `CALCULATING` period through `payroll_calculations_due()`, a
@@ -683,6 +720,11 @@ Each rule kind the calculators need must be in effect on every date of the
 period; a date with none refuses the snapshot, naming the version that ended
 if one did. A kind no calculator requires yet is referenced on the dates it
 covers and never refuses. `SALARY_SCHEDULE` is the only kind yet.
+
+A snapshot and a National Payroll Rule Version load serialize on one advisory
+lock, which the snapshot holds shared and the load exclusively (migration
+0170, #624). A snapshot frozen first is on a period the load then marks
+(section 10); one frozen after references the loaded version.
 
 Migration 0157 adds `authorized_payroll_component_input_id` with its foreign
 key and UNIQUE, and replaces `payroll_rule_snapshot_items_one_source_check`
@@ -904,6 +946,18 @@ Every case no recorded rule settles blocks and writes no line:
 
 A blocked result keeps none of its calculators' lines (section 7).
 
+The `LEAVE_MONETIZATION` component, which migration 0171 adds to the
+catalogue as an unconditional `EARNING` that is not GAA-revalidated (#626),
+pays each `MONETIZATION_EARNING` input the calculation takes as one `EARNING`
+line in a regular period: the input's frozen `amount`, its credits in
+`quantity`, no `rate`, since the rounded amount is not credits × a rate, and no
+`rule_version_id`, since the valuation and its authority are in the input's
+`payload_snapshot`, which `source_snapshot.valuation` copies. The line rests on
+the input in `payroll_line_sources`. `source_snapshot.taxTreatment` is
+`NON_TAXABLE` (BIR RR No. 29-2025 sec. 2.78.1(A)(3)(b); [authorities](../../research/native-payroll-component-authorities.md)).
+The input stays `PENDING`, so every calculation version until finalization
+pays it again (#335).
+
 The `YEAR_END_BONUS` and `CASH_GIFT` components, which migration 0165 adds to
 the catalogue with the `YEAR_END_BONUS_AND_CASH_GIFT` rule kind (#344), are
 paid in a special period that names them and covers its rule version's service
@@ -967,6 +1021,49 @@ Attendance Period covers yet; a vehicle assignment for part of the month; and
 an amount that is not whole centavos. With no version in effect, every Employee
 blocks, since eligibility comes from the version.
 
+The `OVERTIME_PAY` component, which migration 0172 adds with the
+`OVERTIME_PAY` rule kind (#628), pays each `OVERTIME_HOURS` input in a regular
+period as one `EARNING` line resting on that input in `payroll_line_sources`
+([authorities](../../research/overtime-coc-cto-authorities.md#overtime-pay-limits-for-347)).
+`quantity` is the paid minutes, `rate` the monthly salary on the Work Date, and
+the amount `minutes ÷ 60 × rate ÷ 22 ÷ 8 × premium`, from the version in effect
+on the Work Date. The premium is 125% on a `WORKDAY` or `SPECIAL_WORKING` day
+and 150% on a `REST_DAY`, `REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, or
+`LOCAL_HOLIDAY` day, as the research's day-type map has them. A non-workday
+pays at most 12 hours; the circular compensates the rest through CTO, which
+Payroll does not grant, so it is unpaid and the line's result gets an
+`OVERTIME_PAY_NON_WORKDAY_HOURS_EXCEEDED` warning. `source_snapshot` records the
+certified and paid minutes, the day classification, the authority, and
+`taxTreatment` `SUPPLEMENTARY_COMPENSATION` (RR No. 11-2018 secs.
+2.78.1(B)(13) and 2.79(A)-(B)). An input is paid once: only `PENDING` inputs
+are read, each gives at most one line, and finalization consumes it. Every
+case no recorded rule settles blocks and writes no line: no version in effect
+on the Work Date, a payload that disagrees with its input, a `WORK_SUSPENSION`
+or unmapped classification, an `INDETERMINATE` basis, part-time service, a
+casual daily wage, and an amount that is not whole centavos. The annual caps
+are checks (below).
+
+The `CLOTHING_ALLOWANCE` component, which migration 0173 adds with the
+`CLOTHING_ALLOWANCE` rule kind (#631), pays the cash uniform/clothing
+allowance in a special period that names it and covers one fiscal year,
+January 1 to December 31 ([authorities](../../research/clothing-allowance-authorities.md)).
+It pays only an Employee covered by a `CLOTHING_ALLOWANCE` applicability
+record in effect on the period's payment date, the Employee's own preferred
+over the Agency-wide one; with none, it writes nothing. An Employee whose
+Service Segments cover at least `minimumServiceDays` calendar days of the
+fiscal year, counting days still to come, gets one `EARNING` line:
+`quantity` 1, or the employment fraction for part-time service, `rate` the
+annual amount, the applicability record in `source_snapshot`, and
+`source_snapshot.taxTreatment` `DE_MINIMIS` (RR No. 29-2025 sec.
+2.78.1(A)(3)(e)). Under the minimum there is no line. Service that starts
+after January 1 counts only under an `ORIGINAL` appointment, which Personnel
+supplies. Every case no recorded rule settles blocks and writes no line: a
+period that is not one fiscal year; no version in effect on every date of the
+year, or one that changes in it; an entry after January 1 by transfer, or
+under another appointment or none; a casual daily wage; a pay basis or
+employment fraction that changes in the year, or none recorded; and an amount
+that is not whole centavos.
+
 A calculated line has no override column. A wrong amount is corrected at its
 source, or after finalization through a Payroll Adjustment (#27, #330). A line
 with `payroll_adjustment_id` carries the past period's component and the
@@ -1019,7 +1116,7 @@ type (#27, #328). A special period writes a tax line for its taxable lines and
 no contribution lines.
 
 Migration 0163 creates `contribution_lines` for `GSIS` and
-`EMPLOYEES_COMPENSATION` (#348); migration 0172 adds `PHILHEALTH` and
+`EMPLOYEES_COMPENSATION` (#348); migration 0174 adds `PHILHEALTH` and
 `PAGIBIG` to its type check with their calculators (#632). A line joins its
 result only in the transaction that writes the result, every `UPDATE` and `DELETE` is rejected,
 and RLS is forced. Each share is also a Payroll Line, so the totals and the
@@ -1177,7 +1274,30 @@ Employee, not a result, because a blocked or held Employee may have none.
 Migration 0162 creates `payroll_exceptions` (#621). The calculation writes
 them, `OPEN`, with the cause in `details.message`; `reason` stays for an
 acknowledgement or resolution. A trigger admits one only while its period is
-`CALCULATING` at its version and rejects every `DELETE`.
+`CALCULATING` at its version, apart from the rule version mark below, and
+rejects every `DELETE`.
+
+A National Payroll Rule Version loaded after a snapshot never recalculates a
+period silently (#328). Migration 0170 marks each period the load affects, in
+the load's transaction (#624): a period of any Agency, past `DRAFT` and not
+`FINALIZED` or `VOIDED`, with a date the version is in effect on. The mark is a
+period-wide `RULE_VERSION_LOADED_AFTER_SNAPSHOT` exception on the current
+version, naming the version in `details`:
+
+- `CALCULATING` and `FOR_REVIEW`: `BLOCKING`. A queued calculation counts it
+  and returns to `DRAFT`, and certification is refused until the period is
+  calculated again. The load waits for a running calculation to commit and
+  marks what it committed.
+- `CERTIFIED` and `APPROVED`: `WARNING`. The snapshot stands and the period is
+  flagged.
+
+A `DRAFT` period's next snapshot takes the version, and a `FINALIZED` one is
+corrected only by a Payroll Adjustment. An `AFTER INSERT` trigger on
+`national_payroll_rule_versions` writes the mark through a `SECURITY DEFINER`
+function, whose owner policies expose only those periods, admit only row locks
+on them, and admit only this exception type. `hris_app` cannot write the type,
+and the insert trigger admits it only on the current version, naming no
+Employee, with the severity its status takes.
 
 After storing the lines, the calculation runs its checks (#623) in the same
 transaction and writes what they raise, so a blocking one returns the period
@@ -1189,6 +1309,21 @@ to `DRAFT` and a warning alone does not:
 | `BASIC_SALARY_MISSING`   | BLOCKING | A `CALCULATED` result of a regular period with no `BASIC_SALARY` earning line                                          |
 | `PAYROLL_LINE_DUPLICATE` | BLOCKING | Two lines of one result with equal component, line type, rule version, quantity, rate, amount, and `source_snapshot`   |
 | `NET_PAY_VARIANCE`       | WARNING  | A `CALCULATED` result of a regular period whose net differs from the Employee's in the last `FINALIZED` regular period |
+
+Two more checks block a `CALCULATED` result of a regular period that pays
+`OVERTIME_PAY` (#628).
+`OVERTIME_PAY_AGENCY_CAP_UNVERIFIED` is raised for every such result: JC 2,
+s. 2015 item 10.7 caps the Agency's Overtime Pay for the year at 5% of its
+Personnel Services budget and needs the DBM's approval above it, and LingkodHR
+records neither. `OVERTIME_PAY_EMPLOYEE_ANNUAL_CAP` is raised when the
+Employee's Overtime Pay this period and in the year's `FINALIZED` periods
+exceeds 50% of the basic salary, less salary for days without pay, paid in
+them (item 10.6). The year's total basic salary, which item 10.6 measures
+against, is known only when the year ends, so the employee cap blocks whatever
+cannot yet be shown within it rather than project the rest of the year. The
+year is the period's own (_reading_: the circular counts pay "in a year"), and
+only one regular period is open at a time, so no other period of the year
+holds unfinalized pay.
 
 Variance has no threshold (the developer's ruling). With no `FINALIZED`
 regular period before this one, or no result for the Employee in it, nothing

@@ -203,11 +203,13 @@ export class PayrollInputsService {
       }
     }
 
+    const acceptedAt = await lockPayrollInputAcceptance(transaction, request.agencyId, 'SHARED');
     // ON CONFLICT DO NOTHING keeps a concurrent duplicate from aborting the
     // caller's transaction; the committed winner is read back and compared.
     const { count } = await transaction.payrollInput.createMany({
       data: {
         ...key,
+        acceptedAt,
         employeeId: request.employeeId,
         inputKind: request.inputKind,
         sourceType: request.sourceType,
@@ -275,6 +277,8 @@ export class PayrollInputsService {
     const settled = settledWithdrawal(await read(), request, correctionKey);
     if (settled) return settled;
 
+    // Before the period rows, in the order a calculation start takes them.
+    await lockPayrollInputAcceptance(transaction, agencyId, 'SHARED');
     if (await usedByLiveCalculation(transaction, agencyId, payrollInputId)) {
       return {
         outcome: 'RETRYABLE_FAILURE',
@@ -357,6 +361,31 @@ function settledWithdrawal(
     };
   }
   return null;
+}
+
+/**
+ * The Agency's lock between accepting Payroll Inputs (`SHARED`) and starting
+ * a calculation (`EXCLUSIVE`), taken before any Payroll Period row. Under it,
+ * an acceptance stamps `accepted_at` from the clock, not from its
+ * transaction's start, so an input either commits before a start fixes its
+ * cutoff, or is accepted after that cutoff (ADR 0014). Without it, an input
+ * whose transaction began before the cutoff could commit after the
+ * calculation read the inbox, and a recalculation at the same cutoff would
+ * take it. Returns the database clock once the lock is held.
+ */
+export async function lockPayrollInputAcceptance(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  mode: 'SHARED' | 'EXCLUSIVE',
+): Promise<Date> {
+  const key = `payroll_input_acceptance:${agencyId}`;
+  if (mode === 'SHARED') {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`;
+  } else {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  }
+  const [{ now }] = await transaction.$queryRaw<[{ now: Date }]>`SELECT clock_timestamp() AS "now"`;
+  return now;
 }
 
 /**

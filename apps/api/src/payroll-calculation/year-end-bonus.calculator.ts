@@ -33,8 +33,16 @@ export const YEAR_END_BONUS_RULE_KIND = 'YEAR_END_BONUS_AND_CASH_GIFT';
  * `NON_TAXABLE` is a GAA allowance not subject to income or withholding tax
  * (RR No. 11-2018 sec. 2.79(B)): PERA, and RATA, which reimburses
  * official-duty expenses.
+ *
+ * `SUPPLEMENTARY_COMPENSATION` is taxable supplementary compensation, such as
+ * overtime pay (RR No. 11-2018 secs. 2.78.1(B)(13) and 2.79(A)-(B)). The
+ * minimum-wage-earner exemption is not assumed for anyone.
  */
-export type TaxTreatment = 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS' | 'DE_MINIMIS' | 'NON_TAXABLE';
+export type TaxTreatment =
+  | 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS'
+  | 'DE_MINIMIS'
+  | 'NON_TAXABLE'
+  | 'SUPPLEMENTARY_COMPENSATION';
 
 type ServedStretch = CompensationBasisStretch & { personnel: PersonnelFacts };
 type ServiceRun = { from: string; to: string };

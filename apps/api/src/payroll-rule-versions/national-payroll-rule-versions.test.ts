@@ -183,6 +183,54 @@ describe('rule version file', () => {
     expect(pera({ ...valid, taxTreatment: 'NON_TAXABLE' })).toBe(false);
   });
 
+  it('holds the overtime pay divisors, premiums, hour limit, and caps as typed parameters', () => {
+    const overtimePay = (parameters: unknown) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('overtime', '2015-11-25', null),
+        ruleKind: 'OVERTIME_PAY',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return nationalPayrollRuleVersionFileSchema.safeParse(file).success;
+    };
+    const valid = {
+      workingDaysPerMonth: 22,
+      workHoursPerDay: 8,
+      workdayPremium: '1.25',
+      nonWorkdayPremium: '1.50',
+      nonWorkdayPaidHoursLimit: 12,
+      employeeAnnualCapShare: '0.50',
+      agencyAnnualCapShare: '0.05',
+    };
+    expect(overtimePay(valid)).toBe(true);
+    expect(overtimePay({ ...valid, workdayPremium: '0.25' })).toBe(false);
+    expect(overtimePay({ ...valid, workdayPremium: '1' })).toBe(false);
+    expect(overtimePay({ ...valid, employeeAnnualCapShare: '50' })).toBe(false);
+    expect(overtimePay({ ...valid, workHoursPerDay: 7.5 })).toBe(false);
+    expect(overtimePay({ ...valid, agencyAnnualCapShare: undefined })).toBe(false);
+    expect(overtimePay({ ...valid, taxTreatment: 'SUPPLEMENTARY_COMPENSATION' })).toBe(false);
+  });
+
+  it('holds the clothing allowance annual amount and minimum service days as typed parameters', () => {
+    const clothing = (parameters: unknown) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('clothing', '2030-01-01', '2030-12-31'),
+        ruleKind: 'CLOTHING_ALLOWANCE',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return nationalPayrollRuleVersionFileSchema.safeParse(file).success;
+    };
+    const valid = { annualAmount: '7000.00', minimumServiceDays: 180 };
+    expect(clothing(valid)).toBe(true);
+    expect(clothing({ ...valid, annualAmount: '7000.001' })).toBe(false);
+    expect(clothing({ ...valid, annualAmount: '0' })).toBe(false);
+    expect(clothing({ ...valid, minimumServiceDays: 180.5 })).toBe(false);
+    expect(clothing({ ...valid, minimumServiceDays: 0 })).toBe(false);
+    expect(clothing({ annualAmount: '7000.00' })).toBe(false);
+    expect(clothing({ ...valid, taxTreatment: 'DE_MINIMIS' })).toBe(false);
+  });
+
   it('reads exactly one JSON file argument', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rule-version-'));
     const path = join(directory, 'schedule.json');

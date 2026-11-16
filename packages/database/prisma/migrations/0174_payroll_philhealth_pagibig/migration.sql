@@ -6,8 +6,8 @@
 -- a snapshot: a period with no version in effect calculates, and each
 -- Employee gets a blocking exception.
 --
--- The list keeps every kind the earlier migrations add, including 0170's
--- 'OVERTIME_PAY' (#628) and 0171's 'CLOTHING_ALLOWANCE' (#631), so this check
+-- The list keeps every kind the earlier migrations add, including 0172's
+-- 'OVERTIME_PAY' (#628) and 0173's 'CLOTHING_ALLOWANCE' (#631), so this check
 -- leaves them all in place.
 ALTER TABLE "national_payroll_rule_versions"
   DROP CONSTRAINT "national_payroll_rule_versions_rule_kind_check";

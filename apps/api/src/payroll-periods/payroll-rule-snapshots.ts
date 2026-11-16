@@ -13,6 +13,14 @@ import {
  */
 export const REQUIRED_RULE_KINDS: readonly NationalPayrollRuleKind[] = ['SALARY_SCHEDULE'];
 
+/**
+ * The period-wide Payroll Exception a National Payroll Rule Version load
+ * writes on each period past `DRAFT` whose current snapshot it postdates and
+ * whose dates it covers (migration 0170, #328 D6 #13): `BLOCKING` while
+ * `CALCULATING` or `FOR_REVIEW`, `WARNING` once `CERTIFIED` or `APPROVED`.
+ */
+export const RULE_VERSION_LOADED_AFTER_SNAPSHOT = 'RULE_VERSION_LOADED_AFTER_SNAPSHOT';
+
 export type RuleCoverage =
   { status: 'COVERED'; ruleVersionIds: string[] } | { status: 'NOT_IN_EFFECT'; reason: string };
 
@@ -154,6 +162,10 @@ export async function freezePayrollRuleSnapshot(
   }
   const from = isoDateOf(period.periodFrom);
   const to = isoDateOf(period.periodTo);
+
+  // A rule version load waits for this snapshot, then marks its period; a
+  // load already under way finishes first, so the snapshot references it.
+  await transaction.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended('payroll_rule_snapshots', 0))`;
 
   // Earlier versions stay in the lists so an expiry can be named.
   const startedBy = { effectiveFrom: { lte: period.periodTo } };

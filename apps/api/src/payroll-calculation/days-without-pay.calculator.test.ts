@@ -61,6 +61,7 @@ function lwop(id: string, dates: string[], unitCode = 'WORKING_DAY'): PendingPay
     sourceId: `posting-${id}`,
     effectiveDate: dates[0]!,
     quantity: `${dates.length}.0000`,
+    amount: null,
     payloadSnapshot: {
       unitCode,
       workDates: dates.map((workDate) => ({ workDate, quantity: '1.0000' })),
@@ -94,6 +95,8 @@ const sourcesOf = (overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
   positionTitles: [],
   periodAttendance: { coveredDates: [], workDates: [] },
   officialVehicleAssignments: [],
+  clothingAllowanceGrants: [],
+  serviceSegmentAppointments: [],
   ...overrides,
 });
 
@@ -223,6 +226,7 @@ describe('DaysWithoutPayCalculator', () => {
             sourceId: 'charge-1',
             effectiveDate: '2026-03-05',
             quantity: '0.0640',
+            amount: null,
             payloadSnapshot: {},
           },
         ],

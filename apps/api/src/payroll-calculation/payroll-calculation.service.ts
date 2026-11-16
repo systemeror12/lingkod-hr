@@ -17,6 +17,7 @@ import {
   PhilHealthContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { LeaveMonetizationCalculator } from './leave-monetization.calculator';
 import { PeraCalculator } from './pera.calculator';
 import type {
   CalculatedContribution,
@@ -33,11 +34,18 @@ import {
   YearEndBonusCalculator,
 } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
+import { RULE_VERSION_LOADED_AFTER_SNAPSHOT } from '../payroll-periods/payroll-rule-snapshots';
+import {
+  CLOTHING_ALLOWANCE_COMPONENT_CODE,
+  ClothingAllowanceCalculator,
+} from './clothing-allowance.calculator';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
   YEAR_END_BONUS_COMPONENT_CODE,
   CASH_GIFT_COMPONENT_CODE,
+  CLOTHING_ALLOWANCE_COMPONENT_CODE,
 ];
 
 /** One queued calculation: a CALCULATING period and the version it started. */
@@ -62,6 +70,7 @@ interface LockedPeriod {
   run_type: string;
   period_from: string;
   period_to: string;
+  payment_date: string;
 }
 
 /**
@@ -97,6 +106,8 @@ export class PayrollCalculationService {
     @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
     @Inject(PeraCalculator) pera: PeraCalculator,
     @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
+    @Inject(OvertimePayCalculator) overtimePay: OvertimePayCalculator,
+    @Inject(ClothingAllowanceCalculator) clothingAllowance: ClothingAllowanceCalculator,
     @Inject(PhilHealthContributionCalculator) philHealth: PhilHealthContributionCalculator,
     @Inject(PagIbigContributionCalculator) pagIbig: PagIbigContributionCalculator,
   ) {
@@ -107,12 +118,15 @@ export class PayrollCalculationService {
       daysWithoutPay,
       pera,
       commutableRata,
+      overtimePay,
+      // It pays frozen input amounts and needs no collaborator, so it is no constructor parameter.
+      new LeaveMonetizationCalculator(),
       gsis,
       employeesCompensation,
       philHealth,
       pagIbig,
     ];
-    this.specialCalculators = [yearEndBonus];
+    this.specialCalculators = [yearEndBonus, clothingAllowance];
   }
 
   async run(job: CalculationJob): Promise<CalculationOutcome> {
@@ -225,6 +239,7 @@ export class PayrollCalculationService {
         agencyPayrollApplicabilityIds: snapshot.items.flatMap(
           (item) => item.agencyPayrollApplicabilityId ?? [],
         ),
+        paymentDate: period.payment_date,
       },
     );
 
@@ -352,6 +367,10 @@ export class PayrollCalculationService {
         periodFrom: context.periodFrom,
       })
     ).blocking;
+    // A rule version loaded while this version was queued marked it (#624).
+    blockingExceptions += await transaction.payrollException.count({
+      where: { ...job, exceptionType: RULE_VERSION_LOADED_AFTER_SNAPSHOT },
+    });
 
     if (blockingExceptions > 0) {
       const reason = `${blockingExceptions} blocking exception${blockingExceptions === 1 ? '' : 's'} in calculation version ${job.calculationVersion}; correct the source or hold the Employee, then calculate again.`;
@@ -378,7 +397,8 @@ async function lockCalculatingPeriod(
     wait === 'SKIP LOCKED' ? Prisma.sql`FOR UPDATE SKIP LOCKED` : Prisma.sql`FOR UPDATE`;
   const [period] = await transaction.$queryRaw<LockedPeriod[]>`
     SELECT "status", "calculation_version", "run_type",
-           "period_from"::text AS "period_from", "period_to"::text AS "period_to"
+           "period_from"::text AS "period_from", "period_to"::text AS "period_to",
+           "payment_date"::text AS "payment_date"
     FROM "payroll_periods"
     WHERE "agency_id" = CAST(${job.agencyId} AS uuid)
       AND "id" = CAST(${job.payrollPeriodId} AS uuid)
