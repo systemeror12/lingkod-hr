@@ -6,7 +6,8 @@
 -- rate's divisors (the basic monthly rate ÷ 22 working days ÷ 8 hours). The
 -- statute has no expiry; the annual GAA only funds it (research R12).
 -- The list keeps every kind the earlier migrations add, through 0174's
--- 'PHILHEALTH_CONTRIBUTION' and 'PAGIBIG_CONTRIBUTION' (#632).
+-- 'PHILHEALTH_CONTRIBUTION' and 'PAGIBIG_CONTRIBUTION' (#632) and 0176's
+-- 'COMPENSATION_WITHHOLDING_TAX' and 'DE_MINIMIS_BENEFITS' (#350).
 ALTER TABLE "national_payroll_rule_versions"
   DROP CONSTRAINT "national_payroll_rule_versions_rule_kind_check";
 ALTER TABLE "national_payroll_rule_versions"
@@ -14,7 +15,8 @@ ALTER TABLE "national_payroll_rule_versions"
     CHECK ("rule_kind" IN (
       'SALARY_SCHEDULE', 'AUTHORIZED_DEDUCTIONS', 'GSIS_CONTRIBUTION', 'EMPLOYEES_COMPENSATION',
       'YEAR_END_BONUS_AND_CASH_GIFT', 'PERA', 'COMMUTABLE_RATA', 'OVERTIME_PAY', 'CLOTHING_ALLOWANCE',
-      'PHILHEALTH_CONTRIBUTION', 'PAGIBIG_CONTRIBUTION', 'NIGHT_SHIFT_DIFFERENTIAL'
+      'PHILHEALTH_CONTRIBUTION', 'PAGIBIG_CONTRIBUTION',
+      'COMPENSATION_WITHHOLDING_TAX', 'DE_MINIMIS_BENEFITS', 'NIGHT_SHIFT_DIFFERENTIAL'
     ));
 
 -- A Native Payroll Component paid from Attendance's NIGHT_DUTY facts at the

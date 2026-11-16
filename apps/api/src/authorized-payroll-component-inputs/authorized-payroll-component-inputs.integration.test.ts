@@ -213,7 +213,7 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
       components.rata = (await component(REIMBURSABLE_RATA_COMPONENT_CODE, true)).id;
       createdRata = true;
     }
-    // Migration 0175 loads the catalogue row; the rule version is a fixture
+    // Migration 0177 loads the catalogue row; the rule version is a fixture
     // with RA No. 11701's values, in 2895, clear of every other test's versions.
     components.nightShift = (
       await admin.payComponent.findUniqueOrThrow({

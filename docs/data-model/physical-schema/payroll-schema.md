@@ -301,7 +301,7 @@ National Payroll Rule Version kind carries the RATA ceiling yet, so the service
 refuses every reimbursable RATA input (catalogue code `REIMBURSABLE_RATA`)
 until one is loaded.
 
-Migration 0175 adds `NIGHT_SHIFT_DIFFERENTIAL` to the catalogue (#627): an
+Migration 0177 adds `NIGHT_SHIFT_DIFFERENTIAL` to the catalogue (#627): an
 `EARNING` that is not conditional, since its input carries its own authority
 and population (#328 decision 23), not GAA-revalidated, and the first
 component that accepts an authorized input. Its input is the agency head's
@@ -1060,7 +1060,7 @@ or unmapped classification, an `INDETERMINATE` basis, part-time service, a
 casual daily wage, and an amount that is not whole centavos. The annual caps
 are checks (below).
 
-The `NIGHT_SHIFT_DIFFERENTIAL` component, which migration 0175 adds with its
+The `NIGHT_SHIFT_DIFFERENTIAL` component, which migration 0177 adds with its
 rule kind (#627), pays the `NIGHT_DUTY` Attendance Payroll Facts a regular
 period takes by cutoff: worked scheduled-duty minutes between 18:00 and 06:00,
 overtime excluded (#328 decision 8). A fact counts as its delta,
