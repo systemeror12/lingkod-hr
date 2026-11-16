@@ -269,6 +269,7 @@ describe.skipIf(!enabled)('Payroll certification in PostgreSQL', () => {
       calculationVersion: 1,
       calculationHash: period.calculationHash,
       certifiedByMembershipId: people.certifier.membershipId,
+      reviewExportId: expect.any(String),
     });
     await expect(eventsOf(period.id, 'PAYROLL_PERIOD_CERTIFIED')).resolves.toEqual([
       expect.objectContaining({
@@ -279,6 +280,8 @@ describe.skipIf(!enabled)('Payroll certification in PostgreSQL', () => {
           payrollCertificationId: first.certification!.id,
           calculationVersion: 1,
           calculationHash: period.calculationHash,
+          certifiedPayrollReviewExportId: first.certification!.reviewExportId,
+          reviewExportChecksum: expect.stringMatching(/^[0-9a-f]{64}$/),
         },
       }),
     ]);

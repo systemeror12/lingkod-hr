@@ -22,8 +22,10 @@ table here (#21, #27).
 are platform-wide (#328,
 [ADR 0013](../../adr/0013-platform-wide-national-payroll-rule-versions.md)).
 They have no `agency_id` and no row-level security. `hris_app` holds `SELECT`
-only, and the `hris_operator` load command is the only writer. Every other
-table here is Agency-owned and isolated by RLS.
+only, and the `hris_operator` load command is the only writer.
+`payroll_export_contract_versions` (section 12) is platform-wide the same way,
+written only by migration. Every other table here is Agency-owned and
+isolated by RLS.
 
 A Payroll Period consumes its sources by cutoff
 ([ADR 0014](../../adr/0014-consume-payroll-sources-by-cutoff.md)), and a
@@ -1511,11 +1513,100 @@ result, with no version number (#330). The Payroll Approver releases every
 transaction supersedes a payroll's Payslips from any status, and nothing else
 does. An Employee reads only their own `RELEASED` Payslips.
 
+```sql
+CREATE TABLE payroll_export_contract_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  code text NOT NULL CHECK (btrim(code) <> ''),
+  version integer NOT NULL CHECK (version > 0),
+  definition jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (code, version)
+);
+
+CREATE TABLE certified_payroll_review_exports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  payroll_certification_id uuid NOT NULL UNIQUE,
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  superseded_at timestamptz,
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_certification_id)
+    REFERENCES payroll_certifications (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX certified_payroll_review_exports_one_current_key
+  ON certified_payroll_review_exports (payroll_period_id)
+  WHERE superseded_at IS NULL;
+```
+
+A Payroll Export Contract Version is the immutable definition of one payroll
+Structured Export: its fields, meanings, formats, and control rules. It is
+platform-wide, with no `agency_id` and no row-level security; `hris_app`
+holds `SELECT` only, a trigger rejects every `UPDATE` and `DELETE`, and a
+change is a successor version added by migration. Migration 0176 adds
+`CERTIFIED_PAYROLL_REVIEW_EXPORT` version 1 (#636).
+
+A Certified Payroll Review Export is the artifact of one Payroll
+Certification. `Certify HR inputs` generates it in the certifying transaction,
+so a period has its current export the moment it is `CERTIFIED` (#29, #636). `content` is canonical
+JSON: object keys sorted at every depth, amounts as four-place decimal
+strings. It carries the contract, a statement that it asserts no fund
+validation, obligation, posting, or receipt, the period, the certification
+and its calculation hash, the Classified Payroll Export Lines, and the
+Payroll Export Reconciliation. `checksum` is the SHA-256 of `content`'s
+bytes, and the CHECK keeps the two together.
+
+Contract version 1 has one Classified Payroll Export Line per pay component
+and component kind, summed over every Payroll Line of the certified
+version's results. It carries the component's code, name, kind, Payroll
+Effect, and reporting category. A Payroll Line carries no funding,
+organization, or cost-center reference yet, so version 1 does not classify
+by them.
+
+After certify records the certification and moves the period to
+`CERTIFIED`, it classifies the certified version's lines and proves the
+reconciliation:
+
+- the results still hash to the certification's `calculation_hash`;
+- every line belongs to an exported result, names a catalogued component,
+  and has that component's category as its line type;
+- each result's earning lines sum to its gross, its deduction lines to its
+  total deductions, and gross less deductions is its net;
+- the classified lines' source counts sum to the source line count, and
+  their amounts by kind equal the source lines' and the results' totals.
+
+A failure refuses certification with `PAYROLL_EXPORT_RECONCILIATION_FAILED`
+and stores nothing: no certification, no export, and the period stays
+`FOR_REVIEW`. Generation is idempotent for one certification: called again,
+it returns the stored export. The `PAYROLL_PERIOD_CERTIFIED` Audit Event
+names the export and its checksum. The period detail names the current
+export as `certification.reviewExportId`, and any export, current or
+superseded, is read with `payroll.periods.read` held Agency-wide.
+
+A trigger admits an export only for the certification in force on its
+period, while the period is `CERTIFIED` or `APPROVED` at the certified
+version. It rejects every `DELETE`, and lets an `UPDATE` only set
+`superseded_at`, once. Revoking the certification supersedes its export in
+the same transaction; a returned checkpoint review (#637) revokes the
+certification and so supersedes it the same way. A later certification of
+the same version gets its own export.
+
 A Budget Officer and an Accounting Reviewer each record one immutable Payroll
 Export Checkpoint Review against the current Certified Payroll Review Export,
 in either order. Approval needs both confirmed. A returned review moves the
 period to `FOR_REVIEW` and revokes the certification, the export, and the other
-review (#29, #330). Its table is specified with the export in #636 and #637.
+review (#29, #330). Its table is specified with #637.
 
 Files are stored through the shared document service.
 
@@ -1524,8 +1615,9 @@ Files are stored through the shared document service.
 ## 13. RLS and Sensitive Access
 
 RLS isolates agencies on every Agency-owned table. The three platform-wide
-tables in sections 1 and 2 have no Agency policy: their protection is the
-grant, `SELECT` only for `hris_app` (ADR 0013).
+tables in sections 1 and 2, and `payroll_export_contract_versions` in section
+12, have no Agency policy: their protection is the grant, `SELECT` only for
+`hris_app` (ADR 0013).
 
 Application permissions separately control:
 

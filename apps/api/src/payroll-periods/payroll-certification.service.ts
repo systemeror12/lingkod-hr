@@ -4,6 +4,7 @@ import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { claimPayrollFunction, type PayrollFunction } from './payroll-period-actors';
+import { generateReviewExport, supersedeReviewExport } from './payroll-review-export.service';
 import {
   auditEvent,
   parse,
@@ -31,9 +32,11 @@ interface LockedPeriod {
  * each with its own §6.10 permission and Audit Event:
  *
  * - Certify (`FOR_REVIEW → CERTIFIED`) records a Payroll Certification of the
- *   calculation version and hash the certifier reviewed. It is refused while
- *   that version has an open blocking exception, or when the version or hash
- *   is no longer the period's.
+ *   calculation version and hash the certifier reviewed, and generates its
+ *   Certified Payroll Review Export in the same transaction (#636). It is
+ *   refused while that version has an open blocking exception, when the
+ *   version or hash is no longer the period's, or when the export does not
+ *   reconcile; a refusal stores nothing.
  * - Revoke certification (`CERTIFIED → FOR_REVIEW`) records the revocation,
  *   with a reason, on the certification in force.
  * - Return for correction (`FOR_REVIEW → DRAFT`) sends the period back to the
@@ -107,6 +110,7 @@ export class PayrollCertificationService {
         select: { id: true },
       });
       const after = await moveStatus(transaction, context, periodId, period, 'CERTIFIED');
+      const reviewExport = await generateReviewExport(transaction, context, periodId);
       await transaction.auditEvent.create({
         data: auditEvent(context, {
           action: 'PAYROLL_PERIOD_CERTIFIED',
@@ -118,6 +122,8 @@ export class PayrollCertificationService {
             payrollCertificationId: certification.id,
             calculationVersion: period.calculationVersion,
             calculationHash,
+            certifiedPayrollReviewExportId: reviewExport.id,
+            reviewExportChecksum: reviewExport.checksum,
           },
         }),
       });
@@ -126,10 +132,10 @@ export class PayrollCertificationService {
   }
 
   /**
-   * Revoke the certification in force. The HR Certifier acts in
-   * HR_CERTIFICATION; a Payroll Approver, who holds no certify permission,
-   * acts in APPROVAL (#330). The Certified Payroll Review Export and its
-   * checkpoint reviews this must also supersede arrive with #636 and #637.
+   * Revoke the certification in force and supersede its Certified Payroll
+   * Review Export. The HR Certifier acts in HR_CERTIFICATION; a Payroll
+   * Approver, who holds no certify permission, acts in APPROVAL (#330). The
+   * export's checkpoint reviews this must also revoke arrive with #637.
    */
   async revokeCertification(
     context: RequestContext,
@@ -168,6 +174,11 @@ export class PayrollCertificationService {
           revocationReason: input.reason,
         },
       });
+      const supersededReviewExportId = await supersedeReviewExport(
+        transaction,
+        context.agencyId,
+        certification.id,
+      );
       const after = await moveStatus(transaction, context, periodId, period, 'FOR_REVIEW');
       await transaction.auditEvent.create({
         data: auditEvent(context, {
@@ -180,6 +191,7 @@ export class PayrollCertificationService {
             payrollCertificationId: certification.id,
             calculationVersion: certification.calculationVersion,
             calculationHash: certification.calculationHash,
+            supersededReviewExportId,
           },
         }),
       });

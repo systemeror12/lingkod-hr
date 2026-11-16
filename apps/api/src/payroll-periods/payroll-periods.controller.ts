@@ -21,6 +21,10 @@ import {
   type PayrollPeriodDetail,
   type PayrollPeriodSummary,
 } from './payroll-periods.service';
+import {
+  PayrollReviewExportService,
+  type CertifiedPayrollReviewExportView,
+} from './payroll-review-export.service';
 
 const periodIdSchema = z.string().uuid();
 
@@ -31,6 +35,8 @@ export class PayrollPeriodsController {
     @Inject(PayrollPeriodsService) private readonly service: PayrollPeriodsService,
     @Inject(PayrollCertificationService)
     private readonly certification: PayrollCertificationService,
+    @Inject(PayrollReviewExportService)
+    private readonly reviewExport: PayrollReviewExportService,
   ) {}
 
   @Get(':agencyId/payroll-periods/:periodId')
@@ -142,6 +148,33 @@ export class PayrollPeriodsController {
     return {
       period: await translate(context, () =>
         this.certification.returnForCorrection(context, id, body),
+      ),
+    };
+  }
+
+  /** Read a Certified Payroll Review Export; the period detail names the current one. */
+  @Get(':agencyId/payroll-periods/:periodId/review-exports/:exportId')
+  @RequirePermission('payroll.periods.read')
+  async readReviewExport(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Param('exportId') exportId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ export: CertifiedPayrollReviewExportView }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    const parsedExportId = periodIdSchema.safeParse(exportId);
+    if (!parsedExportId.success) {
+      throw failure(
+        context,
+        404,
+        'PAYROLL_REVIEW_EXPORT_NOT_FOUND',
+        'The Certified Payroll Review Export could not be found.',
+      );
+    }
+    return {
+      export: await translate(context, () =>
+        this.reviewExport.read(context, id, parsedExportId.data),
       ),
     };
   }

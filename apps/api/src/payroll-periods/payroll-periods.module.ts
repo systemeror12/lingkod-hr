@@ -3,11 +3,12 @@ import { AuthModule } from '../auth/auth.module';
 import { PayrollCertificationService } from './payroll-certification.service';
 import { PayrollPeriodsController } from './payroll-periods.controller';
 import { PayrollPeriodsService } from './payroll-periods.service';
+import { PayrollReviewExportService } from './payroll-review-export.service';
 
 @Module({
   imports: [AuthModule],
   controllers: [PayrollPeriodsController],
-  providers: [PayrollPeriodsService, PayrollCertificationService],
+  providers: [PayrollPeriodsService, PayrollCertificationService, PayrollReviewExportService],
   exports: [PayrollPeriodsService],
 })
 export class PayrollPeriodsModule {}

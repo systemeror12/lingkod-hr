@@ -124,6 +124,9 @@ erDiagram
     PAYROLL_PERIODS ||--o{ PAYROLL_CONSUMED_ATTENDANCE_FACTS : consumes
     PAYROLL_PERIODS ||--o{ PAYROLL_EXCEPTIONS : flags
     PAYROLL_PERIODS ||--o{ REMITTANCE_SCHEDULES : produces
+    PAYROLL_PERIODS ||--o{ PAYROLL_CERTIFICATIONS : certified_by
+    PAYROLL_CERTIFICATIONS ||--|| CERTIFIED_PAYROLL_REVIEW_EXPORTS : exported_as
+    PAYROLL_EXPORT_CONTRACT_VERSIONS ||--o{ CERTIFIED_PAYROLL_REVIEW_EXPORTS : defines
     PAYROLL_PERIODS ||--o{ PAYMENT_EXPORTS : produces
     PAYMENT_EXPORTS ||--o{ PAYMENT_INSTRUCTIONS : contains
     PAYROLL_EMPLOYEES ||--o{ PAYMENT_INSTRUCTIONS : paid_through
@@ -667,6 +670,8 @@ version of a Payroll Period (#334)
   it names. Certifying is refused while that version has an open blocking
   exception, or when the version or hash the certifier reviewed is no longer
   the period's.
+- Certifying generates the certification's Certified Payroll Review Export in
+  the same transaction, and revoking it supersedes that export (#636).
 
 **Deletion behavior:** Retain. Only the revocation is recorded, once.
 
@@ -1154,7 +1159,77 @@ copy or reconstruct the external budget balance or accounting ledger. Creating
 or downloading an export never asserts that funds were validated or obligated,
 that an entry was posted, or that a receiving system accepted the data (#29).
 
-Their entities are not specified here yet.
+The Certified Payroll Review Export is specified below (#636). The Finalized
+Payroll Accounting Support Export, its Employee Detail Companion, and Payroll
+Export External Outcomes arrive with #355, and Payroll Export Checkpoint
+Reviews with #637.
+
+## `payroll_export_contract_versions`
+
+Payroll Export Contract Version: the immutable definition of one payroll
+Structured Export's fields, meanings, formats, and control rules (#636)
+
+| Column     | Logical type | Null? | Key / rule | Description                                                      |
+| ---------- | ------------ | ----- | ---------- | ---------------------------------------------------------------- |
+| id         | uuid         | No    | PK         | Contract version                                                 |
+| code       | string       | No    |            | The export it defines, such as `CERTIFIED_PAYROLL_REVIEW_EXPORT` |
+| version    | integer      | No    |            | Version number, from 1                                           |
+| definition | json         | No    |            | Fields, meanings, formats, classification, and control rules     |
+| created_at | datetime     | No    |            | When it was added                                                |
+
+**Constraints and indexes**
+
+- Unique `(code, version)`.
+- Platform-wide: no `agency_id`, and the application only reads it. A
+  semantic or structural change is a successor version, so a historical
+  artifact keeps the definition it was generated under.
+
+**Deletion behavior:** Immutable.
+
+## `certified_payroll_review_exports`
+
+Certified Payroll Review Export: the Structured Export of one Payroll
+Certification, for budget and accounting review before approval (#29, #636)
+
+| Column                             | Logical type | Null? | Key / rule                          | Description                         |
+| ---------------------------------- | ------------ | ----- | ----------------------------------- | ----------------------------------- |
+| id                                 | uuid         | No    | PK                                  | Export                              |
+| agency_id                          | uuid         | No    | FK agencies                         | Tenant                              |
+| payroll_period_id                  | uuid         | No    | FK payroll_periods                  | Period                              |
+| payroll_certification_id           | uuid         | No    | FK payroll_certifications; unique   | The certification it exports        |
+| payroll_export_contract_version_id | uuid         | No    | FK payroll_export_contract_versions | The contract it was generated under |
+| content                            | text         | No    |                                     | The artifact, as canonical JSON     |
+| checksum                           | string       | No    | SHA-256 hex of `content`            | Integrity checksum                  |
+| generated_by_membership_id         | uuid         | No    | FK agency_memberships               | The HR Certifier who certified      |
+| generated_at                       | datetime     | No    |                                     | When it was generated               |
+| superseded_at                      | datetime     | Yes   |                                     | When its certification was revoked  |
+
+**Constraints and indexes**
+
+- `Certify HR inputs` generates it in the certifying transaction, so a
+  `CERTIFIED` period always has a current export. One export per
+  certification: generating again returns it.
+- `content` holds the contract, a statement that the export asserts no fund
+  validation, obligation, posting, or receipt, the period, the certification
+  and its calculation hash, the Classified Payroll Export Lines, and the
+  Payroll Export Reconciliation.
+- Contract version 1 has one Classified Payroll Export Line per pay
+  component and component kind, with the component's code, name, kind,
+  Payroll Effect, and reporting category, the summed amount, and the source
+  line count. A Payroll Line carries no funding, organization, or cost-center
+  reference yet, so version 1 does not classify by them.
+- The Payroll Export Reconciliation proves that the results still match the
+  certified hash, that every source line maps to exactly one classified line
+  under its component's category, that each result reconciles to its lines,
+  and that the classified totals equal the results' gross, deductions, and
+  net. A failure refuses certification and stores nothing.
+- At most one export per period has no `superseded_at`.
+- Revoking the certification supersedes the export. A returned checkpoint
+  review revokes the certification and so supersedes it too (#637). A later
+  certification, even of the same version, gets its own export.
+- Generating claims no payroll function beyond the certifier's.
+
+**Deletion behavior:** Immutable. Only the supersession is recorded, once.
 
 # Domain invariants
 
