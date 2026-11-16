@@ -1829,8 +1829,9 @@ Agency-wide, reads an Employee's compensation basis and the source of each
 value (#332). `payroll.compensation.manage`, held
 Agency-wide, records and ends an Agency Payroll Applicability (#618).
 `payroll.deductions.manage`, held Agency-wide,
-records, changes, and ends an Employee's Deduction Obligations
-(payroll-schema.md §9). There is no `payroll.payslips.supersede`:
+records, changes, and ends an Employee's Deduction Obligations, and records
+the issuer's Contribution Billing of a `DRAFT` regular Payroll Period
+(payroll-schema.md §9, #349). There is no `payroll.payslips.supersede`:
 the system supersedes a Payslip when its payroll is voided (§5.21).
 
 Holding a permission is not enough. On one Payroll Period a person acts in at

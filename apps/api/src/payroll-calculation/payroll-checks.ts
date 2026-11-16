@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { BasicSalaryMissingCheck } from './basic-salary-missing.check';
+import { ContributionBillingCheck } from './contribution-billing.check';
 import { NetPayNegativeCheck } from './net-pay-negative.check';
 import { NetPayVarianceCheck } from './net-pay-variance.check';
 import { OvertimePayCapsCheck } from './overtime-pay-caps.check';
@@ -12,6 +13,7 @@ const CHECKS: readonly PayrollCheck[] = [
   new PayrollLineDuplicateCheck(),
   new NetPayVarianceCheck(),
   new OvertimePayCapsCheck(),
+  new ContributionBillingCheck(),
 ];
 
 /**

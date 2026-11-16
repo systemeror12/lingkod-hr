@@ -1162,6 +1162,59 @@ Employees, since both apply to appointed personnel through compulsory employee
 coverage (the same research file). A recorded coverage fact, when Personnel
 adds one, replaces this.
 
+```sql
+CREATE TABLE contribution_billings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  contribution_type text NOT NULL
+    CHECK (contribution_type IN ('GSIS','PHILHEALTH','PAGIBIG','EMPLOYEES_COMPENSATION')),
+  employee_share numeric(19,4) NOT NULL CHECK (employee_share >= 0),
+  employer_share numeric(19,4) NOT NULL CHECK (employer_share >= 0),
+  evidence_document_version_id uuid NOT NULL,
+  supersedes_contribution_billing_id uuid UNIQUE,
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (contribution_type <> 'EMPLOYEES_COMPENSATION' OR employee_share = 0),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, supersedes_contribution_billing_id)
+    REFERENCES contribution_billings (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX contribution_billings_first_key
+  ON contribution_billings (payroll_period_id, employee_id, contribution_type)
+  WHERE supersedes_contribution_billing_id IS NULL;
+```
+
+A Contribution Billing is the issuer's validated billing of one Employee's
+contribution for a regular Payroll Period: both shares, and the finalized
+Document Version that evidences them (BRD PAY-004, #349). Migration 0175
+creates it. Recording one statement, one contribution type for many
+Employees, needs `payroll.deductions.manage` held Agency-wide and writes one
+Audit Event. It is recorded only while the period is `DRAFT`, with the period
+row locked `FOR SHARE`, so the next calculation compares it before the period
+can be certified; a trigger enforces the same. Rows are only inserted, and RLS
+is forced. Recording an Employee's billing again corrects it: the new row
+names the one it supersedes, and the current billing is the one no row
+supersedes.
+
+The billing is evidence, never a rule. It writes no line and changes no share;
+a difference it shows can support a versioned correction, such as a new rule
+version or a Payroll Adjustment, but never replaces the calculated line (#27).
+The calculation's `CONTRIBUTION_BILLING_DIFFERENCE` check (section 10)
+compares each current billing with the Contribution Line of its type in the
+Employee's `CALCULATED` result, or with zero when there is none. An Employee
+with no billing, or with no `CALCULATED` result, is not compared.
+
 Loan lines use a separate table because multiple deductions may exist.
 
 ```sql
@@ -1309,6 +1362,16 @@ to `DRAFT` and a warning alone does not:
 | `BASIC_SALARY_MISSING`   | BLOCKING | A `CALCULATED` result of a regular period with no `BASIC_SALARY` earning line                                          |
 | `PAYROLL_LINE_DUPLICATE` | BLOCKING | Two lines of one result with equal component, line type, rule version, quantity, rate, amount, and `source_snapshot`   |
 | `NET_PAY_VARIANCE`       | WARNING  | A `CALCULATED` result of a regular period whose net differs from the Employee's in the last `FINALIZED` regular period |
+
+`CONTRIBUTION_BILLING_DIFFERENCE` blocks a current Contribution Billing whose
+employee or employer share differs from the calculated one (#349). Its
+`details` store the difference: the billing, the contribution type, and the
+billed and calculated shares. A Payroll Preparer explains a difference by
+resolving the exception with a reason, and the explanation holds for that
+difference only: a later calculation of the period raises nothing while a
+`RESOLVED` exception of an earlier version names the same billing and the same
+calculated shares. A corrected billing or a changed calculation is a new
+difference, and blocks again.
 
 Two more checks block a `CALCULATED` result of a regular period that pays
 `OVERTIME_PAY` (#628).
