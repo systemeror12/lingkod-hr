@@ -322,7 +322,14 @@ owns is an Authorized Payroll Component Input in its own table (#27, #328).
 Payroll reads Attendance Payroll Facts and Personnel salary facts through their
 owning services and copies neither here (#329, #619).
 
-An input belongs to no period when accepted. After acceptance a trigger allows
+An input belongs to no period when accepted. Acceptance holds the Agency's
+payroll input acceptance lock in shared mode, which a calculation start takes
+exclusively (section 5), and stamps `accepted_at` from the clock while holding
+it, not from its transaction's start. An input therefore commits before a
+start fixes its cutoff, or is accepted after that cutoff, and every
+calculation version at one cutoff takes the same inputs (ADR 0014). A
+withdrawal takes the same shared lock before it locks the open periods. After
+acceptance a trigger allows
 only the status change, `consumed_by_payroll_period_id`, which the
 finalization transaction sets, and `source_correction_key`, which a withdrawal
 sets. Consumed inputs are immutable, apart from the
@@ -493,7 +500,9 @@ period to name none.
 start a calculation before it.
 
 Starting a calculation needs `payroll.periods.calculate` and claims the
-Payroll Preparer's `PREPARATION` function (#621). In one transaction it moves
+Payroll Preparer's `PREPARATION` function (#621). It first takes the Agency's
+payroll input acceptance lock exclusively, so Payroll Inputs being accepted
+commit first (section 4). In one transaction it moves
 the period from `DRAFT` to `CALCULATING`, advances `calculation_version`, and
 freezes that version's rule snapshot (section 6); a missing required rule
 refuses the start and changes nothing. A special period is refused unless it
@@ -893,6 +902,18 @@ Every case no recorded rule settles blocks and writes no line:
 - an amount that is not whole centavos, which no recorded rule rounds.
 
 A blocked result keeps none of its calculators' lines (section 7).
+
+The `LEAVE_MONETIZATION` component, which migration 0171 adds to the
+catalogue as an unconditional `EARNING` that is not GAA-revalidated (#626),
+pays each `MONETIZATION_EARNING` input the calculation takes as one `EARNING`
+line in a regular period: the input's frozen `amount`, its credits in
+`quantity`, no `rate`, since the rounded amount is not credits × a rate, and no
+`rule_version_id`, since the valuation and its authority are in the input's
+`payload_snapshot`, which `source_snapshot.valuation` copies. The line rests on
+the input in `payroll_line_sources`. `source_snapshot.taxTreatment` is
+`NON_TAXABLE` (BIR RR No. 29-2025 sec. 2.78.1(A)(3)(b); [authorities](../../research/native-payroll-component-authorities.md)).
+The input stays `PENDING`, so every calculation version until finalization
+pays it again (#335).
 
 The `YEAR_END_BONUS` and `CASH_GIFT` components, which migration 0165 adds to
 the catalogue with the `YEAR_END_BONUS_AND_CASH_GIFT` rule kind (#344), are
