@@ -5,6 +5,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import type { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
 import { payrollCalculationHash } from '../payroll-calculation/calculation-hash';
+import { lockPayrollInputAcceptance } from '../payroll-inputs/payroll-inputs.service';
 import { SPECIAL_PERIOD_COMPONENT_CODES } from '../payroll-calculation/payroll-calculation.service';
 import { claimPayrollFunction } from './payroll-period-actors';
 import { freezePayrollRuleSnapshot } from './payroll-rule-snapshots';
@@ -329,6 +330,8 @@ export class PayrollPeriodsService {
     }
     const input = parse(payrollPeriodCalculationStartSchema, rawInput);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      // Inputs being accepted commit first, so the cutoff fixes the input set.
+      await lockPayrollInputAcceptance(transaction, context.agencyId, 'EXCLUSIVE');
       const before = await findDraftForCommand(
         transaction,
         context,

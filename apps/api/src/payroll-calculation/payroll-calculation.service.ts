@@ -15,6 +15,7 @@ import {
   GsisContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { LeaveMonetizationCalculator } from './leave-monetization.calculator';
 import { PeraCalculator } from './pera.calculator';
 import type {
   CalculatedContribution,
@@ -104,6 +105,8 @@ export class PayrollCalculationService {
       daysWithoutPay,
       pera,
       commutableRata,
+      // It pays frozen input amounts and needs no collaborator, so it is no constructor parameter.
+      new LeaveMonetizationCalculator(),
       gsis,
       employeesCompensation,
     ];
