@@ -51,6 +51,7 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
     new YearEndBonusCalculator(),
     nothing,
     nothing,
+    nothing,
   );
   let admin: PrismaClient;
   let scheduleId: string;

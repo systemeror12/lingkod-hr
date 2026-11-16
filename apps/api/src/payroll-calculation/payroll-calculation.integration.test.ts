@@ -19,6 +19,7 @@ import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
 } from './contribution.calculators';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { dueCalculations } from './payroll-calculation.job';
@@ -76,6 +77,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     new YearEndBonusCalculator(),
     new PeraCalculator(),
     noRata,
+    new OvertimePayCalculator(),
   );
   let admin: PrismaClient;
   let scheduleId: string;
@@ -568,6 +570,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       new YearEndBonusCalculator(),
       new PeraCalculator(),
       noRata,
+      new OvertimePayCalculator(),
     );
     const first = jobOf(tenant, await startNext());
     expect(await broken.run(first)).toEqual({

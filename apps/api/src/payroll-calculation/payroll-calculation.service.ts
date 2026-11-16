@@ -32,6 +32,7 @@ import {
   YearEndBonusCalculator,
 } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { RULE_VERSION_LOADED_AFTER_SNAPSHOT } from '../payroll-periods/payroll-rule-snapshots';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
@@ -97,6 +98,7 @@ export class PayrollCalculationService {
     @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
     @Inject(PeraCalculator) pera: PeraCalculator,
     @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
+    @Inject(OvertimePayCalculator) overtimePay: OvertimePayCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last. PERA
     // reads basic salary and the days without pay.
@@ -105,6 +107,7 @@ export class PayrollCalculationService {
       daysWithoutPay,
       pera,
       commutableRata,
+      overtimePay,
       // It pays frozen input amounts and needs no collaborator, so it is no constructor parameter.
       new LeaveMonetizationCalculator(),
       gsis,

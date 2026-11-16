@@ -20,6 +20,7 @@ const CALCULATED_INPUT_KINDS = [
   'LEAVE_WITHOUT_PAY',
   'UNPAID_DEFICIT_REMAINDER',
   'MONETIZATION_EARNING',
+  'OVERTIME_HOURS',
 ];
 
 /** The period a calculation covers and the Agency Payroll Applicabilities its snapshot froze. */
@@ -243,6 +244,9 @@ export class PayrollSourcesReader {
           : [],
       ),
       ...sources.absenceFacts.map((fact) => fact.workDate),
+      ...sources.payrollInputs.flatMap((input) =>
+        input.inputKind === 'OVERTIME_HOURS' ? [input.effectiveDate] : [],
+      ),
     ].filter((date) => date < period.from || date > period.to);
     const byMonth = new Map<string, string[]>();
     for (const date of dates) {
