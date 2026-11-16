@@ -999,7 +999,7 @@ Attendance Period covers yet; a vehicle assignment for part of the month; and
 an amount that is not whole centavos. With no version in effect, every Employee
 blocks, since eligibility comes from the version.
 
-The `OVERTIME_PAY` component, which migration 0170 adds with the
+The `OVERTIME_PAY` component, which migration 0172 adds with the
 `OVERTIME_PAY` rule kind (#628), pays each `OVERTIME_HOURS` input in a regular
 period as one `EARNING` line resting on that input in `payroll_line_sources`
 ([authorities](../../research/overtime-coc-cto-authorities.md#overtime-pay-limits-for-347)).
