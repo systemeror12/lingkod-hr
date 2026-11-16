@@ -26,6 +26,7 @@ import {
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.test-fixtures';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 
@@ -55,6 +56,7 @@ describe.skipIf(!enabled)('Cash clothing allowance calculation in PostgreSQL', (
     new YearEndBonusCalculator(),
     new PeraCalculator(),
     new CommutableRataCalculator(),
+    new OvertimePayCalculator(),
     new ClothingAllowanceCalculator(),
   );
   let admin: PrismaClient;

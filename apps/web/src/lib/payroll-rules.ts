@@ -9,6 +9,7 @@ export type RuleKind =
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
   | 'PERA'
   | 'COMMUTABLE_RATA'
+  | 'OVERTIME_PAY'
   | 'CLOTHING_ALLOWANCE';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
@@ -50,6 +51,7 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   YEAR_END_BONUS_AND_CASH_GIFT: 'Year-end bonus and cash gift',
   PERA: 'PERA',
   COMMUTABLE_RATA: 'Commutable RATA',
+  OVERTIME_PAY: 'Overtime pay',
   CLOTHING_ALLOWANCE: 'Uniform/clothing allowance',
 };
 

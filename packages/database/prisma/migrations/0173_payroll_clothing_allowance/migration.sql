@@ -5,7 +5,7 @@
 -- DBM BC No. 2024-1) is a National Payroll Rule Version whose parameters hold
 -- the annual amount for full-time service and the days of service in the
 -- fiscal year the grant needs. The list keeps every kind earlier migrations
--- add, through 'COMMUTABLE_RATA' (0169), and 0170's 'OVERTIME_PAY' (#628).
+-- add, through 'COMMUTABLE_RATA' (0169), and 0172's 'OVERTIME_PAY' (#628).
 ALTER TABLE "national_payroll_rule_versions"
   DROP CONSTRAINT "national_payroll_rule_versions_rule_kind_check";
 ALTER TABLE "national_payroll_rule_versions"

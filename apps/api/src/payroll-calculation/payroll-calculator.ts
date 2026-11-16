@@ -42,6 +42,8 @@ export interface PendingPayrollInput {
   effectiveDate: string;
   /** Four decimal places, as `payroll_inputs.quantity` stores it. */
   quantity: string | null;
+  /** Four decimal places; only a `MONETIZATION_EARNING` input carries one. */
+  amount: string | null;
   payloadSnapshot: unknown;
 }
 

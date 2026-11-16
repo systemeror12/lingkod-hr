@@ -5,6 +5,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import type { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
 import { payrollCalculationHash } from '../payroll-calculation/calculation-hash';
+import { lockPayrollInputAcceptance } from '../payroll-inputs/payroll-inputs.service';
 import { SPECIAL_PERIOD_COMPONENT_CODES } from '../payroll-calculation/payroll-calculation.service';
 import { claimPayrollFunction } from './payroll-period-actors';
 import { freezePayrollRuleSnapshot } from './payroll-rule-snapshots';
@@ -309,6 +310,11 @@ export class PayrollPeriodsService {
    * queued job `PayrollCalculationJob` runs. A missing required rule refuses
    * the start and changes nothing. A concurrent second start finds the period
    * no longer DRAFT at its row version and is refused.
+   *
+   * A period calculated before is recalculated the same way, once it is back
+   * in DRAFT: the next version takes a fresh snapshot, and every earlier
+   * version's results, lines, and exceptions stay as they were. From
+   * FOR_REVIEW onward the start is refused with what must happen first (#624).
    */
   async startCalculation(
     context: RequestContext,
@@ -324,7 +330,15 @@ export class PayrollPeriodsService {
     }
     const input = parse(payrollPeriodCalculationStartSchema, rawInput);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const before = await findDraftForCommand(transaction, context, periodId, input.rowVersion);
+      // Inputs being accepted commit first, so the cutoff fixes the input set.
+      await lockPayrollInputAcceptance(transaction, context.agencyId, 'EXCLUSIVE');
+      const before = await findDraftForCommand(
+        transaction,
+        context,
+        periodId,
+        input.rowVersion,
+        calculationRefusal,
+      );
       if (before.runType !== 'REGULAR') {
         const named = await transaction.payComponent.findMany({
           where: { id: { in: before.components.map((component) => component.payComponentId) } },
@@ -461,12 +475,40 @@ async function findCreateConflict(
   return null;
 }
 
+/**
+ * Why a period that is not DRAFT cannot be calculated, and what returns it to
+ * DRAFT (hris-controls.md §5.20). A certified or approved version stands, and
+ * a finalized payroll is corrected only by a Payroll Adjustment (#328 D6 #13).
+ */
+export function calculationRefusal(status: string): string {
+  switch (status) {
+    case 'CALCULATING':
+      return 'The Payroll Period is CALCULATING; wait for its calculation to finish.';
+    case 'FOR_REVIEW':
+      return 'The Payroll Period is FOR_REVIEW; it is calculated again only after a reviewer returns it for correction.';
+    case 'CERTIFIED':
+      return 'The Payroll Period is CERTIFIED, and its certified calculation version stands. It is calculated again only after the certification is revoked and the period is returned for correction.';
+    case 'APPROVED':
+      return 'The Payroll Period is APPROVED, and its approved calculation version stands. It is calculated again only after it is returned before finalization and then returned for correction.';
+    case 'FINALIZED':
+      return 'The Payroll Period is FINALIZED and is never calculated again; a Payroll Adjustment corrects it.';
+    case 'VOIDED':
+      return 'The Payroll Period is VOIDED, which is final.';
+    default:
+      return notDraft(status);
+  }
+}
+
+const notDraft = (status: string) =>
+  `The Payroll Period is ${status}; this command applies only while it is DRAFT.`;
+
 /** The DRAFT period at `rowVersion`, after claiming the actor's PREPARATION function. */
 async function findDraftForCommand(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
   periodId: string,
   rowVersion: number,
+  refusal: (status: string) => string = notDraft,
 ) {
   const period = await transaction.payrollPeriod.findUnique({
     where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
@@ -486,11 +528,7 @@ async function findDraftForCommand(
     );
   }
   if (period.status !== 'DRAFT') {
-    throw new PayrollPeriodsServiceError(
-      `The Payroll Period is ${period.status}; this command applies only while it is DRAFT.`,
-      409,
-      'PAYROLL_PERIOD_NOT_DRAFT',
-    );
+    throw new PayrollPeriodsServiceError(refusal(period.status), 409, 'PAYROLL_PERIOD_NOT_DRAFT');
   }
   if (period.rowVersion !== rowVersion) throw stale();
   await claimPreparation(transaction, context, periodId);

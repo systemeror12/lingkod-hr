@@ -19,7 +19,12 @@ import { OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE } from './commutable-rata.ca
 import { CLOTHING_ALLOWANCE_COMPONENT_CODE } from './clothing-allowance.calculator';
 
 /** The input kinds a calculator takes; any other kind stays for its own calculator. */
-const SALARY_INPUT_KINDS = ['LEAVE_WITHOUT_PAY', 'UNPAID_DEFICIT_REMAINDER'];
+const CALCULATED_INPUT_KINDS = [
+  'LEAVE_WITHOUT_PAY',
+  'UNPAID_DEFICIT_REMAINDER',
+  'MONETIZATION_EARNING',
+  'OVERTIME_HOURS',
+];
 
 /** The period a calculation covers and the Agency Payroll Applicabilities its snapshot froze. */
 export interface CalculationScope {
@@ -80,7 +85,7 @@ export class PayrollSourcesReader {
       where: {
         agencyId,
         status: 'PENDING',
-        inputKind: { in: SALARY_INPUT_KINDS },
+        inputKind: { in: CALCULATED_INPUT_KINDS },
         acceptedAt: { lte: cutoffAt },
       },
       orderBy: [{ employeeId: 'asc' }, { effectiveDate: 'asc' }, { id: 'asc' }],
@@ -92,6 +97,7 @@ export class PayrollSourcesReader {
         sourceId: true,
         effectiveDate: true,
         quantity: true,
+        amount: true,
         payloadSnapshot: true,
       },
     });
@@ -146,6 +152,7 @@ export class PayrollSourcesReader {
             sourceId: input.sourceId,
             effectiveDate: input.effectiveDate.toISOString().slice(0, 10),
             quantity: input.quantity?.toFixed(4) ?? null,
+            amount: input.amount?.toFixed(4) ?? null,
             payloadSnapshot: input.payloadSnapshot,
           })),
         absenceFacts: facts.absenceFacts.filter(
@@ -302,6 +309,9 @@ export class PayrollSourcesReader {
           : [],
       ),
       ...sources.absenceFacts.map((fact) => fact.workDate),
+      ...sources.payrollInputs.flatMap((input) =>
+        input.inputKind === 'OVERTIME_HOURS' ? [input.effectiveDate] : [],
+      ),
     ].filter((date) => date < period.from || date > period.to);
     const byMonth = new Map<string, string[]>();
     for (const date of dates) {

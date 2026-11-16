@@ -15,6 +15,7 @@ import {
   GsisContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
+import { LeaveMonetizationCalculator } from './leave-monetization.calculator';
 import { PeraCalculator } from './pera.calculator';
 import type {
   CalculatedContribution,
@@ -31,6 +32,8 @@ import {
   YearEndBonusCalculator,
 } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
+import { RULE_VERSION_LOADED_AFTER_SNAPSHOT } from '../payroll-periods/payroll-rule-snapshots';
 import {
   CLOTHING_ALLOWANCE_COMPONENT_CODE,
   ClothingAllowanceCalculator,
@@ -101,6 +104,7 @@ export class PayrollCalculationService {
     @Inject(YearEndBonusCalculator) yearEndBonus: YearEndBonusCalculator,
     @Inject(PeraCalculator) pera: PeraCalculator,
     @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
+    @Inject(OvertimePayCalculator) overtimePay: OvertimePayCalculator,
     @Inject(ClothingAllowanceCalculator) clothingAllowance: ClothingAllowanceCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last. PERA
@@ -110,6 +114,9 @@ export class PayrollCalculationService {
       daysWithoutPay,
       pera,
       commutableRata,
+      overtimePay,
+      // It pays frozen input amounts and needs no collaborator, so it is no constructor parameter.
+      new LeaveMonetizationCalculator(),
       gsis,
       employeesCompensation,
     ];
@@ -354,6 +361,10 @@ export class PayrollCalculationService {
         periodFrom: context.periodFrom,
       })
     ).blocking;
+    // A rule version loaded while this version was queued marked it (#624).
+    blockingExceptions += await transaction.payrollException.count({
+      where: { ...job, exceptionType: RULE_VERSION_LOADED_AFTER_SNAPSHOT },
+    });
 
     if (blockingExceptions > 0) {
       const reason = `${blockingExceptions} blocking exception${blockingExceptions === 1 ? '' : 's'} in calculation version ${job.calculationVersion}; correct the source or hold the Employee, then calculate again.`;

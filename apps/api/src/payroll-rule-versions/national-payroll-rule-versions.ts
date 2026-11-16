@@ -14,6 +14,7 @@ export type NationalPayrollRuleKind =
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
   | 'PERA'
   | 'COMMUTABLE_RATA'
+  | 'OVERTIME_PAY'
   | 'CLOTHING_ALLOWANCE';
 
 /**
@@ -299,6 +300,46 @@ const commutableRataFile = z
   })
   .strict();
 
+/** A premium over the hourly rate, as a multiplier above 1: `1.25` is 125%. */
+const premium = z
+  .string()
+  .regex(/^[1-9]\.\d{1,4}$/, 'A premium is a multiplier with up to 4 places, such as 1.25.')
+  .refine((value) => new Prisma.Decimal(value).gt(1), 'A premium is greater than 1.');
+
+/**
+ * The Overtime Pay rule of CSC-DBM JC No. 2, s. 2015 (research
+ * overtime-coc-cto-authorities.md, "Overtime Pay limits for #347";
+ * native-payroll-component-authorities.md, overtime row). The hourly rate is
+ * the monthly salary ÷ `workingDaysPerMonth` ÷ `workHoursPerDay` (item 9.3),
+ * paid at `workdayPremium` on a scheduled workday and `nonWorkdayPremium` on a
+ * rest day, scheduled day off, holiday, or special non-working day (item 9.4).
+ * A non-workday pays at most `nonWorkdayPaidHoursLimit` hours (item 10.5). A
+ * year's Overtime Pay may not exceed `employeeAnnualCapShare` of the
+ * Employee's basic salary for the year (item 10.6), nor the Agency's total
+ * `agencyAnnualCapShare` of its Personnel Services budget (item 10.7).
+ */
+export const overtimePayParameters = z
+  .object({
+    workingDaysPerMonth: z.int().positive(),
+    workHoursPerDay: z.int().positive(),
+    workdayPremium: premium,
+    nonWorkdayPremium: premium,
+    nonWorkdayPaidHoursLimit: z.int().positive(),
+    employeeAnnualCapShare: shareRate,
+    agencyAnnualCapShare: shareRate,
+  })
+  .strict();
+
+export type OvertimePayParameters = z.infer<typeof overtimePayParameters>;
+
+const overtimePayFile = z
+  .object({
+    ruleKind: z.literal('OVERTIME_PAY'),
+    ...ruleVersionFields,
+    parameters: overtimePayParameters,
+  })
+  .strict();
+
 /**
  * The cash uniform/clothing allowance rule of one fiscal year (FY 2026 GAA
  * sec. 64; DBM BC No. 2024-1; docs/research/clothing-allowance-authorities.md):
@@ -333,6 +374,7 @@ export const nationalPayrollRuleVersionFileSchema = z
     yearEndBonusAndCashGiftFile,
     peraFile,
     commutableRataFile,
+    overtimePayFile,
     clothingAllowanceFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {

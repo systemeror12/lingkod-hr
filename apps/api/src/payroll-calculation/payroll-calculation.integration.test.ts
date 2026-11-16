@@ -19,6 +19,7 @@ import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
 } from './contribution.calculators';
+import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { PeraCalculator } from './pera.calculator';
 import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
@@ -77,6 +78,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
     new YearEndBonusCalculator(),
     new PeraCalculator(),
     noRata,
+    new OvertimePayCalculator(),
     new ClothingAllowanceCalculator(),
   );
   let admin: PrismaClient;
@@ -570,6 +572,7 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
       new YearEndBonusCalculator(),
       new PeraCalculator(),
       noRata,
+      new OvertimePayCalculator(),
       new ClothingAllowanceCalculator(),
     );
     const first = jobOf(tenant, await startNext());

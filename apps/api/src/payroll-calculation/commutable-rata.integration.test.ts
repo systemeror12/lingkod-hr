@@ -50,6 +50,7 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
     new YearEndBonusCalculator(),
     noContribution,
     new CommutableRataCalculator(),
+    noContribution,
     new ClothingAllowanceCalculator(),
   );
   let admin: PrismaClient;
