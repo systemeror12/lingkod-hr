@@ -130,6 +130,8 @@ function sourcesOf(overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
     ],
     periodAttendance: attendance(22),
     officialVehicleAssignments: [],
+    clothingAllowanceGrants: [],
+    serviceSegmentAppointments: [],
     ...overrides,
   };
 }

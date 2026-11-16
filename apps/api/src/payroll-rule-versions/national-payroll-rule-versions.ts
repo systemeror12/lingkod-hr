@@ -14,7 +14,8 @@ export type NationalPayrollRuleKind =
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
   | 'PERA'
   | 'COMMUTABLE_RATA'
-  | 'OVERTIME_PAY';
+  | 'OVERTIME_PAY'
+  | 'CLOTHING_ALLOWANCE';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -339,6 +340,30 @@ const overtimePayFile = z
   })
   .strict();
 
+/**
+ * The cash uniform/clothing allowance rule of one fiscal year (FY 2026 GAA
+ * sec. 64; DBM BC No. 2024-1; docs/research/clothing-allowance-authorities.md):
+ * the annual amount for full-time service (items 6.1 and 8.1), and the days of
+ * service in the fiscal year the grant needs, six months counted as 180 days
+ * (items 8.1 and 9.1; Annex A example 3, under EO No. 292, sec. 31).
+ */
+export const clothingAllowanceParameters = z
+  .object({
+    annualAmount: pesoAmount,
+    minimumServiceDays: z.number().int().positive(),
+  })
+  .strict();
+
+export type ClothingAllowanceParameters = z.infer<typeof clothingAllowanceParameters>;
+
+const clothingAllowanceFile = z
+  .object({
+    ruleKind: z.literal('CLOTHING_ALLOWANCE'),
+    ...ruleVersionFields,
+    parameters: clothingAllowanceParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
   .discriminatedUnion('ruleKind', [
@@ -350,6 +375,7 @@ export const nationalPayrollRuleVersionFileSchema = z
     peraFile,
     commutableRataFile,
     overtimePayFile,
+    clothingAllowanceFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',

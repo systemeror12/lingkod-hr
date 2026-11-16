@@ -48,6 +48,7 @@ describe.skipIf(!enabled)('Overtime pay in PostgreSQL', () => {
     nothing,
     nothing,
     new OvertimePayCalculator(),
+    nothing,
   );
   let admin: PrismaClient;
   const tenants: PayrollTenant[] = [];

@@ -7,13 +7,16 @@ import {
   CompensationBasisService,
 } from '../compensation-basis/compensation-basis.service';
 import { readPositionTitlesInTransaction } from '../personnel-salary-facts/position-titles';
+import { readServiceSegmentAppointmentsInTransaction } from '../personnel-salary-facts/service-segment-appointments';
 import { leaveWithoutPayDays } from './days-without-pay.calculator';
 import type {
+  ClothingAllowanceGrant,
   EmployeePayrollSources,
   OfficialVehicleAssignment,
   PendingPayrollInput,
 } from './payroll-calculator';
 import { OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE } from './commutable-rata.calculator';
+import { CLOTHING_ALLOWANCE_COMPONENT_CODE } from './clothing-allowance.calculator';
 
 /** The input kinds a calculator takes; any other kind stays for its own calculator. */
 const CALCULATED_INPUT_KINDS = [
@@ -29,11 +32,17 @@ export interface CalculationScope {
   periodFrom: string;
   periodTo: string;
   agencyPayrollApplicabilityIds: readonly string[];
+  paymentDate: string;
 }
 
 type MonthSources = Pick<
   EmployeePayrollSources,
   'positionTitles' | 'periodAttendance' | 'officialVehicleAssignments'
+>;
+
+type SpecialSources = Pick<
+  EmployeePayrollSources,
+  'clothingAllowanceGrants' | 'serviceSegmentAppointments'
 >;
 
 /** What one calculation takes at its cutoff, for every Employee of the Agency. */
@@ -52,7 +61,10 @@ export interface AgencyPayrollSources {
  * For a regular period's month it also reads the position titles Personnel
  * records, the Attendance published for its Work Dates by the cutoff, and the
  * official-vehicle assignments the snapshot froze, which commutable RATA takes.
- * A special period pays no RATA, so it reads none of them.
+ * A special period pays no RATA, so it reads none of them. For a special
+ * period it reads instead the cash clothing allowance grants the snapshot
+ * froze that are in effect on the payment date, and the appointment nature
+ * behind each Service Segment Personnel records in the period.
  */
 @Injectable()
 export class PayrollSourcesReader {
@@ -124,6 +136,10 @@ export class PayrollSourcesReader {
       scope.runType === 'REGULAR'
         ? await this.monthSourcesInTransaction(transaction, agencyId, cutoffAt, scope)
         : null;
+    const special =
+      scope.runType === 'SPECIAL'
+        ? await this.specialSourcesInTransaction(transaction, agencyId, scope)
+        : null;
 
     return {
       forEmployee: (employeeId) => ({
@@ -148,8 +164,57 @@ export class PayrollSourcesReader {
           periodAttendance: { coveredDates: [], workDates: [] },
           officialVehicleAssignments: [],
         }),
+        ...(special?.(employeeId) ?? {
+          clothingAllowanceGrants: [],
+          serviceSegmentAppointments: [],
+        }),
       }),
     };
+  }
+
+  /** The clothing allowance's sources for a special period, by Employee. */
+  private async specialSourcesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    scope: CalculationScope,
+  ): Promise<(employeeId: string) => SpecialSources> {
+    const paymentDate = new Date(`${scope.paymentDate}T00:00:00.000Z`);
+    const component = await transaction.payComponent.findUniqueOrThrow({
+      where: { code: CLOTHING_ALLOWANCE_COMPONENT_CODE },
+      select: { id: true },
+    });
+    const grants = await transaction.agencyPayrollApplicability.findMany({
+      where: {
+        agencyId,
+        id: { in: [...scope.agencyPayrollApplicabilityIds] },
+        payComponentId: component.id,
+        effectiveFrom: { lte: paymentDate },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: paymentDate } }],
+      },
+      orderBy: { id: 'asc' },
+      select: { id: true, scope: true, employeeId: true, authorityDocumentVersionId: true },
+    });
+    const appointments = await readServiceSegmentAppointmentsInTransaction(
+      transaction,
+      agencyId,
+      scope.periodFrom,
+      scope.periodTo,
+    );
+    return (employeeId) => ({
+      clothingAllowanceGrants: grants
+        .filter((row) => row.employeeId === null || row.employeeId === employeeId)
+        .map((row): ClothingAllowanceGrant => ({
+          agencyPayrollApplicabilityId: row.id,
+          scope: row.scope as ClothingAllowanceGrant['scope'],
+          authorityDocumentVersionId: row.authorityDocumentVersionId,
+        })),
+      serviceSegmentAppointments: appointments
+        .filter((row) => row.employeeId === employeeId)
+        .map(({ serviceSegmentId, natureOfAppointment }) => ({
+          serviceSegmentId,
+          natureOfAppointment,
+        })),
+    });
   }
 
   /** RATA's sources for a regular period's month, grouped by Employee. */

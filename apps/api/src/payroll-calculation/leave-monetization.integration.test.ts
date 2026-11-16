@@ -52,6 +52,7 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
     nothing,
     nothing,
     nothing,
+    nothing,
   );
   let admin: PrismaClient;
   let scheduleId: string;

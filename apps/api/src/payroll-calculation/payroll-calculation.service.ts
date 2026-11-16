@@ -34,11 +34,16 @@ import {
 import { CommutableRataCalculator } from './commutable-rata.calculator';
 import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { RULE_VERSION_LOADED_AFTER_SNAPSHOT } from '../payroll-periods/payroll-rule-snapshots';
+import {
+  CLOTHING_ALLOWANCE_COMPONENT_CODE,
+  ClothingAllowanceCalculator,
+} from './clothing-allowance.calculator';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
   YEAR_END_BONUS_COMPONENT_CODE,
   CASH_GIFT_COMPONENT_CODE,
+  CLOTHING_ALLOWANCE_COMPONENT_CODE,
 ];
 
 /** One queued calculation: a CALCULATING period and the version it started. */
@@ -63,6 +68,7 @@ interface LockedPeriod {
   run_type: string;
   period_from: string;
   period_to: string;
+  payment_date: string;
 }
 
 /**
@@ -99,6 +105,7 @@ export class PayrollCalculationService {
     @Inject(PeraCalculator) pera: PeraCalculator,
     @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
     @Inject(OvertimePayCalculator) overtimePay: OvertimePayCalculator,
+    @Inject(ClothingAllowanceCalculator) clothingAllowance: ClothingAllowanceCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last. PERA
     // reads basic salary and the days without pay.
@@ -113,7 +120,7 @@ export class PayrollCalculationService {
       gsis,
       employeesCompensation,
     ];
-    this.specialCalculators = [yearEndBonus];
+    this.specialCalculators = [yearEndBonus, clothingAllowance];
   }
 
   async run(job: CalculationJob): Promise<CalculationOutcome> {
@@ -226,6 +233,7 @@ export class PayrollCalculationService {
         agencyPayrollApplicabilityIds: snapshot.items.flatMap(
           (item) => item.agencyPayrollApplicabilityId ?? [],
         ),
+        paymentDate: period.payment_date,
       },
     );
 
@@ -383,7 +391,8 @@ async function lockCalculatingPeriod(
     wait === 'SKIP LOCKED' ? Prisma.sql`FOR UPDATE SKIP LOCKED` : Prisma.sql`FOR UPDATE`;
   const [period] = await transaction.$queryRaw<LockedPeriod[]>`
     SELECT "status", "calculation_version", "run_type",
-           "period_from"::text AS "period_from", "period_to"::text AS "period_to"
+           "period_from"::text AS "period_from", "period_to"::text AS "period_to",
+           "payment_date"::text AS "payment_date"
     FROM "payroll_periods"
     WHERE "agency_id" = CAST(${job.agencyId} AS uuid)
       AND "id" = CAST(${job.payrollPeriodId} AS uuid)

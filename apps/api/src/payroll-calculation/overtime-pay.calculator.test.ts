@@ -119,6 +119,8 @@ const sourcesWith = (
   positionTitles: [],
   periodAttendance: { coveredDates: [], workDates: [] },
   officialVehicleAssignments: [],
+  clothingAllowanceGrants: [],
+  serviceSegmentAppointments: [],
 });
 
 const calculator = new OvertimePayCalculator();

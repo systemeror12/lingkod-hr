@@ -9,6 +9,7 @@ import type {
   RuleVersionWithEffectivity,
 } from '../payroll-rule-versions/national-payroll-rule-versions';
 import type { PositionTitleStretch } from '../personnel-salary-facts/position-titles';
+import type { ServiceSegmentAppointment } from '../personnel-salary-facts/service-segment-appointments';
 
 /**
  * A National Payroll Rule Version as the snapshot froze it. Its successor
@@ -64,6 +65,10 @@ export interface EmployeePayrollSources {
   periodAttendance: AttendanceWorkDatesByCutoff;
   /** The snapshot's official-vehicle assignments for this Employee or the whole Agency (#618). */
   officialVehicleAssignments: OfficialVehicleAssignment[];
+  /** For a special period: the cash clothing allowance grants in effect on its payment date (#631). */
+  clothingAllowanceGrants: ClothingAllowanceGrant[];
+  /** For a special period: the appointment nature behind each of the Employee's Service Segments in it. */
+  serviceSegmentAppointments: Omit<ServiceSegmentAppointment, 'employeeId'>[];
 }
 
 /** An Agency Payroll Applicability of `OFFICIAL_VEHICLE_ASSIGNMENT` the rule snapshot froze. */
@@ -73,6 +78,17 @@ export interface OfficialVehicleAssignment {
   authorityDocumentVersionId: string;
   effectiveFrom: string;
   effectiveTo: string | null;
+}
+
+/**
+ * An Agency Payroll Applicability of `CLOTHING_ALLOWANCE` the rule snapshot
+ * froze, for this Employee or the whole Agency: the Agency's record of a cash
+ * grant, whose authority is its internal guideline (DBM BC No. 2024-1 item 12.1).
+ */
+export interface ClothingAllowanceGrant {
+  agencyPayrollApplicabilityId: string;
+  scope: 'AGENCY' | 'EMPLOYEE';
+  authorityDocumentVersionId: string;
 }
 
 export type LineType = 'EARNING' | 'DEDUCTION' | 'EMPLOYER_SHARE' | 'INFORMATIONAL';

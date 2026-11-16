@@ -9,7 +9,8 @@ export type RuleKind =
   | 'YEAR_END_BONUS_AND_CASH_GIFT'
   | 'PERA'
   | 'COMMUTABLE_RATA'
-  | 'OVERTIME_PAY';
+  | 'OVERTIME_PAY'
+  | 'CLOTHING_ALLOWANCE';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -51,6 +52,7 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   PERA: 'PERA',
   COMMUTABLE_RATA: 'Commutable RATA',
   OVERTIME_PAY: 'Overtime pay',
+  CLOTHING_ALLOWANCE: 'Uniform/clothing allowance',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */

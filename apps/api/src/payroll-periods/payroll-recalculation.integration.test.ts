@@ -55,6 +55,7 @@ describe.skipIf(!enabled)('Payroll recalculation in PostgreSQL', () => {
     nothing,
     nothing,
     nothing,
+    nothing,
   );
   let admin: PrismaClient;
   let operator: PrismaClient;
