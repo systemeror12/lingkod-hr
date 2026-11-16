@@ -94,6 +94,7 @@ const overtime = (
     sourceId: `record-${inputs}`,
     effectiveDate: workDate,
     quantity: `${certifiedMinutes}.0000`,
+    amount: null,
     payloadSnapshot: {
       quantityUnit: 'MINUTE',
       certifiedMinutes,

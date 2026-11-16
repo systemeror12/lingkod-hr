@@ -6,6 +6,7 @@ import { PayrollCertificationService } from './payroll-certification.service';
 import { ruleVersionsInEffectDuring } from './payroll-rule-snapshots';
 import { PayrollPeriodsController } from './payroll-periods.controller';
 import {
+  calculationRefusal,
   isOneCalendarMonth,
   PayrollPeriodsService,
   PayrollPeriodsServiceError,
@@ -27,6 +28,21 @@ describe('a regular period month', () => {
     expect(isOneCalendarMonth('2026-03-02', '2026-04-01')).toBe(false);
     expect(isOneCalendarMonth('2026-03-01', '2026-04-30')).toBe(false);
     expect(isOneCalendarMonth('2026-03-16', '2026-03-31')).toBe(false);
+  });
+});
+
+describe('a refused recalculation', () => {
+  it('says why each status past DRAFT is not calculated again, and what comes first', () => {
+    expect(calculationRefusal('FOR_REVIEW')).toMatch(/after a reviewer returns it for correction/);
+    expect(calculationRefusal('CERTIFIED')).toMatch(
+      /certified calculation version stands.*certification is revoked/,
+    );
+    expect(calculationRefusal('APPROVED')).toMatch(
+      /approved calculation version stands.*returned before finalization/,
+    );
+    expect(calculationRefusal('FINALIZED')).toMatch(/never calculated again; a Payroll Adjustment/);
+    expect(calculationRefusal('VOIDED')).toMatch(/VOIDED, which is final/);
+    expect(calculationRefusal('CALCULATING')).toMatch(/wait for its calculation to finish/);
   });
 });
 
