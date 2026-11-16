@@ -13,6 +13,8 @@ import { calculationHash } from './calculation-hash';
 import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
+  PagIbigContributionCalculator,
+  PhilHealthContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { LeaveMonetizationCalculator } from './leave-monetization.calculator';
@@ -106,6 +108,8 @@ export class PayrollCalculationService {
     @Inject(CommutableRataCalculator) commutableRata: CommutableRataCalculator,
     @Inject(OvertimePayCalculator) overtimePay: OvertimePayCalculator,
     @Inject(ClothingAllowanceCalculator) clothingAllowance: ClothingAllowanceCalculator,
+    @Inject(PhilHealthContributionCalculator) philHealth: PhilHealthContributionCalculator,
+    @Inject(PagIbigContributionCalculator) pagIbig: PagIbigContributionCalculator,
   ) {
     // Contributions read the earnings before them, so they stay last. PERA
     // reads basic salary and the days without pay.
@@ -119,6 +123,8 @@ export class PayrollCalculationService {
       new LeaveMonetizationCalculator(),
       gsis,
       employeesCompensation,
+      philHealth,
+      pagIbig,
     ];
     this.specialCalculators = [yearEndBonus, clothingAllowance];
   }

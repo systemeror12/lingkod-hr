@@ -22,6 +22,8 @@ import { CommutableRataCalculator } from './commutable-rata.calculator';
 import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
+  PagIbigContributionCalculator,
+  PhilHealthContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationService } from './payroll-calculation.service';
@@ -58,6 +60,8 @@ describe.skipIf(!enabled)('Cash clothing allowance calculation in PostgreSQL', (
     new CommutableRataCalculator(),
     new OvertimePayCalculator(),
     new ClothingAllowanceCalculator(),
+    new PhilHealthContributionCalculator(),
+    new PagIbigContributionCalculator(),
   );
   let admin: PrismaClient;
   let ruleId: string;

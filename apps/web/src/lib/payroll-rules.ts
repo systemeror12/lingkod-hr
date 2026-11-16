@@ -10,7 +10,9 @@ export type RuleKind =
   | 'PERA'
   | 'COMMUTABLE_RATA'
   | 'OVERTIME_PAY'
-  | 'CLOTHING_ALLOWANCE';
+  | 'CLOTHING_ALLOWANCE'
+  | 'PHILHEALTH_CONTRIBUTION'
+  | 'PAGIBIG_CONTRIBUTION';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -53,6 +55,8 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   COMMUTABLE_RATA: 'Commutable RATA',
   OVERTIME_PAY: 'Overtime pay',
   CLOTHING_ALLOWANCE: 'Uniform/clothing allowance',
+  PHILHEALTH_CONTRIBUTION: 'PhilHealth contribution',
+  PAGIBIG_CONTRIBUTION: 'Pag-IBIG contribution',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */

@@ -6,6 +6,8 @@ import { BasicSalaryCalculator } from './basic-salary.calculator';
 import {
   EmployeesCompensationCalculator,
   GsisContributionCalculator,
+  PagIbigContributionCalculator,
+  PhilHealthContributionCalculator,
 } from './contribution.calculators';
 import { DaysWithoutPayCalculator } from './days-without-pay.calculator';
 import { PayrollCalculationJob } from './payroll-calculation.job';
@@ -29,6 +31,8 @@ import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
     CommutableRataCalculator,
     OvertimePayCalculator,
     ClothingAllowanceCalculator,
+    PhilHealthContributionCalculator,
+    PagIbigContributionCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

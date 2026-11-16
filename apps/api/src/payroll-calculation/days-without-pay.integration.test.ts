@@ -60,6 +60,8 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
     noContribution,
     noContribution,
     new ClothingAllowanceCalculator(),
+    noContribution,
+    noContribution,
   );
   let admin: PrismaClient;
   let scheduleId: string;
