@@ -36,7 +36,8 @@ describe.skipIf(!enabled)('PhilHealth and Pag-IBIG contributions in PostgreSQL',
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
-  // GSIS, EC, PERA, and RATA have their own tests; these fixtures freeze none of them.
+  // GSIS, EC, PERA, RATA, and the withholding tax have their own tests; these
+  // fixtures freeze none of them.
   const nothing = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -52,6 +53,7 @@ describe.skipIf(!enabled)('PhilHealth and Pag-IBIG contributions in PostgreSQL',
     nothing,
     new PhilHealthContributionCalculator(),
     new PagIbigContributionCalculator(),
+    nothing,
   );
   let admin: PrismaClient;
   let philHealthId: string;

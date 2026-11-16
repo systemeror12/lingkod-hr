@@ -39,7 +39,8 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
   } as unknown as PayrollMonetizationCalculator);
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
-  // Contributions, PERA, and RATA have their own tests; no fixture freezes their versions.
+  // Contributions, PERA, RATA, and the withholding tax have their own tests; no
+  // fixture freezes their versions.
   const nothing = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -49,6 +50,7 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
     nothing,
     nothing,
     new YearEndBonusCalculator(),
+    nothing,
     nothing,
     nothing,
     nothing,
@@ -163,7 +165,10 @@ describe.skipIf(!enabled)('Leave monetization in calculation in PostgreSQL', () 
     const rows = [];
     for (const line of result?.lines ?? []) {
       expect(line).toMatchObject({ lineType: 'EARNING', ruleVersionId: null, rate: null });
-      expect(line.sourceSnapshot).toMatchObject({ taxTreatment: 'NON_TAXABLE' });
+      expect(line.sourceSnapshot).toMatchObject({
+        taxTreatment: 'DE_MINIMIS',
+        deMinimisBenefit: 'MONETIZED_LEAVE_CREDITS',
+      });
       const sources = await admin.payrollLineSource.findMany({ where: { payrollLineId: line.id } });
       rows.push([
         sources.map((source) => source.payrollInputId).join(','),

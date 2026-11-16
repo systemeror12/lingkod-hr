@@ -1,4 +1,5 @@
 import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
+import type { DeMinimisBenefit } from '../payroll-rule-versions/national-payroll-rule-versions';
 import type {
   CalculatedLine,
   CalculationContext,
@@ -19,8 +20,9 @@ const TAX_AUTHORITY =
  * (payroll-schema.md §4), linked to the input in `payroll_line_sources`. The
  * line's quantity is the monetized credits; it has no rate, since the rounded
  * amount is not credits × a rate, and no rule version, since the valuation
- * and its authority travel in the input's payload. The amount is not subject
- * to income tax (RR No. 29-2025 sec. 2.78.1(A)(3)(b)).
+ * and its authority travel in the input's payload. The amount is a de minimis
+ * benefit with no ceiling for government employees (RR No. 29-2025 sec.
+ * 2.78.1(A)(3)(b)), which the `DE_MINIMIS_BENEFITS` rule version records.
  *
  * It runs in a regular period only: a special period pays only the components
  * it names, and none names this one. The input stays `PENDING`; finalization
@@ -55,7 +57,8 @@ export class LeaveMonetizationCalculator implements PayrollCalculator {
             sourceId: input.sourceId,
             valuationDate: input.effectiveDate,
             valuation: payload?.payrollValuation ?? null,
-            taxTreatment: 'NON_TAXABLE' satisfies TaxTreatment,
+            taxTreatment: 'DE_MINIMIS' satisfies TaxTreatment,
+            deMinimisBenefit: 'MONETIZED_LEAVE_CREDITS' satisfies DeMinimisBenefit,
             taxAuthority: TAX_AUTHORITY,
           },
           sourceRecords: [{ payrollInputId: input.id }],

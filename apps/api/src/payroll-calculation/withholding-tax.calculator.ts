@@ -1,0 +1,293 @@
+import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
+import { ruleVersionsInEffectDuring } from '../payroll-periods/payroll-rule-snapshots';
+import {
+  compensationWithholdingTaxParameters,
+  type CompensationWithholdingTaxParameters,
+  type DeMinimisBenefit,
+  deMinimisBenefitsParameters,
+  type NationalPayrollRuleKind,
+} from '../payroll-rule-versions/national-payroll-rule-versions';
+import {
+  blocking,
+  type CalculatedException,
+  type CalculatedLine,
+  type CalculationContext,
+  type CalculatorOutcome,
+  type EmployeePayrollSources,
+  type FrozenRuleVersion,
+  type PayrollCalculator,
+} from './payroll-calculator';
+import type { TaxTreatment } from './year-end-bonus.calculator';
+
+export const WITHHOLDING_TAX_COMPONENT_CODE = 'WITHHOLDING_TAX';
+const WITHHOLDING_TAX_RULE_KIND = 'COMPENSATION_WITHHOLDING_TAX';
+const DE_MINIMIS_RULE_KIND = 'DE_MINIMIS_BENEFITS';
+
+type Bracket = CompensationWithholdingTaxParameters['monthlyTable'][number];
+
+/**
+ * The tax Annex E's table withholds from a month's taxable compensation: the
+ * bracket with the highest compensation level the amount reaches, its base
+ * tax, and its rate of the amount over that level. The table is continuous
+ * (the rule version's schema checks it), so an amount on a level is taxed the
+ * same by either bracket. An amount below zero is taxed as zero.
+ */
+export function withholdingTaxDue(
+  taxableCompensation: Prisma.Decimal,
+  table: readonly Bracket[],
+): { bracket: Bracket; tax: Prisma.Decimal } {
+  let bracket = table[0]!;
+  for (const candidate of table) {
+    if (taxableCompensation.gte(candidate.compensationLevel)) bracket = candidate;
+  }
+  const excess = Prisma.Decimal.max(taxableCompensation.sub(bracket.compensationLevel), 0);
+  return {
+    bracket,
+    tax: new Prisma.Decimal(bracket.baseTax).add(excess.mul(bracket.rateOverCompensationLevel)),
+  };
+}
+
+/**
+ * Periodic compensation withholding tax (BRD PAY-004; BIR RR No. 11-2018,
+ * sec. 2.79 and Annex E; docs/research/native-payroll-component-authorities.md,
+ * "Tax treatment"). It runs last in a regular period and reads each earlier
+ * line's `source.taxTreatment`:
+ *
+ * - `REGULAR_COMPENSATION` earnings, less the salary deducted for days
+ *   without pay, are taxable;
+ * - `MANDATORY_CONTRIBUTION` deductions, the employee's GSIS, PhilHealth, and
+ *   Pag-IBIG shares, are excluded from it;
+ * - `NON_TAXABLE` earnings, such as PERA and RATA, are not;
+ * - `DE_MINIMIS` earnings are not, up to their benefit's annual ceiling in
+ *   the `DE_MINIMIS_BENEFITS` version, counting what the year's finalized
+ *   payrolls already paid.
+ *
+ * The month's taxable compensation is taxed by the monthly table of the
+ * `COMPENSATION_WITHHOLDING_TAX` version (ADR 0015: a regular period is one
+ * calendar month). It writes the tax as a `WITHHOLDING_TAX` deduction, zero
+ * included, and a Tax Line with the taxable and non-taxable compensation and
+ * the year-to-date figures it read. Non-taxable compensation is the non-taxable
+ * earnings and the excluded contributions, so the two add up to the
+ * compensation paid.
+ *
+ * Every case it does not settle blocks:
+ *
+ * - no withholding tax version in effect on every date of the month, or one
+ *   that changes inside it, and the same for the de minimis version when a
+ *   line is de minimis;
+ * - supplementary compensation or 13th-month pay and other benefits, which
+ *   #351 withholds;
+ * - a line with no tax treatment, or one its line type does not admit;
+ * - a de minimis benefit the version does not list, or one over its ceiling,
+ *   whose excess counts toward the ₱90,000 exclusion (#351);
+ * - a tax that is not whole centavos, which no recorded rule rounds.
+ *
+ * With no earning it writes nothing: basic salary's own exception already
+ * blocks the Employee.
+ */
+@Injectable()
+export class WithholdingTaxCalculator implements PayrollCalculator {
+  calculate(
+    _basis: CompensationBasis,
+    context: CalculationContext,
+    earlierLines: readonly CalculatedLine[],
+    sources: EmployeePayrollSources,
+  ): CalculatorOutcome {
+    const exceptions: CalculatedException[] = [];
+    const withholding = ruleVersionFor(WITHHOLDING_TAX_RULE_KIND, context, exceptions);
+
+    let taxable = new Prisma.Decimal(0);
+    let nonTaxableEarnings = new Prisma.Decimal(0);
+    let contributions = new Prisma.Decimal(0);
+    const deMinimis = new Map<string, Prisma.Decimal>();
+    const unsettled: { componentCode: string; lineType: string; taxTreatment: unknown }[] = [];
+    const compensation = earlierLines.filter(
+      (line) => line.lineType === 'EARNING' || line.lineType === 'DEDUCTION',
+    );
+    for (const line of compensation) {
+      const amount = new Prisma.Decimal(line.amount);
+      const earning = line.lineType === 'EARNING';
+      const treatment = line.source.taxTreatment as TaxTreatment | undefined;
+      if (treatment === 'REGULAR_COMPENSATION') {
+        taxable = earning ? taxable.add(amount) : taxable.sub(amount);
+      } else if (treatment === 'MANDATORY_CONTRIBUTION' && !earning) {
+        contributions = contributions.add(amount);
+      } else if (treatment === 'NON_TAXABLE' && earning) {
+        nonTaxableEarnings = nonTaxableEarnings.add(amount);
+      } else if (treatment === 'DE_MINIMIS' && earning) {
+        const benefit = String(line.source.deMinimisBenefit ?? '');
+        deMinimis.set(benefit, (deMinimis.get(benefit) ?? new Prisma.Decimal(0)).add(amount));
+      } else if (
+        treatment === 'SUPPLEMENTARY_COMPENSATION' ||
+        treatment === 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS'
+      ) {
+        exceptions.push(
+          blocking(
+            'WITHHOLDING_TAX_SUPPLEMENTARY_UNSETTLED',
+            `${line.componentCode} is ${treatment === 'SUPPLEMENTARY_COMPENSATION' ? 'supplementary compensation' : '13th-month pay and other benefits'}, which this calculation does not yet withhold (#351).`,
+            { componentCode: line.componentCode, taxTreatment: treatment, amount: line.amount },
+          ),
+        );
+      } else {
+        unsettled.push({
+          componentCode: line.componentCode,
+          lineType: line.lineType,
+          taxTreatment: line.source.taxTreatment ?? null,
+        });
+      }
+    }
+    if (unsettled.length > 0) {
+      exceptions.push(
+        blocking(
+          'WITHHOLDING_TAX_TREATMENT_UNSETTLED',
+          `No tax treatment settles ${unsettled.map((line) => `${line.componentCode} (${line.lineType}, ${String(line.taxTreatment)})`).join(', ')}, so its taxable compensation is not calculated.`,
+          { lines: unsettled },
+        ),
+      );
+    }
+
+    const yearToDate = sources.taxYearToDate;
+    const version =
+      deMinimis.size > 0 ? ruleVersionFor(DE_MINIMIS_RULE_KIND, context, exceptions) : null;
+    if (version) {
+      const ceilings = new Map<string, string | null>(
+        deMinimisBenefitsParameters
+          .parse(version.parameters)
+          .benefits.map(({ benefit, annualCeiling }) => [benefit, annualCeiling]),
+      );
+      for (const [benefit, amount] of deMinimis) {
+        const ceiling = ceilings.get(benefit);
+        const paid = new Prisma.Decimal(
+          yearToDate.deMinimisBenefits[benefit as DeMinimisBenefit] ?? 0,
+        );
+        if (ceiling === undefined) {
+          exceptions.push(
+            blocking(
+              'DE_MINIMIS_BENEFIT_NOT_IN_RULE',
+              `De minimis version ${version.code} does not list the benefit "${benefit}", so its ${amount.toFixed(2)} is not classified.`,
+              { benefit, amount: amount.toFixed(4), ruleVersionCode: version.code },
+            ),
+          );
+        } else if (ceiling !== null && paid.add(amount).gt(ceiling)) {
+          exceptions.push(
+            blocking(
+              'DE_MINIMIS_CEILING_EXCEEDED',
+              `${benefit} of ${amount.toFixed(2)}, with ${paid.toFixed(2)} already paid in ${yearToDate.taxYear}, is over its annual ceiling of ${ceiling} in de minimis version ${version.code}. The excess counts toward the ₱90,000 exclusion, which this calculation does not yet apply (#351).`,
+              {
+                benefit,
+                amount: amount.toFixed(4),
+                yearToDate: paid.toFixed(4),
+                annualCeiling: ceiling,
+                ruleVersionCode: version.code,
+              },
+            ),
+          );
+        } else {
+          nonTaxableEarnings = nonTaxableEarnings.add(amount);
+        }
+      }
+    }
+
+    if (exceptions.length > 0 || !withholding) return { lines: [], exceptions };
+    if (!compensation.some((line) => line.lineType === 'EARNING')) {
+      return { lines: [], exceptions: [] };
+    }
+
+    taxable = taxable.sub(contributions);
+    const parameters = compensationWithholdingTaxParameters.parse(withholding.parameters);
+    const { bracket, tax } = withholdingTaxDue(taxable, parameters.monthlyTable);
+    if (!tax.equals(tax.toDecimalPlaces(2))) {
+      return {
+        lines: [],
+        exceptions: [
+          blocking(
+            'WITHHOLDING_TAX_ROUNDING_UNSETTLED',
+            `The tax ${tax.toString()} on taxable compensation ${taxable.toFixed(2)} is not a whole number of centavos, and no recorded rule rounds it.`,
+            { taxableCompensation: taxable.toFixed(4), tax: tax.toString() },
+          ),
+        ],
+      };
+    }
+    const nonTaxable = nonTaxableEarnings.add(contributions);
+    return {
+      lines: [
+        {
+          componentCode: WITHHOLDING_TAX_COMPONENT_CODE,
+          lineType: 'DEDUCTION',
+          ruleVersionId: withholding.id,
+          quantity: null,
+          rate: null,
+          amount: tax.toFixed(4),
+          source: {
+            ruleVersionCode: withholding.code,
+            table: 'MONTHLY',
+            taxableCompensation: taxable.toFixed(4),
+            nonTaxableCompensation: nonTaxable.toFixed(4),
+            excludedContributions: contributions.toFixed(4),
+            bracket,
+            formula: 'base tax + rate × (taxable compensation − compensation level)',
+            lines: compensation.map((line) => ({
+              componentCode: line.componentCode,
+              lineType: line.lineType,
+              amount: line.amount,
+              taxTreatment: line.source.taxTreatment,
+              ...(line.source.deMinimisBenefit
+                ? { deMinimisBenefit: line.source.deMinimisBenefit }
+                : {}),
+            })),
+          },
+        },
+      ],
+      exceptions: [],
+      tax: {
+        taxableCompensation: taxable.toFixed(4),
+        nonTaxableCompensation: nonTaxable.toFixed(4),
+        withholdingTax: tax.toFixed(4),
+        ruleVersionId: withholding.id,
+        yearToDateSnapshot: yearToDate,
+      },
+    };
+  }
+}
+
+/**
+ * The one version of a kind in effect on every date of the month, or null
+ * with a blocking exception: none in effect, or one that changes in the month.
+ */
+function ruleVersionFor(
+  ruleKind: NationalPayrollRuleKind,
+  context: CalculationContext,
+  exceptions: CalculatedException[],
+): FrozenRuleVersion | null {
+  const prefix = ruleKind === WITHHOLDING_TAX_RULE_KIND ? 'WITHHOLDING_TAX' : 'DE_MINIMIS';
+  const versions = context.snapshotRuleVersions.filter((version) => version.ruleKind === ruleKind);
+  const coverage = ruleVersionsInEffectDuring(
+    ruleKind,
+    versions,
+    context.periodFrom,
+    context.periodTo,
+  );
+  if (coverage.status === 'NOT_IN_EFFECT') {
+    exceptions.push(
+      blocking(
+        `${prefix}_RULE_NOT_IN_EFFECT`,
+        `${coverage.reason} Withholding tax is not calculated without it.`,
+        { ruleKind },
+      ),
+    );
+    return null;
+  }
+  if (coverage.ruleVersionIds.length > 1) {
+    exceptions.push(
+      blocking(
+        `${prefix}_RULE_CHANGE_IN_PERIOD`,
+        `The ${ruleKind} version changes inside ${context.periodFrom} to ${context.periodTo}. No recorded rule apportions the month's withholding tax across a change.`,
+        { ruleVersionIds: coverage.ruleVersionIds },
+      ),
+    );
+    return null;
+  }
+  return versions.find((version) => version.id === coverage.ruleVersionIds[0]) ?? null;
+}

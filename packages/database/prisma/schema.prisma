@@ -5760,6 +5760,7 @@ model PayrollEmployee {
   payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_employees_period_fkey")
   lines         PayrollLine[]
   contributions ContributionLine[]
+  taxLine       TaxLine?
 
   @@unique([payrollPeriodId, calculationVersion, employeeId], map: "payroll_employees_period_version_employee_key")
   @@unique([agencyId, id])
@@ -5835,6 +5836,25 @@ model ContributionLine {
 
   @@unique([payrollEmployeeId, contributionType], map: "contribution_lines_employee_type_key")
   @@map("contribution_lines")
+}
+
+/// The withholding tax of a result: the taxable and non-taxable compensation,
+/// the tax, the rule version, and the year-to-date figures it read (#350).
+/// Immutable.
+model TaxLine {
+  id                     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String  @map("agency_id") @db.Uuid
+  payrollEmployeeId      String  @map("payroll_employee_id") @db.Uuid
+  taxableCompensation    Decimal @map("taxable_compensation") @db.Decimal(19, 4)
+  nonTaxableCompensation Decimal @map("non_taxable_compensation") @db.Decimal(19, 4)
+  withholdingTax         Decimal @map("withholding_tax") @db.Decimal(19, 4)
+  ruleVersionId          String  @map("rule_version_id") @db.Uuid
+  yearToDateSnapshot     Json    @map("year_to_date_snapshot")
+
+  payrollEmployee PayrollEmployee @relation(fields: [agencyId, payrollEmployeeId], references: [agencyId, id], onDelete: Restrict, map: "tax_lines_payroll_employee_fkey")
+
+  @@unique([agencyId, payrollEmployeeId], map: "tax_lines_payroll_employee_key")
+  @@map("tax_lines")
 }
 
 /// A calculation warning or blocker of one calculation version. It names the

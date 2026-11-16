@@ -20,6 +20,7 @@ import {
   type FrozenRuleVersion,
   type PayrollCalculator,
 } from './payroll-calculator';
+import type { TaxTreatment } from './year-end-bonus.calculator';
 
 export const GSIS_PERSONAL_SHARE_COMPONENT_CODE = 'GSIS_PERSONAL_SHARE';
 export const GSIS_GOVERNMENT_SHARE_COMPONENT_CODE = 'GSIS_GOVERNMENT_SHARE';
@@ -406,7 +407,11 @@ const shareOf = (base: Prisma.Decimal, rate: string) => base.mul(rate);
 
 const isWholeCentavos = (amount: Prisma.Decimal) => amount.equals(amount.toDecimalPlaces(2));
 
-/** A share as a line: quantity is the base, so quantity × rate is the amount. */
+/**
+ * A share as a line: quantity is the base, so quantity × rate is the amount.
+ * Each share is a mandatory contribution; the withholding tax excludes the
+ * employee's share from taxable compensation.
+ */
 function shareLine(
   componentCode: string,
   lineType: 'DEDUCTION' | 'EMPLOYER_SHARE',
@@ -422,7 +427,7 @@ function shareLine(
     quantity: base.toFixed(4),
     rate: new Prisma.Decimal(rate).toFixed(8),
     amount: shareOf(base, rate).toFixed(4),
-    source,
+    source: { ...source, taxTreatment: 'MANDATORY_CONTRIBUTION' satisfies TaxTreatment },
   };
 }
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { AttendanceDeficitChargesService } from '../attendance-deficit-charges/attendance-deficit-charges.service';
 import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
 import {
@@ -14,6 +14,7 @@ import type {
   EmployeePayrollSources,
   OfficialVehicleAssignment,
   PendingPayrollInput,
+  TaxYearToDate,
 } from './payroll-calculator';
 import { OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE } from './commutable-rata.calculator';
 import { CLOTHING_ALLOWANCE_COMPONENT_CODE } from './clothing-allowance.calculator';
@@ -65,6 +66,9 @@ export interface AgencyPayrollSources {
  * period it reads instead the cash clothing allowance grants the snapshot
  * froze that are in effect on the payment date, and the appointment nature
  * behind each Service Segment Personnel records in the period.
+ *
+ * For every period it reads each Employee's tax figures from the Agency's
+ * finalized payrolls of the tax year, the withholding tax's year to date.
  */
 @Injectable()
 export class PayrollSourcesReader {
@@ -140,6 +144,11 @@ export class PayrollSourcesReader {
       scope.runType === 'SPECIAL'
         ? await this.specialSourcesInTransaction(transaction, agencyId, scope)
         : null;
+    const taxYearToDate = await taxYearToDateInTransaction(
+      transaction,
+      agencyId,
+      scope.paymentDate,
+    );
 
     return {
       forEmployee: (employeeId) => ({
@@ -168,6 +177,7 @@ export class PayrollSourcesReader {
           clothingAllowanceGrants: [],
           serviceSegmentAppointments: [],
         }),
+        taxYearToDate: taxYearToDate(employeeId),
       }),
     };
   }
@@ -332,4 +342,84 @@ export class PayrollSourcesReader {
     }
     return bases;
   }
+}
+
+/**
+ * Each Employee's tax figures from the Agency's `FINALIZED` Payroll Periods
+ * whose payment date falls in the calendar year of `paymentDate`, at each
+ * period's final calculation version: the sums of their tax lines, and the
+ * amount of each de minimis benefit their lines paid. A held Employee has no
+ * result in a period, so the period adds nothing for them.
+ */
+async function taxYearToDateInTransaction(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  paymentDate: string,
+): Promise<(employeeId: string) => TaxYearToDate> {
+  const taxYear = Number(paymentDate.slice(0, 4));
+  const periods = await transaction.payrollPeriod.findMany({
+    where: {
+      agencyId,
+      status: 'FINALIZED',
+      paymentDate: {
+        gte: new Date(`${taxYear}-01-01T00:00:00.000Z`),
+        lte: new Date(`${taxYear}-12-31T00:00:00.000Z`),
+      },
+    },
+    orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }],
+    select: { id: true, calculationVersion: true },
+  });
+  const results =
+    periods.length === 0
+      ? []
+      : await transaction.payrollEmployee.findMany({
+          where: {
+            agencyId,
+            OR: periods.map((period) => ({
+              payrollPeriodId: period.id,
+              calculationVersion: period.calculationVersion,
+            })),
+          },
+          select: {
+            employeeId: true,
+            payrollPeriodId: true,
+            taxLine: {
+              select: {
+                taxableCompensation: true,
+                nonTaxableCompensation: true,
+                withholdingTax: true,
+              },
+            },
+            lines: {
+              where: { sourceSnapshot: { path: ['taxTreatment'], equals: 'DE_MINIMIS' } },
+              select: { amount: true, sourceSnapshot: true },
+            },
+          },
+        });
+  const zero = new Prisma.Decimal(0);
+  return (employeeId) => {
+    const own = results.filter((result) => result.employeeId === employeeId);
+    const sum = (amounts: Prisma.Decimal[]) =>
+      amounts.reduce((total, amount) => total.add(amount), zero).toFixed(4);
+    const deMinimis = new Map<string, Prisma.Decimal>();
+    for (const line of own.flatMap((result) => result.lines)) {
+      const benefit = String(
+        (line.sourceSnapshot as { deMinimisBenefit?: unknown }).deMinimisBenefit,
+      );
+      deMinimis.set(benefit, (deMinimis.get(benefit) ?? zero).add(line.amount));
+    }
+    const taxLines = own.flatMap((result) => (result.taxLine ? [result.taxLine] : []));
+    return {
+      taxYear,
+      payrollPeriodIds: periods
+        .filter((period) => own.some((result) => result.payrollPeriodId === period.id))
+        .map((period) => period.id),
+      taxableCompensation: sum(taxLines.map((line) => line.taxableCompensation)),
+      nonTaxableCompensation: sum(taxLines.map((line) => line.nonTaxableCompensation)),
+      withholdingTax: sum(taxLines.map((line) => line.withholdingTax)),
+      deMinimisBenefits: Object.fromEntries(
+        [...deMinimis].map(([benefit, amount]) => [benefit, amount.toFixed(4)]),
+      ),
+    };
+  };
 }

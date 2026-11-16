@@ -97,6 +97,14 @@ const sourcesOf = (overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
   officialVehicleAssignments: [],
   clothingAllowanceGrants: [],
   serviceSegmentAppointments: [],
+  taxYearToDate: {
+    taxYear: 2026,
+    payrollPeriodIds: [],
+    taxableCompensation: '0.0000',
+    nonTaxableCompensation: '0.0000',
+    withholdingTax: '0.0000',
+    deMinimisBenefits: {},
+  },
   ...overrides,
 });
 

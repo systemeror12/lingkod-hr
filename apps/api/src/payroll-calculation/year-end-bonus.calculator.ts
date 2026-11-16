@@ -6,6 +6,7 @@ import type {
   PersonnelFacts,
 } from '../compensation-basis/compensation-basis.service';
 import {
+  type DeMinimisBenefit,
   isoDateOf,
   yearEndBonusAndCashGiftParameters,
   type YearEndBonusAndCashGiftParameters,
@@ -24,11 +25,24 @@ export const CASH_GIFT_COMPONENT_CODE = 'CASH_GIFT';
 export const YEAR_END_BONUS_RULE_KIND = 'YEAR_END_BONUS_AND_CASH_GIFT';
 
 /**
- * How the tax calculator (#351) treats a line, recorded in its source. The
- * bonus counts toward the yearly exclusion for 13th-month pay and other
- * benefits (RR No. 11-2018 sec. 2.78.1(B)(11); research register R26). The
- * cash gift is a de minimis benefit, as #344 decides (RR No. 29-2025 sec.
- * 2.78.1(A)(3)(i); register open question 8).
+ * How the withholding tax calculator (#350, #351) treats a line, recorded in
+ * its source as `taxTreatment` (docs/research/native-payroll-component-authorities.md,
+ * "Tax treatment"). A line with none blocks the tax.
+ *
+ * `REGULAR_COMPENSATION` is taxable regular compensation: basic salary, and
+ * the salary deducted for days without pay, which reduces the salary actually
+ * paid (RR No. 11-2018 sec. 2.79(B)).
+ *
+ * `MANDATORY_CONTRIBUTION` is the employee's mandatory GSIS, PhilHealth, or
+ * Pag-IBIG share, excluded from taxable compensation (RR No. 11-2018;
+ * research/official-personnel-compensation-boundaries.md §5.1).
+ *
+ * The bonus counts toward the yearly exclusion for 13th-month pay and other
+ * benefits (RR No. 11-2018 sec. 2.78.1(B)(11); research register R26). A
+ * `DE_MINIMIS` line names its `deMinimisBenefit`, whose ceiling the
+ * `DE_MINIMIS_BENEFITS` rule version holds: the cash gift is a Christmas gift,
+ * as #344 decides (RR No. 29-2025 sec. 2.78.1(A)(3)(i); register open
+ * question 8).
  *
  * `NON_TAXABLE` is a GAA allowance not subject to income or withholding tax
  * (RR No. 11-2018 sec. 2.79(B)): PERA, and RATA, which reimburses
@@ -39,6 +53,8 @@ export const YEAR_END_BONUS_RULE_KIND = 'YEAR_END_BONUS_AND_CASH_GIFT';
  * minimum-wage-earner exemption is not assumed for anyone.
  */
 export type TaxTreatment =
+  | 'REGULAR_COMPENSATION'
+  | 'MANDATORY_CONTRIBUTION'
   | 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS'
   | 'DE_MINIMIS'
   | 'NON_TAXABLE'
@@ -175,7 +191,11 @@ export class YearEndBonusCalculator implements PayrollCalculator {
           quantity: null,
           rate: null,
           amount: amount.toFixed(4),
-          source: { ...source, taxTreatment: 'DE_MINIMIS' satisfies TaxTreatment },
+          source: {
+            ...source,
+            taxTreatment: 'DE_MINIMIS' satisfies TaxTreatment,
+            deMinimisBenefit: 'CHRISTMAS_GIFT' satisfies DeMinimisBenefit,
+          },
         });
       }
     }

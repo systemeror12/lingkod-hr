@@ -12,6 +12,7 @@ import {
   type CalculatorOutcome,
   type PayrollCalculator,
 } from './payroll-calculator';
+import type { TaxTreatment } from './year-end-bonus.calculator';
 
 export const BASIC_SALARY_COMPONENT_CODE = 'BASIC_SALARY';
 
@@ -100,6 +101,7 @@ export class BasicSalaryCalculator implements PayrollCalculator {
               monthlyRate: first.salarySchedule.monthlyRate,
             },
             derivation: first.rate.derivation,
+            taxTreatment: 'REGULAR_COMPENSATION' satisfies TaxTreatment,
           },
         },
       ],
