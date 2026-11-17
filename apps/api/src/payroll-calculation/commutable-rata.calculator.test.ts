@@ -116,6 +116,8 @@ function sourcesOf(overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
   return {
     payrollInputs: [],
     absenceFacts: [],
+    nightDutyFacts: [],
+    nightShiftDifferentialRates: [],
     unchargedDeficitFacts: [],
     valuationBases: [],
     positionTitles: [

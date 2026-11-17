@@ -1,6 +1,7 @@
 import type { UnchargedDeficitFact } from '../attendance-deficit-charges/attendance-deficit-charges.service';
 import type {
   AttendanceAbsenceFact,
+  AttendanceNightDutyFact,
   AttendanceWorkDatesByCutoff,
 } from '../attendance-periods/attendance-periods.types';
 import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
@@ -57,6 +58,10 @@ export interface PendingPayrollInput {
 export interface EmployeePayrollSources {
   payrollInputs: PendingPayrollInput[];
   absenceFacts: AttendanceAbsenceFact[];
+  /** NIGHT_DUTY facts published by the cutoff that no finalized payroll consumed. */
+  nightDutyFacts: AttendanceNightDutyFact[];
+  /** The snapshot's approved night-shift differential rates for this Employee or the whole Agency (#627). */
+  nightShiftDifferentialRates: NightShiftDifferentialRate[];
   /** Leave's report of the Employee's deficit facts owed a charge (ADR 0012). */
   unchargedDeficitFacts: (UnchargedDeficitFact & { publicationId: string })[];
   valuationBases: CompensationBasis[];
@@ -109,10 +114,28 @@ export interface ClothingAllowanceGrant {
   authorityDocumentVersionId: string;
 }
 
+/**
+ * An approved Authorized Payroll Component Input of the
+ * `NIGHT_SHIFT_DIFFERENTIAL` component the rule snapshot froze: the agency
+ * head's percentage of the hourly basic rate (RA No. 11701, sec. 1).
+ */
+export interface NightShiftDifferentialRate {
+  authorizedPayrollComponentInputId: string;
+  scope: 'AGENCY' | 'EMPLOYEE';
+  /** A fraction with eight decimal places: `0.10000000` is 10%. */
+  rate: string;
+  authorityDocumentVersionId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
 export type LineType = 'EARNING' | 'DEDUCTION' | 'EMPLOYER_SHARE' | 'INFORMATIONAL';
 
 /** A record a Payroll Line rests on, written to `payroll_line_sources`. */
-export type LineSourceRecord = { payrollInputId: string } | { attendancePayrollFactId: string };
+export type LineSourceRecord =
+  | { payrollInputId: string }
+  | { attendancePayrollFactId: string }
+  | { authorizedPayrollComponentInputId: string };
 
 /**
  * One calculated Payroll Line (BRD PAY-007): its component, rule version,

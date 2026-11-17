@@ -73,6 +73,8 @@ const noYearToDate: TaxYearToDate = {
 const sourcesWith = (taxYearToDate: TaxYearToDate = noYearToDate): EmployeePayrollSources => ({
   payrollInputs: [],
   absenceFacts: [],
+  nightDutyFacts: [],
+  nightShiftDifferentialRates: [],
   unchargedDeficitFacts: [],
   valuationBases: [],
   positionTitles: [],

@@ -12,12 +12,14 @@ import { leaveWithoutPayDays } from './days-without-pay.calculator';
 import type {
   ClothingAllowanceGrant,
   EmployeePayrollSources,
+  NightShiftDifferentialRate,
   OfficialVehicleAssignment,
   PendingPayrollInput,
   TaxYearToDate,
 } from './payroll-calculator';
 import { OFFICIAL_VEHICLE_ASSIGNMENT_COMPONENT_CODE } from './commutable-rata.calculator';
 import { CLOTHING_ALLOWANCE_COMPONENT_CODE } from './clothing-allowance.calculator';
+import { NIGHT_SHIFT_DIFFERENTIAL_COMPONENT_CODE } from './night-shift-differential.calculator';
 
 /** The input kinds a calculator takes; any other kind stays for its own calculator. */
 const CALCULATED_INPUT_KINDS = [
@@ -27,12 +29,16 @@ const CALCULATED_INPUT_KINDS = [
   'OVERTIME_HOURS',
 ];
 
-/** The period a calculation covers and the Agency Payroll Applicabilities its snapshot froze. */
+/**
+ * The period a calculation covers, and the Agency Payroll Applicabilities and
+ * Authorized Payroll Component Inputs its snapshot froze.
+ */
 export interface CalculationScope {
   runType: string;
   periodFrom: string;
   periodTo: string;
   agencyPayrollApplicabilityIds: readonly string[];
+  authorizedPayrollComponentInputIds: readonly string[];
   paymentDate: string;
 }
 
@@ -54,9 +60,10 @@ export interface AgencyPayrollSources {
 /**
  * Reads the sources a calculation takes at its rule snapshot's cutoff (ADR
  * 0014): every `PENDING` Payroll Input accepted at or before it, every
- * `ABSENCE` fact published at or before it that no finalized payroll
- * consumed, and Leave's report of deficit facts owed a charge in those
- * publications (ADR 0012). Attendance is read only through Attendance's
+ * `ABSENCE` and `NIGHT_DUTY` fact published at or before it that no finalized
+ * payroll consumed, and Leave's report of deficit facts owed a charge in those
+ * publications (ADR 0012). It also reads the approved night-shift
+ * differential rates the snapshot froze (#627). Attendance is read only through Attendance's
  * application service, and deficit charges only through Leave's.
  *
  * For a regular period's month it also reads the position titles Personnel
@@ -116,7 +123,9 @@ export class PayrollSourcesReader {
           where: {
             agencyId,
             releasedAt: null,
-            attendancePayrollFactId: { in: facts.absenceFacts.map((fact) => fact.id) },
+            attendancePayrollFactId: {
+              in: [...facts.absenceFacts, ...facts.nightDutyFacts].map((fact) => fact.id),
+            },
           },
           select: { attendancePayrollFactId: true },
         })
@@ -135,6 +144,8 @@ export class PayrollSourcesReader {
         ]);
       }
     }
+
+    const rates = await this.nightShiftDifferentialRatesInTransaction(transaction, agencyId, scope);
 
     const month =
       scope.runType === 'REGULAR'
@@ -167,6 +178,12 @@ export class PayrollSourcesReader {
         absenceFacts: facts.absenceFacts.filter(
           (fact) => fact.employeeId === employeeId && !consumed.has(fact.id),
         ),
+        nightDutyFacts: facts.nightDutyFacts.filter(
+          (fact) => fact.employeeId === employeeId && !consumed.has(fact.id),
+        ),
+        nightShiftDifferentialRates: rates
+          .filter((row) => row.employeeId === null || row.employeeId === employeeId)
+          .map((row) => row.rate),
         unchargedDeficitFacts: uncharged.get(employeeId) ?? [],
         ...(month?.(employeeId) ?? {
           positionTitles: [],
@@ -180,6 +197,48 @@ export class PayrollSourcesReader {
         taxYearToDate: taxYearToDate(employeeId),
       }),
     };
+  }
+
+  /** The approved `RATE` inputs of night-shift differential the snapshot froze. */
+  private async nightShiftDifferentialRatesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    scope: CalculationScope,
+  ): Promise<{ employeeId: string | null; rate: NightShiftDifferentialRate }[]> {
+    const component = await transaction.payComponent.findUniqueOrThrow({
+      where: { code: NIGHT_SHIFT_DIFFERENTIAL_COMPONENT_CODE },
+      select: { id: true },
+    });
+    const rows = await transaction.authorizedPayrollComponentInput.findMany({
+      where: {
+        agencyId,
+        id: { in: [...scope.authorizedPayrollComponentInputIds] },
+        payComponentId: component.id,
+        valueKind: 'RATE',
+        status: 'APPROVED',
+      },
+      orderBy: [{ effectiveFrom: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        scope: true,
+        employeeId: true,
+        value: true,
+        authorityDocumentVersionId: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+      },
+    });
+    return rows.map((row) => ({
+      employeeId: row.employeeId,
+      rate: {
+        authorizedPayrollComponentInputId: row.id,
+        scope: row.scope as NightShiftDifferentialRate['scope'],
+        rate: row.value.toFixed(8),
+        authorityDocumentVersionId: row.authorityDocumentVersionId,
+        effectiveFrom: row.effectiveFrom.toISOString().slice(0, 10),
+        effectiveTo: row.effectiveTo?.toISOString().slice(0, 10) ?? null,
+      },
+    }));
   }
 
   /** The clothing allowance's sources for a special period, by Employee. */
@@ -319,6 +378,7 @@ export class PayrollSourcesReader {
           : [],
       ),
       ...sources.absenceFacts.map((fact) => fact.workDate),
+      ...sources.nightDutyFacts.map((fact) => fact.workDate),
       ...sources.payrollInputs.flatMap((input) =>
         input.inputKind === 'OVERTIME_HOURS' ? [input.effectiveDate] : [],
       ),

@@ -231,6 +231,25 @@ describe('rule version file', () => {
     expect(clothing({ ...valid, taxTreatment: 'DE_MINIMIS' })).toBe(false);
   });
 
+  it('holds the night-shift differential ceiling and divisors, and no rate, as typed parameters', () => {
+    const nightShift = (parameters: unknown) => {
+      const file: Record<string, unknown> = {
+        ...scheduleFile('night-shift', '2022-05-13', null),
+        ruleKind: 'NIGHT_SHIFT_DIFFERENTIAL',
+        parameters,
+      };
+      delete file.salaryGradeRates;
+      return nationalPayrollRuleVersionFileSchema.safeParse(file).success;
+    };
+    const valid = { rateCeiling: '0.20', workingDaysPerMonth: 22, workHoursPerDay: 8 };
+    expect(nightShift(valid)).toBe(true);
+    expect(nightShift({ ...valid, rateCeiling: '20' })).toBe(false);
+    expect(nightShift({ ...valid, rateCeiling: '0' })).toBe(false);
+    expect(nightShift({ ...valid, workHoursPerDay: 7.5 })).toBe(false);
+    expect(nightShift({ ...valid, workingDaysPerMonth: undefined })).toBe(false);
+    expect(nightShift({ ...valid, defaultRate: '0.10' })).toBe(false);
+  });
+
   it('reads exactly one JSON file argument', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'rule-version-'));
     const path = join(directory, 'schedule.json');

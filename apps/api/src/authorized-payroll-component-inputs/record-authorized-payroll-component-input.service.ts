@@ -1,8 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { NIGHT_SHIFT_DIFFERENTIAL_COMPONENT_CODE } from '../payroll-calculation/night-shift-differential.calculator';
+import { nightShiftDifferentialParameters } from '../payroll-rule-versions/national-payroll-rule-versions';
 import {
   AuthorizedInputServiceError,
   REIMBURSABLE_RATA_COMPONENT_CODE,
@@ -16,6 +19,58 @@ import {
 } from './authorized-payroll-component-inputs.schemas';
 
 const toDate = (value: string) => new Date(`${value}T00:00:00.000Z`);
+
+/**
+ * A night-shift differential input is the agency head's rate: a share of the
+ * hourly basic rate, such as `0.10` for 10%, applied to every night hour while
+ * it is in effect. It may not exceed the ceiling of RA No. 11701, sec. 1 in
+ * any National Payroll Rule Version in effect during its effective period, and
+ * with no such version loaded it cannot be checked, so it is refused.
+ */
+async function assertNightShiftDifferentialRate(
+  transaction: Prisma.TransactionClient,
+  input: {
+    valueKind: string;
+    value: string;
+    paymentSchedule: string;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+  },
+): Promise<void> {
+  if (input.valueKind !== 'RATE' || input.paymentSchedule !== 'EACH_REGULAR_PERIOD') {
+    throw new AuthorizedInputServiceError(
+      'A night-shift differential is a RATE paid in EACH_REGULAR_PERIOD: a share of the hourly basic rate, such as 0.10 for 10%.',
+      422,
+      'AUTHORIZED_INPUT_NIGHT_SHIFT_RATE_INVALID',
+    );
+  }
+  const versions = await transaction.nationalPayrollRuleVersion.findMany({
+    where: {
+      ruleKind: 'NIGHT_SHIFT_DIFFERENTIAL',
+      ...(input.effectiveTo ? { effectiveFrom: { lte: toDate(input.effectiveTo) } } : {}),
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: toDate(input.effectiveFrom) } }],
+    },
+    orderBy: { effectiveFrom: 'asc' },
+    select: { code: true, parameters: true },
+  });
+  if (versions.length === 0) {
+    throw new AuthorizedInputServiceError(
+      'No NIGHT_SHIFT_DIFFERENTIAL National Payroll Rule Version is in effect during the input, so its rate cannot be checked against the RA No. 11701 ceiling.',
+      409,
+      'AUTHORIZED_INPUT_CEILING_RULE_MISSING',
+    );
+  }
+  for (const version of versions) {
+    const { rateCeiling } = nightShiftDifferentialParameters.parse(version.parameters);
+    if (new Prisma.Decimal(input.value).greaterThan(rateCeiling)) {
+      throw new AuthorizedInputServiceError(
+        `The rate ${input.value} exceeds the ${rateCeiling} of the hourly basic rate that RA No. 11701, sec. 1 allows (${version.code}).`,
+        422,
+        'AUTHORIZED_INPUT_ABOVE_CEILING',
+      );
+    }
+  }
+}
 
 /**
  * Record an Authorized Payroll Component Input as `RECORDED`. It takes effect
@@ -67,6 +122,9 @@ export class RecordAuthorizedPayrollComponentInputService {
           409,
           'AUTHORIZED_INPUT_CEILING_RULE_MISSING',
         );
+      }
+      if (component.code.toUpperCase() === NIGHT_SHIFT_DIFFERENTIAL_COMPONENT_CODE) {
+        await assertNightShiftDifferentialRate(transaction, input);
       }
 
       if (input.employeeId) {

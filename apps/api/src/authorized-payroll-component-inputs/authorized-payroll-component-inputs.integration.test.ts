@@ -3,6 +3,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DocumentsService } from '../documents/documents.service';
+import { NIGHT_SHIFT_DIFFERENTIAL_COMPONENT_CODE } from '../payroll-calculation/night-shift-differential.calculator';
 import { ApproveAuthorizedPayrollComponentInputService } from './approve-authorized-payroll-component-input.service';
 import { REIMBURSABLE_RATA_COMPONENT_CODE } from './authorized-payroll-component-inputs.records';
 import type { RecordAuthorizedInput } from './authorized-payroll-component-inputs.schemas';
@@ -139,12 +140,14 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
   const tenants: Tenant[] = [];
   let home: Tenant;
   let foreign: Tenant;
-  const components: Record<'honoraria' | 'basic' | 'rata', string> = {
+  const components: Record<'honoraria' | 'basic' | 'rata' | 'nightShift', string> = {
     honoraria: '',
     basic: '',
     rata: '',
+    nightShift: '',
   };
   let createdRata = false;
+  const nightShiftCode = `${prefix}NIGHT-SHIFT-${suffix}`;
   const record = new RecordAuthorizedPayrollComponentInputService(
     new DocumentsService({} as never, {} as never),
   );
@@ -173,6 +176,7 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
         });
       }
       await transaction.payComponent.deleteMany({ where: { code: { startsWith: prefix } } });
+      await transaction.nationalPayrollRuleVersion.deleteMany({ where: { code: nightShiftCode } });
       if (createdRata) {
         await transaction.payComponent.deleteMany({
           where: { code: REIMBURSABLE_RATA_COMPONENT_CODE },
@@ -209,6 +213,28 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
       components.rata = (await component(REIMBURSABLE_RATA_COMPONENT_CODE, true)).id;
       createdRata = true;
     }
+    // Migration 0177 loads the catalogue row; the rule version is a fixture
+    // with RA No. 11701's values, in 2895, clear of every other test's versions.
+    components.nightShift = (
+      await admin.payComponent.findUniqueOrThrow({
+        where: { code: NIGHT_SHIFT_DIFFERENTIAL_COMPONENT_CODE },
+      })
+    ).id;
+    await admin.nationalPayrollRuleVersion.create({
+      data: {
+        ruleKind: 'NIGHT_SHIFT_DIFFERENTIAL',
+        code: nightShiftCode,
+        name: 'Test night-shift differential',
+        issuingAuthority: 'Test authority',
+        issuanceReference: 'Test fixture, not an issuance',
+        sourceUrl: 'https://example.test/night-shift-differential',
+        verifiedOn: new Date('2026-11-16'),
+        verifiedBy: 'LingkodHR test fixture',
+        effectiveFrom: new Date('2895-01-01'),
+        effectiveTo: new Date('2895-12-31'),
+        parameters: { rateCeiling: '0.20', workingDaysPerMonth: 22, workHoursPerDay: 8 },
+      },
+    });
   });
 
   afterAll(async () => {
@@ -355,6 +381,54 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
       record.execute(recorder, submission({ authorityDocumentVersionId: home.draftAuthority.id })),
     ).rejects.toMatchObject({ code: 'AUTHORIZED_INPUT_AUTHORITY_INVALID' });
     expect(await homeCount()).toBe(before);
+  });
+
+  it('refuses a night-shift differential rate above the RA No. 11701 ceiling, not a rate, or with no rule to check it', async () => {
+    const recorder = contextOf(home, home.recorder);
+    const nightShift = (overrides: Partial<RecordAuthorizedInput> = {}) =>
+      submission({
+        payComponentId: components.nightShift,
+        valueKind: 'RATE',
+        value: '0.2',
+        paymentSchedule: 'EACH_REGULAR_PERIOD',
+        effectiveFrom: '2895-01-01',
+        effectiveTo: '2895-12-31',
+        ...overrides,
+      });
+    const before = await homeCount();
+    await expect(
+      record.execute(recorder, nightShift({ value: '0.20000001' })),
+    ).rejects.toMatchObject({ code: 'AUTHORIZED_INPUT_ABOVE_CEILING' });
+    // A percentage written as 20 is 2,000% as a share, so it is refused too.
+    await expect(record.execute(recorder, nightShift({ value: '20' }))).rejects.toMatchObject({
+      code: 'AUTHORIZED_INPUT_ABOVE_CEILING',
+    });
+    await expect(
+      record.execute(recorder, nightShift({ valueKind: 'AMOUNT', value: '100' })),
+    ).rejects.toMatchObject({ code: 'AUTHORIZED_INPUT_NIGHT_SHIFT_RATE_INVALID' });
+    await expect(
+      record.execute(recorder, nightShift({ paymentSchedule: 'ONCE' })),
+    ).rejects.toMatchObject({ code: 'AUTHORIZED_INPUT_NIGHT_SHIFT_RATE_INVALID' });
+    // No version is in effect in 2896, so no rate can be shown within a ceiling.
+    await expect(
+      record.execute(
+        recorder,
+        nightShift({ value: '0.1', effectiveFrom: '2896-01-01', effectiveTo: null }),
+      ),
+    ).rejects.toMatchObject({ code: 'AUTHORIZED_INPUT_CEILING_RULE_MISSING' });
+    expect(await homeCount()).toBe(before);
+
+    // The ceiling itself is allowed, for the whole Agency or one Employee.
+    await expect(record.execute(recorder, nightShift())).resolves.toMatchObject({
+      valueKind: 'RATE',
+      value: '0.20000000',
+    });
+    await expect(
+      record.execute(
+        recorder,
+        nightShift({ scope: 'EMPLOYEE', employeeId: home.employee.id, value: '0.1' }),
+      ),
+    ).resolves.toMatchObject({ scope: 'EMPLOYEE', value: '0.10000000' });
   });
 
   it('needs payroll.inputs.adjust for the whole Agency to record or approve', async () => {
@@ -535,6 +609,7 @@ describe.skipIf(!enabled)('Authorized Payroll Component Inputs in PostgreSQL', (
     });
     const componentIds = listed.payComponents.map(({ id }) => id);
     expect(componentIds).toContain(components.honoraria);
+    expect(componentIds).toContain(components.nightShift);
     expect(componentIds).not.toContain(components.basic);
 
     for (const permissions of [

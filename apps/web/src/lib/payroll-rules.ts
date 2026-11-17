@@ -13,6 +13,7 @@ export type RuleKind =
   | 'CLOTHING_ALLOWANCE'
   | 'PHILHEALTH_CONTRIBUTION'
   | 'PAGIBIG_CONTRIBUTION'
+  | 'NIGHT_SHIFT_DIFFERENTIAL'
   | 'COMPENSATION_WITHHOLDING_TAX'
   | 'DE_MINIMIS_BENEFITS';
 
@@ -59,6 +60,7 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   CLOTHING_ALLOWANCE: 'Uniform/clothing allowance',
   PHILHEALTH_CONTRIBUTION: 'PhilHealth contribution',
   PAGIBIG_CONTRIBUTION: 'Pag-IBIG contribution',
+  NIGHT_SHIFT_DIFFERENTIAL: 'Night-shift differential',
   COMPENSATION_WITHHOLDING_TAX: 'Compensation withholding tax',
   DE_MINIMIS_BENEFITS: 'De minimis benefits',
 };
