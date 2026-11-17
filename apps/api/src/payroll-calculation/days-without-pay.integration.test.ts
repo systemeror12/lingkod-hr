@@ -45,8 +45,8 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
   const { attendance, deficitCharges } = attendanceAndLeave();
-  // Contributions, PERA, and RATA have their own tests; these fixtures freeze
-  // no GSIS, EC, PERA, or RATA version.
+  // Contributions, PERA, RATA, and the withholding tax have their own tests;
+  // these fixtures freeze no GSIS, EC, PERA, RATA, or tax version.
   const noContribution = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -60,6 +60,7 @@ describe.skipIf(!enabled)('Salary for days without pay in PostgreSQL', () => {
     noContribution,
     noContribution,
     new ClothingAllowanceCalculator(),
+    noContribution,
     noContribution,
     noContribution,
   );

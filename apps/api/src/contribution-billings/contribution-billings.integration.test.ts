@@ -56,6 +56,7 @@ describe.skipIf(!enabled)('Contribution billing reconciliation in PostgreSQL', (
     nothing,
     new PhilHealthContributionCalculator(),
     nothing,
+    nothing,
   );
   let admin: PrismaClient;
   const tenants: PayrollTenant[] = [];

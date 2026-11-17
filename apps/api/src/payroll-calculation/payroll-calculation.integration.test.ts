@@ -69,8 +69,9 @@ describe.skipIf(!enabled)('Basic salary and contribution calculation in PostgreS
   ] as const;
   // RATA has its own test; here no RATA rule is loaded, so it would block everyone.
   const noRata = { calculate: () => ({ lines: [], exceptions: [] }) };
-  // PhilHealth and Pag-IBIG have their own test; no version of either is loaded here.
-  const noPhilHealthOrPagIbig = [noRata, noRata] as const;
+  // PhilHealth, Pag-IBIG, and the withholding tax have their own tests; no
+  // version of any is loaded here.
+  const noPhilHealthOrPagIbig = [noRata, noRata, noRata] as const;
   const calculation = new PayrollCalculationService(
     basis,
     new BasicSalaryCalculator(),

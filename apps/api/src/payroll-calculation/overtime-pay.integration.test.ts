@@ -34,8 +34,8 @@ describe.skipIf(!enabled)('Overtime pay in PostgreSQL', () => {
   const inputs = new PayrollInputsService();
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
-  // Contributions, PERA, and RATA have their own tests; these fixtures freeze
-  // no GSIS, EC, PERA, or RATA version.
+  // Contributions, PERA, RATA, and the withholding tax have their own tests;
+  // these fixtures freeze no GSIS, EC, PERA, RATA, or tax version.
   const nothing = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -48,6 +48,7 @@ describe.skipIf(!enabled)('Overtime pay in PostgreSQL', () => {
     nothing,
     nothing,
     new OvertimePayCalculator(),
+    nothing,
     nothing,
     nothing,
     nothing,

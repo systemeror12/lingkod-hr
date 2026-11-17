@@ -686,7 +686,6 @@ informational amount
 | quantity              | decimal      | Yes   |                                   | Units                                             |
 | rate                  | decimal      | Yes   |                                   | Rate                                              |
 | amount                | decimal      | No    |                                   | Amount                                            |
-| taxable_amount        | decimal      | No    |                                   | Taxable base                                      |
 | contribution_base     | decimal      | No    |                                   | Contribution base                                 |
 | source_snapshot       | json         | No    |                                   | Traceability                                      |
 | payroll_adjustment_id | uuid         | Yes   | FK payroll_adjustments            | The Payroll Adjustment this line settles          |
@@ -801,6 +800,15 @@ Withholding-tax calculation detail
 **Constraints and indexes**
 
 - One tax line per Payroll Employee Result.
+- The withholding tax writes it in a regular period from each line's
+  `source_snapshot.taxTreatment`: regular compensation less the mandatory
+  employee shares is taxed by the `COMPENSATION_WITHHOLDING_TAX` version's
+  monthly table, and de minimis benefits are held to the
+  `DE_MINIMIS_BENEFITS` version's annual ceilings. The tax is also a
+  `WITHHOLDING_TAX` Payroll Line. The year-to-date snapshot sums the Agency's
+  finalized periods paid in the same calendar year. A missing or changing
+  version, supplementary compensation (#351), an untreated line, a de minimis
+  benefit over its ceiling, and a tax that is not whole centavos block instead.
 
 **Deletion behavior:** Immutable.
 

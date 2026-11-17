@@ -12,7 +12,9 @@ export type RuleKind =
   | 'OVERTIME_PAY'
   | 'CLOTHING_ALLOWANCE'
   | 'PHILHEALTH_CONTRIBUTION'
-  | 'PAGIBIG_CONTRIBUTION';
+  | 'PAGIBIG_CONTRIBUTION'
+  | 'COMPENSATION_WITHHOLDING_TAX'
+  | 'DE_MINIMIS_BENEFITS';
 
 /** One National Payroll Rule Version as `GET /national-payroll-rule-versions` lists it. */
 export interface RuleVersionSummary {
@@ -57,6 +59,8 @@ export const ruleKindLabel: Record<RuleKind, string> = {
   CLOTHING_ALLOWANCE: 'Uniform/clothing allowance',
   PHILHEALTH_CONTRIBUTION: 'PhilHealth contribution',
   PAGIBIG_CONTRIBUTION: 'Pag-IBIG contribution',
+  COMPENSATION_WITHHOLDING_TAX: 'Compensation withholding tax',
+  DE_MINIMIS_BENEFITS: 'De minimis benefits',
 };
 
 /** The payee categories an authorized-deductions version may list, as the API names them. */
