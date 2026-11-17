@@ -9,8 +9,10 @@ import {
 import { readPositionTitlesInTransaction } from '../personnel-salary-facts/position-titles';
 import { readServiceSegmentAppointmentsInTransaction } from '../personnel-salary-facts/service-segment-appointments';
 import { leaveWithoutPayDays } from './days-without-pay.calculator';
+import type { DeductionPayeeCategory } from '../payroll-rule-versions/national-payroll-rule-versions';
 import type {
   ClothingAllowanceGrant,
+  DeductionObligationDue,
   EmployeePayrollSources,
   NightShiftDifferentialRate,
   OfficialVehicleAssignment,
@@ -76,6 +78,8 @@ export interface AgencyPayrollSources {
  *
  * For every period it reads each Employee's tax figures from the Agency's
  * finalized payrolls of the tax year, the withholding tax's year to date.
+ * For a regular period it reads each Employee's Deduction Obligations in
+ * effect on the period's last day, as they stood at the cutoff.
  */
 @Injectable()
 export class PayrollSourcesReader {
@@ -160,6 +164,10 @@ export class PayrollSourcesReader {
       agencyId,
       scope.paymentDate,
     );
+    const deductionObligations =
+      scope.runType === 'REGULAR'
+        ? await deductionObligationsInTransaction(transaction, agencyId, cutoffAt, scope.periodTo)
+        : () => [];
 
     return {
       forEmployee: (employeeId) => ({
@@ -195,6 +203,7 @@ export class PayrollSourcesReader {
           serviceSegmentAppointments: [],
         }),
         taxYearToDate: taxYearToDate(employeeId),
+        deductionObligations: deductionObligations(employeeId),
       }),
     };
   }
@@ -402,6 +411,58 @@ export class PayrollSourcesReader {
     }
     return bases;
   }
+}
+
+/**
+ * Each Employee's Deduction Obligations in effect on `periodTo`, a regular
+ * period's last day, as they stood at `cutoffAt` (ADR 0014; #634): the version
+ * recorded by the cutoff that started by `periodTo`, has not ended before it,
+ * and has no successor recorded by the cutoff that started by then. An end
+ * recorded after the cutoff is ignored, because ending changes the row in place.
+ */
+async function deductionObligationsInTransaction(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  cutoffAt: Date,
+  periodTo: string,
+): Promise<(employeeId: string) => DeductionObligationDue[]> {
+  const on = new Date(`${periodTo}T00:00:00.000Z`);
+  const started = await transaction.deductionObligation.findMany({
+    where: { agencyId, effectiveFrom: { lte: on }, recordedAt: { lte: cutoffAt } },
+    orderBy: [{ employeeId: 'asc' }, { incurredOn: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true,
+      employeeId: true,
+      payeeCategory: true,
+      payeeName: true,
+      issuerReference: true,
+      incurredOn: true,
+      outstandingBalance: true,
+      scheduledAmount: true,
+      effectiveTo: true,
+      endedAt: true,
+      supersedesObligationId: true,
+    },
+  });
+  const superseded = new Set(started.flatMap((row) => row.supersedesObligationId ?? []));
+  const endedBy = (row: (typeof started)[number]) =>
+    row.endedAt !== null && row.endedAt <= cutoffAt ? row.effectiveTo : null;
+  const inEffect = started.filter((row) => {
+    const effectiveTo = endedBy(row);
+    return !superseded.has(row.id) && (effectiveTo === null || effectiveTo >= on);
+  });
+  return (employeeId) =>
+    inEffect
+      .filter((row) => row.employeeId === employeeId)
+      .map((row) => ({
+        id: row.id,
+        payeeCategory: row.payeeCategory as DeductionPayeeCategory,
+        payeeName: row.payeeName,
+        issuerReference: row.issuerReference,
+        incurredOn: row.incurredOn.toISOString().slice(0, 10),
+        outstandingBalance: row.outstandingBalance.toFixed(4),
+        scheduledAmount: row.scheduledAmount.toFixed(4),
+      }));
 }
 
 /**

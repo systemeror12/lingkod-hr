@@ -146,6 +146,8 @@ describe.skipIf(!enabled)('Deduction Obligations in PostgreSQL', () => {
       supersedesCode: null,
       parameters: {
         allowedPayeeCategories: ['GSIS', 'HDMF', 'EMPLOYEE_COOPERATIVE_OR_ASSOCIATION'],
+        priorityPayeeCategories: [],
+        monthlyNetTakeHomeFloor: '5000.00',
       },
     });
     ruleVersionId = loaded.id;

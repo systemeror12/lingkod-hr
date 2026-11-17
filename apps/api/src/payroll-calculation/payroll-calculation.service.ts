@@ -24,6 +24,7 @@ import type {
   CalculatedContribution,
   CalculatedException,
   CalculatedLine,
+  CalculatedLoanDeduction,
   CalculatedTax,
   CalculationContext,
   PayrollCalculator,
@@ -43,6 +44,7 @@ import {
   ClothingAllowanceCalculator,
 } from './clothing-allowance.calculator';
 import { WithholdingTaxCalculator } from './withholding-tax.calculator';
+import { AuthorizedDeductionsCalculator } from './authorized-deductions.calculator';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
@@ -132,6 +134,8 @@ export class PayrollCalculationService {
       philHealth,
       pagIbig,
       withholdingTax,
+      // Deduction Obligations come after every tax and contribution (#634).
+      new AuthorizedDeductionsCalculator(),
     ];
     this.specialCalculators = [yearEndBonus, clothingAllowance, withholdingTax];
   }
@@ -287,6 +291,7 @@ export class PayrollCalculationService {
       const exceptions: CalculatedException[] = [];
       const calculatedContributions: CalculatedContribution[] = [];
       let calculatedTax: CalculatedTax | undefined;
+      const calculatedLoanDeductions: CalculatedLoanDeduction[] = [];
       for (const calculator of calculators) {
         const outcome = calculator.calculate(basis, context, calculated, {
           ...employeeSources,
@@ -295,6 +300,7 @@ export class PayrollCalculationService {
         calculated.push(...outcome.lines);
         exceptions.push(...outcome.exceptions);
         calculatedContributions.push(...(outcome.contributions ?? []));
+        calculatedLoanDeductions.push(...(outcome.loanDeductions ?? []));
         if (outcome.tax) {
           if (calculatedTax) throw new Error('A result has at most one Tax Line.');
           calculatedTax = outcome.tax;
@@ -305,6 +311,7 @@ export class PayrollCalculationService {
       const lines = blocked.length > 0 ? [] : calculated;
       const contributions = blocked.length > 0 ? [] : calculatedContributions;
       const tax = blocked.length > 0 ? undefined : calculatedTax;
+      const loanDeductions = blocked.length > 0 ? [] : calculatedLoanDeductions;
       const totals = totalsOf(lines);
       const result = await transaction.payrollEmployee.create({
         data: {
@@ -324,6 +331,8 @@ export class PayrollCalculationService {
             exceptions,
             contributions,
             tax,
+            // Absent when empty, so a result with no obligation keeps its hash.
+            ...(loanDeductions.length > 0 ? { loanDeductions } : {}),
             totals,
           }),
         },
@@ -376,6 +385,13 @@ export class PayrollCalculationService {
           },
         });
       }
+      await transaction.loanDeductionLine.createMany({
+        data: loanDeductions.map((loanDeduction) => ({
+          agencyId: job.agencyId,
+          payrollEmployeeId: result.id,
+          ...loanDeduction,
+        })),
+      });
       await transaction.payrollException.createMany({
         data: exceptions.map((exception) => ({
           agencyId: job.agencyId,
