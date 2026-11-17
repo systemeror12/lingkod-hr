@@ -141,6 +141,7 @@ function sourcesOf(overrides: Partial<EmployeePayrollSources> = {}): EmployeePay
       nonTaxableCompensation: '0.0000',
       withholdingTax: '0.0000',
       deMinimisBenefits: {},
+      thirteenthMonthAndOtherBenefits: '0.0000',
     },
     ...overrides,
   };

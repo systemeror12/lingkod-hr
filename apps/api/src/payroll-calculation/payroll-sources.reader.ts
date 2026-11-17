@@ -407,9 +407,10 @@ export class PayrollSourcesReader {
 /**
  * Each Employee's tax figures from the Agency's `FINALIZED` Payroll Periods
  * whose payment date falls in the calendar year of `paymentDate`, at each
- * period's final calculation version: the sums of their tax lines, and the
- * amount of each de minimis benefit their lines paid. A held Employee has no
- * result in a period, so the period adds nothing for them.
+ * period's final calculation version: the sums of their tax lines, the
+ * amount of each de minimis benefit their lines paid, and the 13th-month pay
+ * and other benefits their lines paid. A held Employee has no result in a
+ * period, so the period adds nothing for them.
  */
 async function taxYearToDateInTransaction(
   transaction: Prisma.TransactionClient,
@@ -451,7 +452,11 @@ async function taxYearToDateInTransaction(
               },
             },
             lines: {
-              where: { sourceSnapshot: { path: ['taxTreatment'], equals: 'DE_MINIMIS' } },
+              where: {
+                OR: ['DE_MINIMIS', 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS'].map((treatment) => ({
+                  sourceSnapshot: { path: ['taxTreatment'], equals: treatment },
+                })),
+              },
               select: { amount: true, sourceSnapshot: true },
             },
           },
@@ -462,10 +467,14 @@ async function taxYearToDateInTransaction(
     const sum = (amounts: Prisma.Decimal[]) =>
       amounts.reduce((total, amount) => total.add(amount), zero).toFixed(4);
     const deMinimis = new Map<string, Prisma.Decimal>();
+    let benefits = zero;
     for (const line of own.flatMap((result) => result.lines)) {
-      const benefit = String(
-        (line.sourceSnapshot as { deMinimisBenefit?: unknown }).deMinimisBenefit,
-      );
+      const source = line.sourceSnapshot as { taxTreatment?: unknown; deMinimisBenefit?: unknown };
+      if (source.taxTreatment !== 'DE_MINIMIS') {
+        benefits = benefits.add(line.amount);
+        continue;
+      }
+      const benefit = String(source.deMinimisBenefit);
       deMinimis.set(benefit, (deMinimis.get(benefit) ?? zero).add(line.amount));
     }
     const taxLines = own.flatMap((result) => (result.taxLine ? [result.taxLine] : []));
@@ -480,6 +489,7 @@ async function taxYearToDateInTransaction(
       deMinimisBenefits: Object.fromEntries(
         [...deMinimis].map(([benefit, amount]) => [benefit, amount.toFixed(4)]),
       ),
+      thirteenthMonthAndOtherBenefits: benefits.toFixed(4),
     };
   };
 }

@@ -68,6 +68,7 @@ describe.skipIf(!enabled)('Certified Payroll Review Export in PostgreSQL', () =>
     nothing,
     nothing,
     nothing,
+    nothing,
   );
   let admin: PrismaClient;
   let scheduleId: string;

@@ -31,7 +31,6 @@ import { payrollSourcesReader, RecordedPayBases } from './payroll-calculation.te
 import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { PeraCalculator } from './pera.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
-import { WithholdingTaxCalculator } from './withholding-tax.calculator';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -63,7 +62,8 @@ describe.skipIf(!enabled)('Cash clothing allowance calculation in PostgreSQL', (
     new ClothingAllowanceCalculator(),
     new PhilHealthContributionCalculator(),
     new PagIbigContributionCalculator(),
-    new WithholdingTaxCalculator(),
+    // The withholding tax has its own test; no version of it is loaded here.
+    { calculate: () => ({ lines: [], exceptions: [] }) },
   );
   let admin: PrismaClient;
   let ruleId: string;

@@ -50,42 +50,55 @@ export function withholdingTaxDue(
 }
 
 /**
- * Periodic compensation withholding tax (BRD PAY-004; BIR RR No. 11-2018,
- * sec. 2.79 and Annex E; docs/research/native-payroll-component-authorities.md,
- * "Tax treatment"). It runs last in a regular period and reads each earlier
- * line's `source.taxTreatment`:
+ * Compensation withholding tax (BRD PAY-004; BIR RR No. 11-2018, secs.
+ * 2.78.1(B)(11) and 2.79, and Annex E;
+ * docs/research/native-payroll-component-authorities.md, "Tax treatment").
+ * It runs last in a regular period and in a special one, and reads each
+ * earlier line's `source.taxTreatment`:
  *
  * - `REGULAR_COMPENSATION` earnings, less the salary deducted for days
- *   without pay, are taxable;
+ *   without pay, are taxable regular compensation;
  * - `MANDATORY_CONTRIBUTION` deductions, the employee's GSIS, PhilHealth, and
  *   Pag-IBIG shares, are excluded from it;
- * - `NON_TAXABLE` earnings, such as PERA and RATA, are not;
+ * - `SUPPLEMENTARY_COMPENSATION` earnings, overtime and night-shift
+ *   differential, are taxable supplementary compensation;
+ * - `THIRTEENTH_MONTH_AND_OTHER_BENEFITS` earnings are not taxable up to what
+ *   the tax year leaves of the version's exclusion, after the benefits the
+ *   year's finalized payrolls already paid; the excess is supplementary
+ *   compensation (#351);
+ * - `NON_TAXABLE` earnings, such as PERA and RATA, are not taxable;
  * - `DE_MINIMIS` earnings are not, up to their benefit's annual ceiling in
  *   the `DE_MINIMIS_BENEFITS` version, counting what the year's finalized
  *   payrolls already paid.
  *
- * The month's taxable compensation is taxed by the monthly table of the
- * `COMPENSATION_WITHHOLDING_TAX` version (ADR 0015: a regular period is one
- * calendar month). It writes the tax as a `WITHHOLDING_TAX` deduction, zero
- * included, and a Tax Line with the taxable and non-taxable compensation and
- * the year-to-date figures it read. Non-taxable compensation is the non-taxable
- * earnings and the excluded contributions, so the two add up to the
+ * The tax is the monthly table's, of the `COMPENSATION_WITHHOLDING_TAX`
+ * version (ADR 0015: a regular period is one calendar month), as RR No.
+ * 11-2018 sec. 2.79(B)(3) steps 3 and 4 and Illustration 9 compute it: the
+ * bracket is the one taxable regular compensation reaches, and its rate
+ * taxes the regular compensation over the bracket's level and all the
+ * supplementary compensation. It writes the tax as a `WITHHOLDING_TAX`
+ * deduction, zero included, and a Tax Line with the taxable and non-taxable
+ * compensation and the year-to-date figures it read. Taxable compensation is
+ * the regular and supplementary; non-taxable is the non-taxable earnings, the
+ * excluded benefits, and the excluded contributions, so the two add up to the
  * compensation paid.
  *
  * Every case it does not settle blocks:
  *
- * - no withholding tax version in effect on every date of the month, or one
+ * - no withholding tax version in effect on every date of the period, or one
  *   that changes inside it, and the same for the de minimis version when a
  *   line is de minimis;
- * - supplementary compensation or 13th-month pay and other benefits, which
- *   #351 withholds;
+ * - supplementary compensation with regular compensation the table does not
+ *   tax, or with no more regular than supplementary compensation, as in a
+ *   special period: sec. 2.79(B)(5)(a) then requires the cumulative average
+ *   method, which this calculation does not apply;
  * - a line with no tax treatment, or one its line type does not admit;
- * - a de minimis benefit the version does not list, or one over its ceiling,
- *   whose excess counts toward the ₱90,000 exclusion (#351);
+ * - a de minimis benefit the version does not list, or one over its ceiling;
  * - a tax that is not whole centavos, which no recorded rule rounds.
  *
- * With no earning it writes nothing: basic salary's own exception already
- * blocks the Employee.
+ * With no earning it writes nothing and needs no rule version: in a regular
+ * period, basic salary's own exception already blocks the Employee; in a
+ * special one, nothing is paid.
  */
 @Injectable()
 export class WithholdingTaxCalculator implements PayrollCalculator {
@@ -95,41 +108,40 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
     earlierLines: readonly CalculatedLine[],
     sources: EmployeePayrollSources,
   ): CalculatorOutcome {
+    const compensation = earlierLines.filter(
+      (line) => line.lineType === 'EARNING' || line.lineType === 'DEDUCTION',
+    );
+    // Nothing is paid, so nothing is withheld and no version is needed.
+    if (!compensation.some((line) => line.lineType === 'EARNING')) {
+      return { lines: [], exceptions: [] };
+    }
     const exceptions: CalculatedException[] = [];
     const withholding = ruleVersionFor(WITHHOLDING_TAX_RULE_KIND, context, exceptions);
 
-    let taxable = new Prisma.Decimal(0);
+    let regularPaid = new Prisma.Decimal(0);
+    let supplementary = new Prisma.Decimal(0);
+    let benefits = new Prisma.Decimal(0);
     let nonTaxableEarnings = new Prisma.Decimal(0);
     let contributions = new Prisma.Decimal(0);
     const deMinimis = new Map<string, Prisma.Decimal>();
     const unsettled: { componentCode: string; lineType: string; taxTreatment: unknown }[] = [];
-    const compensation = earlierLines.filter(
-      (line) => line.lineType === 'EARNING' || line.lineType === 'DEDUCTION',
-    );
     for (const line of compensation) {
       const amount = new Prisma.Decimal(line.amount);
       const earning = line.lineType === 'EARNING';
       const treatment = line.source.taxTreatment as TaxTreatment | undefined;
       if (treatment === 'REGULAR_COMPENSATION') {
-        taxable = earning ? taxable.add(amount) : taxable.sub(amount);
+        regularPaid = earning ? regularPaid.add(amount) : regularPaid.sub(amount);
       } else if (treatment === 'MANDATORY_CONTRIBUTION' && !earning) {
         contributions = contributions.add(amount);
+      } else if (treatment === 'SUPPLEMENTARY_COMPENSATION' && earning) {
+        supplementary = supplementary.add(amount);
+      } else if (treatment === 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS' && earning) {
+        benefits = benefits.add(amount);
       } else if (treatment === 'NON_TAXABLE' && earning) {
         nonTaxableEarnings = nonTaxableEarnings.add(amount);
       } else if (treatment === 'DE_MINIMIS' && earning) {
         const benefit = String(line.source.deMinimisBenefit ?? '');
         deMinimis.set(benefit, (deMinimis.get(benefit) ?? new Prisma.Decimal(0)).add(amount));
-      } else if (
-        treatment === 'SUPPLEMENTARY_COMPENSATION' ||
-        treatment === 'THIRTEENTH_MONTH_AND_OTHER_BENEFITS'
-      ) {
-        exceptions.push(
-          blocking(
-            'WITHHOLDING_TAX_SUPPLEMENTARY_UNSETTLED',
-            `${line.componentCode} is ${treatment === 'SUPPLEMENTARY_COMPENSATION' ? 'supplementary compensation' : '13th-month pay and other benefits'}, which this calculation does not yet withhold (#351).`,
-            { componentCode: line.componentCode, taxTreatment: treatment, amount: line.amount },
-          ),
-        );
       } else {
         unsettled.push({
           componentCode: line.componentCode,
@@ -174,7 +186,7 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
           exceptions.push(
             blocking(
               'DE_MINIMIS_CEILING_EXCEEDED',
-              `${benefit} of ${amount.toFixed(2)}, with ${paid.toFixed(2)} already paid in ${yearToDate.taxYear}, is over its annual ceiling of ${ceiling} in de minimis version ${version.code}. The excess counts toward the ₱90,000 exclusion, which this calculation does not yet apply (#351).`,
+              `${benefit} of ${amount.toFixed(2)}, with ${paid.toFixed(2)} already paid in ${yearToDate.taxYear}, is over its annual ceiling of ${ceiling} in de minimis version ${version.code}, and no recorded rule counts the excess toward the exclusion for 13th-month pay and other benefits.`,
               {
                 benefit,
                 amount: amount.toFixed(4),
@@ -191,13 +203,34 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
     }
 
     if (exceptions.length > 0 || !withholding) return { lines: [], exceptions };
-    if (!compensation.some((line) => line.lineType === 'EARNING')) {
-      return { lines: [], exceptions: [] };
-    }
 
-    taxable = taxable.sub(contributions);
+    const regular = regularPaid.sub(contributions);
     const parameters = compensationWithholdingTaxParameters.parse(withholding.parameters);
-    const { bracket, tax } = withholdingTaxDue(taxable, parameters.monthlyTable);
+    const exclusion = parameters.thirteenthMonthAndOtherBenefitsExclusion;
+    const counted = new Prisma.Decimal(yearToDate.thirteenthMonthAndOtherBenefits);
+    const left = Prisma.Decimal.max(new Prisma.Decimal(exclusion).sub(counted), 0);
+    const excluded = Prisma.Decimal.min(benefits, left);
+    supplementary = supplementary.add(benefits.sub(excluded));
+    const taxable = regular.add(supplementary);
+
+    const onRegular = withholdingTaxDue(regular, parameters.monthlyTable);
+    if (supplementary.gt(0) && (onRegular.tax.isZero() || supplementary.gte(regular))) {
+      return {
+        lines: [],
+        exceptions: [
+          blocking(
+            'WITHHOLDING_TAX_CUMULATIVE_AVERAGE_UNSETTLED',
+            `Supplementary compensation of ${supplementary.toFixed(2)} is paid with taxable regular compensation of ${regular.toFixed(2)}, ${onRegular.tax.isZero() ? 'which the monthly table does not tax' : 'no more than the supplementary'}. RR No. 11-2018 sec. 2.79(B)(5)(a) then requires the cumulative average method, which this calculation does not apply.`,
+            {
+              regularCompensation: regular.toFixed(4),
+              supplementaryCompensation: supplementary.toFixed(4),
+            },
+          ),
+        ],
+      };
+    }
+    const { bracket } = onRegular;
+    const tax = onRegular.tax.add(supplementary.mul(bracket.rateOverCompensationLevel));
     if (!tax.equals(tax.toDecimalPlaces(2))) {
       return {
         lines: [],
@@ -210,7 +243,7 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
         ],
       };
     }
-    const nonTaxable = nonTaxableEarnings.add(contributions);
+    const nonTaxable = nonTaxableEarnings.add(excluded).add(contributions);
     return {
       lines: [
         {
@@ -223,11 +256,21 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
           source: {
             ruleVersionCode: withholding.code,
             table: 'MONTHLY',
+            regularCompensation: regular.toFixed(4),
+            supplementaryCompensation: supplementary.toFixed(4),
             taxableCompensation: taxable.toFixed(4),
             nonTaxableCompensation: nonTaxable.toFixed(4),
             excludedContributions: contributions.toFixed(4),
+            thirteenthMonthAndOtherBenefits: {
+              paid: benefits.toFixed(4),
+              yearToDate: counted.toFixed(4),
+              exclusion,
+              excluded: excluded.toFixed(4),
+              taxable: benefits.sub(excluded).toFixed(4),
+            },
             bracket,
-            formula: 'base tax + rate × (taxable compensation − compensation level)',
+            formula:
+              'base tax + rate × (regular compensation − compensation level + supplementary compensation)',
             lines: compensation.map((line) => ({
               componentCode: line.componentCode,
               lineType: line.lineType,

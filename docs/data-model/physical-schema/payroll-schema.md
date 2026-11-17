@@ -136,7 +136,10 @@ rate's divisors. It carries no default rate (sections 3 and 8).
 takes: brackets of `compensationLevel`, `baseTax`, and
 `rateOverCompensationLevel`. The first bracket starts at 0, levels rise, and
 each base tax is what the bracket before it reaches at its level, so the
-table is continuous. `DE_MINIMIS_BENEFITS` (RR No. 2-98 sec. 2.78.1(A)(3), as
+table is continuous. It also holds `thirteenthMonthAndOtherBenefitsExclusion`,
+the most 13th-month pay and other benefits paid in a tax year that is
+excluded from tax, ₱90,000 under RR No. 11-2018 sec. 2.78.1(B)(11)
+([R26](../../research/national-payroll-rule-versions-2027.md)). `DE_MINIMIS_BENEFITS` (RR No. 2-98 sec. 2.78.1(A)(3), as
 amended by RR No. 29-2025; [R25](../../research/national-payroll-rule-versions-2027.md))
 holds `benefits`, each a `benefit` a calculator pays, `MONETIZED_LEAVE_CREDITS`,
 `UNIFORM_AND_CLOTHING`, or `CHRISTMAS_GIFT`, with its `annualCeiling`, null
@@ -1169,8 +1172,8 @@ CREATE TABLE tax_lines (
 ```
 
 Employees' Compensation is employer-only, and there is no `OTHER` contribution
-type (#27, #328). A special period writes no contribution lines; it will
-write a tax line for its taxable lines with supplementary withholding (#351).
+type (#27, #328). A special period writes no contribution lines; it writes
+a tax line, as a regular one does (#351).
 
 Migration 0163 creates `contribution_lines` for `GSIS` and
 `EMPLOYEES_COMPENSATION` (#348); migration 0174 adds `PHILHEALTH` and
@@ -1231,25 +1234,41 @@ the employee's GSIS, PhilHealth, and Pag-IBIG shares, are excluded from that;
 `NON_TAXABLE` earnings, PERA and RATA, are not taxable; and `DE_MINIMIS`
 earnings are not, up to their benefit's annual ceiling in the
 `DE_MINIMIS_BENEFITS` version, counting what the tax year's finalized payrolls
-already paid. The month's taxable compensation is taxed by the
-`COMPENSATION_WITHHOLDING_TAX` version's monthly table. The tax is a
+already paid. `SUPPLEMENTARY_COMPENSATION` earnings, overtime and night-shift
+differential, are taxable supplementary compensation (#351).
+`THIRTEENTH_MONTH_AND_OTHER_BENEFITS` earnings, the year-end bonus, are not
+taxable up to what the tax year leaves of the version's
+`thirteenthMonthAndOtherBenefitsExclusion` after the benefits its finalized
+payrolls already paid; the excess is supplementary compensation. The tax is
+the `COMPENSATION_WITHHOLDING_TAX` version's monthly table as RR No. 11-2018
+sec. 2.79(B)(3) and its Illustration 9 apply it: the bracket is the one
+taxable regular compensation reaches, and its rate taxes the regular
+compensation over the bracket's level and all the supplementary compensation
+([authorities](../../research/native-payroll-component-authorities.md#supplementary-withholding)).
+The tax is a
 `WITHHOLDING_TAX` `DEDUCTION` line, zero included, with the version as
 `rule_version_id`, no quantity or rate, and the bracket and every line's
-treatment in `source_snapshot`. The Tax Line holds the taxable compensation,
-the non-taxable compensation, which is the non-taxable earnings and the
-excluded shares, so the two add up to the compensation paid, the tax, the
-version, and `year_to_date_snapshot`. The tax year is the calendar year of
-the period's payment date, and the snapshot holds the sums of the tax lines
-and the de minimis benefits of the Agency's `FINALIZED` periods paid in it,
-at each one's final calculation version, with their ids. Every case it does
-not settle blocks and writes neither line: no version of either kind in
-effect on every date of the month, or one that changes in it, the de minimis
-version only when a line is de minimis; supplementary compensation or 13th-month
-pay and other benefits (#351); a line with no treatment, or one its line type
-does not admit; a de minimis benefit the version does not list, or one over
-its ceiling, whose excess counts toward the ₱90,000 exclusion (#351); and a
-tax that is not whole centavos, which no recorded rule rounds. With no earning,
-it writes nothing. A special period does not run it yet (#351).
+treatment, the regular and supplementary compensation, and the benefits'
+exclusion in `source_snapshot`. The Tax Line holds the taxable compensation,
+regular and supplementary, the non-taxable compensation, which is the
+non-taxable earnings, the excluded benefits, and the excluded shares, so the
+two add up to the compensation paid, the tax, the version, and
+`year_to_date_snapshot`. The tax year is the calendar year of the period's
+payment date, and the snapshot holds the sums of the tax lines, the de
+minimis benefits, and the 13th-month pay and other benefits of the Agency's
+`FINALIZED` periods paid in it, at each one's final calculation version, with
+their ids. A special period runs it too, after the components it names. Every
+case it does not settle blocks and writes neither line: no version of either
+kind in effect on every date of the period, or one that changes in it, the de
+minimis version only when a line is de minimis; supplementary compensation
+with regular compensation the table does not tax, or with no more regular
+than supplementary compensation, as in a special period, where sec.
+2.79(B)(5)(a) requires the cumulative average method, which it does not
+apply; a line with no treatment, or one its line type does not admit; a de
+minimis benefit the version does not list, or one over its ceiling; and a tax
+that is not whole centavos, which no recorded rule rounds. With no earning,
+it writes nothing and needs no version, so a special period that pays an
+Employee nothing does not block them.
 
 ```sql
 CREATE TABLE contribution_billings (

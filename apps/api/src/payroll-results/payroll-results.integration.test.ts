@@ -60,6 +60,7 @@ describe.skipIf(!enabled)('Payroll workspace reads in PostgreSQL', () => {
     nothing,
     nothing,
     nothing,
+    nothing,
   );
   let admin: PrismaClient;
   let scheduleId: string;
