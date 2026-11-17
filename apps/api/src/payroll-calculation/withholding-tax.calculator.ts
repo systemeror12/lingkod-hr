@@ -96,8 +96,9 @@ export function withholdingTaxDue(
  * - a de minimis benefit the version does not list, or one over its ceiling;
  * - a tax that is not whole centavos, which no recorded rule rounds.
  *
- * With no earning it writes nothing: in a regular period, basic salary's own
- * exception already blocks the Employee; in a special one, nothing is paid.
+ * With no earning it writes nothing and needs no rule version: in a regular
+ * period, basic salary's own exception already blocks the Employee; in a
+ * special one, nothing is paid.
  */
 @Injectable()
 export class WithholdingTaxCalculator implements PayrollCalculator {
@@ -107,6 +108,13 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
     earlierLines: readonly CalculatedLine[],
     sources: EmployeePayrollSources,
   ): CalculatorOutcome {
+    const compensation = earlierLines.filter(
+      (line) => line.lineType === 'EARNING' || line.lineType === 'DEDUCTION',
+    );
+    // Nothing is paid, so nothing is withheld and no version is needed.
+    if (!compensation.some((line) => line.lineType === 'EARNING')) {
+      return { lines: [], exceptions: [] };
+    }
     const exceptions: CalculatedException[] = [];
     const withholding = ruleVersionFor(WITHHOLDING_TAX_RULE_KIND, context, exceptions);
 
@@ -117,9 +125,6 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
     let contributions = new Prisma.Decimal(0);
     const deMinimis = new Map<string, Prisma.Decimal>();
     const unsettled: { componentCode: string; lineType: string; taxTreatment: unknown }[] = [];
-    const compensation = earlierLines.filter(
-      (line) => line.lineType === 'EARNING' || line.lineType === 'DEDUCTION',
-    );
     for (const line of compensation) {
       const amount = new Prisma.Decimal(line.amount);
       const earning = line.lineType === 'EARNING';
@@ -198,9 +203,6 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
     }
 
     if (exceptions.length > 0 || !withholding) return { lines: [], exceptions };
-    if (!compensation.some((line) => line.lineType === 'EARNING')) {
-      return { lines: [], exceptions: [] };
-    }
 
     const regular = regularPaid.sub(contributions);
     const parameters = compensationWithholdingTaxParameters.parse(withholding.parameters);

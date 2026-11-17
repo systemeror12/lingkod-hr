@@ -343,6 +343,16 @@ describe('WithholdingTaxCalculator', () => {
   it('writes nothing with no earning', () => {
     expect(calculate([])).toEqual({ lines: [], exceptions: [] });
   });
+
+  it('needs no rule version in a special period that pays the Employee nothing', () => {
+    const special: CalculationContext = {
+      ...contextWith(),
+      periodFrom: '2026-01-01',
+      periodTo: '2026-10-31',
+      componentCodes: new Set(['CLOTHING_ALLOWANCE']),
+    };
+    expect(calculate([], special)).toEqual({ lines: [], exceptions: [] });
+  });
 });
 
 describe('WithholdingTaxCalculator on supplementary compensation', () => {

@@ -1267,7 +1267,8 @@ than supplementary compensation, as in a special period, where sec.
 apply; a line with no treatment, or one its line type does not admit; a de
 minimis benefit the version does not list, or one over its ceiling; and a tax
 that is not whole centavos, which no recorded rule rounds. With no earning,
-it writes nothing.
+it writes nothing and needs no version, so a special period that pays an
+Employee nothing does not block them.
 
 ```sql
 CREATE TABLE contribution_billings (
