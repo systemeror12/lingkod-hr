@@ -2,8 +2,9 @@
  * Seeds the protected shell and the E2E fixtures (`pnpm --filter @lingkod-hr/database
  * e2e:seed:shell`). Search for these anchors to reach each part:
  * - `seed()`: the Work Queue Agency `E2E-WORK-QUEUE`. `resetProfile(agency)` and the
- *   `deleteMany` transaction after the `seedInvitation` calls clear its rows, Overtime and COC
- *   included, under `session_replication_role = 'replica'` so immutability triggers allow it.
+ *   `deleteMany` transaction after the `seedInvitation` calls clear its rows, Overtime, COC, and
+ *   Payroll Periods with their calculations included, under `session_replication_role = 'replica'`
+ *   so immutability triggers allow it.
  *   Marisol Santos holds the roles in the `for (const roleCode` loop. Approval routes are the
  *   `routeCode:` entries. Employees include `E2E-0001` (Alex Rivera), `E2E-PA-001`, and
  *   `E2E-MOVE-001`. `E2E-FOREIGN-RECORDS` and `FOREIGN-0001` back Agency isolation checks.
@@ -1066,6 +1067,18 @@ async function seed(): Promise<void> {
     await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });
     await transaction.governmentIdentifier.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollBankAccount.deleteMany({ where: { agencyId: agency.id } });
+    // payroll-periods.spec.ts creates and calculates Payroll Periods; each run starts with none.
+    await transaction.payrollLineSource.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollLine.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.contributionLine.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollException.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollEmployee.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollRuleSnapshotItem.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollRuleSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollCertification.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollPeriodActor.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollPeriodComponent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollPeriod.deleteMany({ where: { agencyId: agency.id } });
     await transaction.authorizedPayrollComponentInput.deleteMany({
       where: { agencyId: agency.id },
     });

@@ -142,3 +142,13 @@ it('shows Payroll compensation pages to readers, and Applicability to its manage
   expect(hrefs(['payroll.compensation.manage'])).toEqual(['/payroll-applicability']);
   expect(hrefs([])).toEqual([]);
 });
+
+it('shows Employee Payslips to readers of Payroll Periods', () => {
+  const payroll = (permissions: readonly string[]) =>
+    authorizedDestinations(session('payroll_preparer', permissions))
+      .filter(({ stage }) => stage === 'Payroll')
+      .map(({ href }) => href);
+
+  expect(payroll(['payroll.periods.read'])).toEqual(['/payslips']);
+  expect(payroll(['payroll.periods.create'])).toEqual([]);
+});

@@ -242,6 +242,12 @@ const destinations: readonly (Destination & {
     permission: 'overtime.coc.read',
   },
   {
+    href: '/payslips',
+    label: 'Employee Payslips',
+    stage: 'Payroll',
+    permission: 'payroll.periods.read',
+  },
+  {
     href: '/payroll-inputs',
     label: 'Payroll Inputs',
     stage: 'Payroll',
