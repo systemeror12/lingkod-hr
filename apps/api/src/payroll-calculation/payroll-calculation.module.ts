@@ -18,6 +18,7 @@ import { YearEndBonusCalculator } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
 import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
+import { WithholdingTaxCalculator } from './withholding-tax.calculator';
 
 @Module({
   imports: [CompensationBasisModule, AttendancePeriodsModule, AttendanceDeficitChargesModule],
@@ -33,6 +34,7 @@ import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
     ClothingAllowanceCalculator,
     PhilHealthContributionCalculator,
     PagIbigContributionCalculator,
+    WithholdingTaxCalculator,
     PayrollSourcesReader,
     PayrollCalculationService,
     PayrollCalculationJob,

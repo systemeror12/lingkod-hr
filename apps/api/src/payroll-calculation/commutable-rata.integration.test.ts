@@ -37,8 +37,8 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
   const basis = new CompensationBasisService(facts);
-  // Contributions and PERA have their own tests; these fixtures freeze no GSIS,
-  // EC, or PERA version.
+  // Contributions, PERA, and the withholding tax have their own tests; these
+  // fixtures freeze no GSIS, EC, PERA, or tax version.
   const noContribution = { calculate: () => ({ lines: [], exceptions: [] }) };
   const calculation = new PayrollCalculationService(
     basis,
@@ -52,6 +52,7 @@ describe.skipIf(!enabled)('Commutable RATA in PostgreSQL', () => {
     new CommutableRataCalculator(),
     noContribution,
     new ClothingAllowanceCalculator(),
+    noContribution,
     noContribution,
     noContribution,
   );

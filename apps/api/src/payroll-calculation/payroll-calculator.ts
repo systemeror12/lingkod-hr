@@ -6,6 +6,7 @@ import type {
 } from '../attendance-periods/attendance-periods.types';
 import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
 import type {
+  DeMinimisBenefit,
   NationalPayrollRuleKind,
   RuleVersionWithEffectivity,
 } from '../payroll-rule-versions/national-payroll-rule-versions';
@@ -74,6 +75,23 @@ export interface EmployeePayrollSources {
   clothingAllowanceGrants: ClothingAllowanceGrant[];
   /** For a special period: the appointment nature behind each of the Employee's Service Segments in it. */
   serviceSegmentAppointments: Omit<ServiceSegmentAppointment, 'employeeId'>[];
+  /** The Employee's tax figures from the Agency's finalized payrolls of the tax year (#350). */
+  taxYearToDate: TaxYearToDate;
+}
+
+/**
+ * What the Agency's `FINALIZED` Payroll Periods paid the Employee in the tax
+ * year, the calendar year of this period's payment date, before this period:
+ * the sums of their tax lines, and the de minimis benefits their lines paid.
+ * Amounts are four-place decimal strings.
+ */
+export interface TaxYearToDate {
+  taxYear: number;
+  payrollPeriodIds: string[];
+  taxableCompensation: string;
+  nonTaxableCompensation: string;
+  withholdingTax: string;
+  deMinimisBenefits: Partial<Record<DeMinimisBenefit, string>>;
 }
 
 /** An Agency Payroll Applicability of `OFFICIAL_VEHICLE_ASSIGNMENT` the rule snapshot froze. */
@@ -156,10 +174,21 @@ export interface CalculatedContribution {
   ruleVersionId: string;
 }
 
+/** One Tax Line (payroll-schema.md §9), as canonical decimal strings. */
+export interface CalculatedTax {
+  /** Four decimal places, as `tax_lines` stores each amount. */
+  taxableCompensation: string;
+  nonTaxableCompensation: string;
+  withholdingTax: string;
+  ruleVersionId: string;
+  yearToDateSnapshot: TaxYearToDate;
+}
+
 export interface CalculatorOutcome {
   lines: CalculatedLine[];
   exceptions: CalculatedException[];
   contributions?: CalculatedContribution[];
+  tax?: CalculatedTax;
 }
 
 /**

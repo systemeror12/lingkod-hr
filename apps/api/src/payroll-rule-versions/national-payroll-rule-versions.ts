@@ -18,7 +18,9 @@ export type NationalPayrollRuleKind =
   | 'CLOTHING_ALLOWANCE'
   | 'PHILHEALTH_CONTRIBUTION'
   | 'PAGIBIG_CONTRIBUTION'
-  | 'NIGHT_SHIFT_DIFFERENTIAL';
+  | 'NIGHT_SHIFT_DIFFERENTIAL'
+  | 'COMPENSATION_WITHHOLDING_TAX'
+  | 'DE_MINIMIS_BENEFITS';
 
 /**
  * The payee categories of FY 2026 GAA (RA No. 12314) sec. 62: (a) the BIR,
@@ -444,6 +446,125 @@ const nightShiftDifferentialFile = z
   })
   .strict();
 
+/** A peso amount that may be zero, such as a tax table's first compensation level. */
+const nonNegativePesoAmount = z
+  .string()
+  .regex(/^\d{1,15}(\.\d{1,2})?$/, 'An amount is a decimal string of whole centavos.');
+
+/** A tax rate, as a fraction below 1 that may be zero: `0.15` is 15%. */
+const taxRate = z
+  .string()
+  .regex(/^0(\.\d{1,8})?$/, 'A rate is a fraction below 1 with up to 8 places, such as 0.15.');
+
+/**
+ * The compensation withholding tax rule (BIR RR No. 11-2018, sec. 2.79;
+ * Annex E, "effective January 1, 2023 and onwards"; research register R24).
+ * `monthlyTable` is Annex E's monthly table, the one a regular Payroll Period
+ * of one calendar month takes (ADR 0015): each bracket's tax is `baseTax` plus
+ * `rateOverCompensationLevel` of the compensation over `compensationLevel`.
+ * The first bracket starts at zero, and each bracket's base tax is the tax
+ * the bracket before it reaches at its level, so the table is continuous and
+ * an amount on a level is taxed the same by either bracket.
+ */
+export const compensationWithholdingTaxParameters = z
+  .object({
+    monthlyTable: z
+      .array(
+        z
+          .object({
+            compensationLevel: nonNegativePesoAmount,
+            baseTax: nonNegativePesoAmount,
+            rateOverCompensationLevel: taxRate,
+          })
+          .strict(),
+      )
+      .min(1)
+      .refine((table) => new Prisma.Decimal(table[0]!.compensationLevel).isZero(), {
+        message: 'The first bracket starts at a compensation level of 0.',
+      })
+      .refine(
+        (table) =>
+          table.every((bracket, index) => {
+            if (index === 0) return true;
+            const before = table[index - 1]!;
+            return (
+              new Prisma.Decimal(bracket.compensationLevel).gt(before.compensationLevel) &&
+              new Prisma.Decimal(before.baseTax)
+                .add(
+                  new Prisma.Decimal(bracket.compensationLevel)
+                    .sub(before.compensationLevel)
+                    .mul(before.rateOverCompensationLevel),
+                )
+                .equals(bracket.baseTax)
+            );
+          }),
+        {
+          message:
+            "Compensation levels rise, and each bracket's base tax is the tax the bracket before it reaches at its level.",
+        },
+      ),
+  })
+  .strict();
+
+export type CompensationWithholdingTaxParameters = z.infer<
+  typeof compensationWithholdingTaxParameters
+>;
+
+const compensationWithholdingTaxFile = z
+  .object({
+    ruleKind: z.literal('COMPENSATION_WITHHOLDING_TAX'),
+    ...ruleVersionFields,
+    parameters: compensationWithholdingTaxParameters,
+  })
+  .strict();
+
+/**
+ * The de minimis benefits a calculator pays (RR No. 2-98 sec. 2.78.1(A)(3), as
+ * amended by RR No. 29-2025; research register R25): monetized vacation and
+ * sick leave credits of government officials and employees (item (b)),
+ * uniform and clothing (item (e)), and Christmas gifts (item (i)). A benefit
+ * joins this list with the calculator that pays it.
+ */
+export const deMinimisBenefits = [
+  'MONETIZED_LEAVE_CREDITS',
+  'UNIFORM_AND_CLOTHING',
+  'CHRISTMAS_GIFT',
+] as const;
+
+export type DeMinimisBenefit = (typeof deMinimisBenefits)[number];
+
+/**
+ * The de minimis benefit rule: each benefit the version makes de minimis and
+ * its annual ceiling, or null where the regulation sets none, as for the
+ * monetized leave credits of government employees. A benefit the version does
+ * not list is not de minimis under it.
+ */
+export const deMinimisBenefitsParameters = z
+  .object({
+    benefits: z
+      .array(
+        z
+          .object({ benefit: z.enum(deMinimisBenefits), annualCeiling: pesoAmount.nullable() })
+          .strict(),
+      )
+      .min(1)
+      .refine(
+        (benefits) => new Set(benefits.map(({ benefit }) => benefit)).size === benefits.length,
+        { message: 'A benefit appears once.' },
+      ),
+  })
+  .strict();
+
+export type DeMinimisBenefitsParameters = z.infer<typeof deMinimisBenefitsParameters>;
+
+const deMinimisBenefitsFile = z
+  .object({
+    ruleKind: z.literal('DE_MINIMIS_BENEFITS'),
+    ...ruleVersionFields,
+    parameters: deMinimisBenefitsParameters,
+  })
+  .strict();
+
 /** The reviewed file the `hris_operator` load command reads. */
 export const nationalPayrollRuleVersionFileSchema = z
   .discriminatedUnion('ruleKind', [
@@ -459,6 +580,8 @@ export const nationalPayrollRuleVersionFileSchema = z
     philHealthContributionFile,
     pagIbigContributionFile,
     nightShiftDifferentialFile,
+    compensationWithholdingTaxFile,
+    deMinimisBenefitsFile,
   ])
   .refine((file) => file.effectiveTo === null || file.effectiveTo >= file.effectiveFrom, {
     message: 'effectiveTo is on or after effectiveFrom.',

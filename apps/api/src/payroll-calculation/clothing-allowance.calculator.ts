@@ -10,6 +10,7 @@ import {
   clothingAllowanceParameters,
   isoDateOf,
   type ClothingAllowanceParameters,
+  type DeMinimisBenefit,
   type NationalPayrollRuleKind,
 } from '../payroll-rule-versions/national-payroll-rule-versions';
 import {
@@ -154,6 +155,7 @@ export class ClothingAllowanceCalculator implements PayrollCalculator {
             unit: share.unit,
             formula: share.formula,
             taxTreatment: 'DE_MINIMIS' satisfies TaxTreatment,
+            deMinimisBenefit: 'UNIFORM_AND_CLOTHING' satisfies DeMinimisBenefit,
           },
         },
       ],

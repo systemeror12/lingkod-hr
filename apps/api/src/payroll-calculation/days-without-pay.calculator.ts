@@ -15,6 +15,7 @@ import {
   type LineSourceRecord,
   type PayrollCalculator,
 } from './payroll-calculator';
+import type { TaxTreatment } from './year-end-bonus.calculator';
 
 export const DAYS_WITHOUT_PAY_COMPONENT_CODE = 'DAYS_WITHOUT_PAY';
 
@@ -355,6 +356,7 @@ function valueByMonth(
         unit: 'DAY',
         month,
         formula: 'quantity × monthly salary ÷ 22',
+        taxTreatment: 'REGULAR_COMPENSATION' satisfies TaxTreatment,
         authority: LWOP_AUTHORITY,
         payBasis: stretch.personnel.payBasis,
         employmentFraction: stretch.personnel.employmentFraction,

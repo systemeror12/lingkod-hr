@@ -96,6 +96,7 @@ describe.skipIf(!enabled)('Payroll checks and exception commands in PostgreSQL',
       nothing,
       nothing,
       nothing,
+      nothing,
     );
   const calculation = calculationWith(new BasicSalaryCalculator());
   const faulty = new FaultyCalculator();

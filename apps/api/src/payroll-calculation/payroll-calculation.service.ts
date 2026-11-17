@@ -24,6 +24,7 @@ import type {
   CalculatedContribution,
   CalculatedException,
   CalculatedLine,
+  CalculatedTax,
   CalculationContext,
   PayrollCalculator,
 } from './payroll-calculator';
@@ -41,6 +42,7 @@ import {
   CLOTHING_ALLOWANCE_COMPONENT_CODE,
   ClothingAllowanceCalculator,
 } from './clothing-allowance.calculator';
+import { WithholdingTaxCalculator } from './withholding-tax.calculator';
 
 /** The components a special Payroll Period can name: each has a calculator here (ADR 0015). */
 export const SPECIAL_PERIOD_COMPONENT_CODES: readonly string[] = [
@@ -111,9 +113,11 @@ export class PayrollCalculationService {
     @Inject(ClothingAllowanceCalculator) clothingAllowance: ClothingAllowanceCalculator,
     @Inject(PhilHealthContributionCalculator) philHealth: PhilHealthContributionCalculator,
     @Inject(PagIbigContributionCalculator) pagIbig: PagIbigContributionCalculator,
+    @Inject(WithholdingTaxCalculator) withholdingTax: WithholdingTaxCalculator,
   ) {
-    // Contributions read the earnings before them, so they stay last. PERA
-    // reads basic salary and the days without pay.
+    // Contributions read the earnings before them, and the withholding tax
+    // reads every line, so they stay last. PERA reads basic salary and the
+    // days without pay.
     this.calculators = [
       basicSalary,
       daysWithoutPay,
@@ -127,6 +131,7 @@ export class PayrollCalculationService {
       employeesCompensation,
       philHealth,
       pagIbig,
+      withholdingTax,
     ];
     this.specialCalculators = [yearEndBonus, clothingAllowance];
   }
@@ -281,6 +286,7 @@ export class PayrollCalculationService {
       const calculated: CalculatedLine[] = [];
       const exceptions: CalculatedException[] = [];
       const calculatedContributions: CalculatedContribution[] = [];
+      let calculatedTax: CalculatedTax | undefined;
       for (const calculator of calculators) {
         const outcome = calculator.calculate(basis, context, calculated, {
           ...employeeSources,
@@ -289,11 +295,16 @@ export class PayrollCalculationService {
         calculated.push(...outcome.lines);
         exceptions.push(...outcome.exceptions);
         calculatedContributions.push(...(outcome.contributions ?? []));
+        if (outcome.tax) {
+          if (calculatedTax) throw new Error('A result has at most one Tax Line.');
+          calculatedTax = outcome.tax;
+        }
       }
       const blocked = exceptions.filter((exception) => exception.severity === 'BLOCKING');
       // A blocked result has zero totals and no line (payroll-schema.md §7).
       const lines = blocked.length > 0 ? [] : calculated;
       const contributions = blocked.length > 0 ? [] : calculatedContributions;
+      const tax = blocked.length > 0 ? undefined : calculatedTax;
       const totals = totalsOf(lines);
       const result = await transaction.payrollEmployee.create({
         data: {
@@ -312,6 +323,7 @@ export class PayrollCalculationService {
             lines,
             exceptions,
             contributions,
+            tax,
             totals,
           }),
         },
@@ -354,6 +366,16 @@ export class PayrollCalculationService {
           ...contribution,
         })),
       });
+      if (tax) {
+        await transaction.taxLine.create({
+          data: {
+            agencyId: job.agencyId,
+            payrollEmployeeId: result.id,
+            ...tax,
+            yearToDateSnapshot: toJson(tax.yearToDateSnapshot),
+          },
+        });
+      }
       await transaction.payrollException.createMany({
         data: exceptions.map((exception) => ({
           agencyId: job.agencyId,

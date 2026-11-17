@@ -23,7 +23,7 @@ const run = (payrollInputs: PendingPayrollInput[]) =>
   } as EmployeePayrollSources);
 
 describe('LeaveMonetizationCalculator', () => {
-  it('pays each monetization input as one non-taxable earning linked to it', () => {
+  it('pays each monetization input as one de minimis earning linked to it', () => {
     const outcome = run([
       input({}),
       input({ id: 'input-2', quantity: '5.0000', amount: '6506.1400' }),
@@ -44,7 +44,8 @@ describe('LeaveMonetizationCalculator', () => {
           payrollInputId: 'input-1',
           valuationDate: '2026-03-10',
           valuation: { a: 1 },
-          taxTreatment: 'NON_TAXABLE',
+          taxTreatment: 'DE_MINIMIS',
+          deMinimisBenefit: 'MONETIZED_LEAVE_CREDITS',
         }),
         sourceRecords: [{ payrollInputId: 'input-1' }],
       },

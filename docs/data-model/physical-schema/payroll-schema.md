@@ -50,7 +50,8 @@ CREATE TABLE national_payroll_rule_versions (
                          'OVERTIME_PAY',
                          'CLOTHING_ALLOWANCE',
                          'PHILHEALTH_CONTRIBUTION','PAGIBIG_CONTRIBUTION',
-                         'NIGHT_SHIFT_DIFFERENTIAL')),
+                         'NIGHT_SHIFT_DIFFERENTIAL',
+                         'COMPENSATION_WITHHOLDING_TAX','DE_MINIMIS_BENEFITS')),
   code citext NOT NULL UNIQUE,
   name text NOT NULL,
   issuing_authority text NOT NULL,
@@ -127,6 +128,17 @@ whose funding alone rests on the GAA
 are `rateCeiling`, the highest share of the hourly basic rate the agency head
 may set, and `workingDaysPerMonth` and `workHoursPerDay`, the hourly basic
 rate's divisors. It carries no default rate (sections 3 and 8).
+`COMPENSATION_WITHHOLDING_TAX` (BIR RR No. 11-2018, sec. 2.79 and Annex E;
+[R24](../../research/national-payroll-rule-versions-2027.md)) holds
+`monthlyTable`, Annex E's monthly table, which a regular period of one month
+takes: brackets of `compensationLevel`, `baseTax`, and
+`rateOverCompensationLevel`. The first bracket starts at 0, levels rise, and
+each base tax is what the bracket before it reaches at its level, so the
+table is continuous. `DE_MINIMIS_BENEFITS` (RR No. 2-98 sec. 2.78.1(A)(3), as
+amended by RR No. 29-2025; [R25](../../research/national-payroll-rule-versions-2027.md))
+holds `benefits`, each a `benefit` a calculator pays, `MONETIZED_LEAVE_CREDITS`,
+`UNIFORM_AND_CLOTHING`, or `CHRISTMAS_GIFT`, with its `annualCeiling`, null
+where the regulation sets none (section 9).
 
 A trigger rejects every `UPDATE` and `DELETE` on both tables. A version is
 immutable from load, so there is no status column and no draft. A correction or
@@ -849,7 +861,6 @@ CREATE TABLE payroll_lines (
   quantity numeric(12,4),
   rate numeric(19,8),
   amount numeric(19,4) NOT NULL,
-  taxable_amount numeric(19,4) NOT NULL DEFAULT 0,
   contribution_base numeric(19,4) NOT NULL DEFAULT 0,
   source_snapshot jsonb NOT NULL,
   payroll_adjustment_id uuid,
@@ -907,8 +918,10 @@ Lines are inserted with their result. A trigger rejects every `UPDATE` and
 Migration 0162 creates `payroll_lines` (#621). A line joins its result only in
 the transaction that wrote the result, and every `UPDATE` and `DELETE` is
 rejected. Each column arrives with the calculator that needs it:
-`taxable_amount` with the tax calculator (#350), and `payroll_adjustment_id`
-with Payroll Adjustments (#330).
+`payroll_adjustment_id` with Payroll Adjustments (#330). There is no
+`taxable_amount`: each line records its tax treatment in
+`source_snapshot.taxTreatment`, and the Tax Line holds the result's taxable and
+non-taxable compensation (section 9).
 
 Migration 0164 creates `payroll_line_sources` and
 `payroll_consumed_attendance_facts` (#341). A source joins its line only in the
@@ -971,7 +984,8 @@ line in a regular period: the input's frozen `amount`, its credits in
 `rule_version_id`, since the valuation and its authority are in the input's
 `payload_snapshot`, which `source_snapshot.valuation` copies. The line rests on
 the input in `payroll_line_sources`. `source_snapshot.taxTreatment` is
-`NON_TAXABLE` (BIR RR No. 29-2025 sec. 2.78.1(A)(3)(b); [authorities](../../research/native-payroll-component-authorities.md)).
+`DE_MINIMIS` with `deMinimisBenefit` `MONETIZED_LEAVE_CREDITS` (BIR RR No.
+29-2025 sec. 2.78.1(A)(3)(b); [authorities](../../research/native-payroll-component-authorities.md)).
 The input stays `PENDING`, so every calculation version until finalization
 pays it again (#335).
 
@@ -988,7 +1002,8 @@ of that day, with the version as `rule_version_id` and the salary schedule in
 `source_snapshot`, and one cash gift line. Under the minimum there is no
 bonus. `source_snapshot.taxTreatment` marks the bonus
 `THIRTEENTH_MONTH_AND_OTHER_BENEFITS`, counting toward the ₱90,000 exclusion
-(#351), and the cash gift `DE_MINIMIS`. Every case no recorded rule settles
+(#351), and the cash gift `DE_MINIMIS`, with `deMinimisBenefit`
+`CHRISTMAS_GIFT`. Every case no recorded rule settles
 blocks the component and writes no line: no version with the period's window,
 service months that turn on leftover days or a month end, a reduced cash gift
 under the minimum, a separated Employee where the version grants that case,
@@ -1094,8 +1109,8 @@ Service Segments cover at least `minimumServiceDays` calendar days of the
 fiscal year, counting days still to come, gets one `EARNING` line:
 `quantity` 1, or the employment fraction for part-time service, `rate` the
 annual amount, the applicability record in `source_snapshot`, and
-`source_snapshot.taxTreatment` `DE_MINIMIS` (RR No. 29-2025 sec.
-2.78.1(A)(3)(e)). Under the minimum there is no line. Service that starts
+`source_snapshot.taxTreatment` `DE_MINIMIS`, with `deMinimisBenefit`
+`UNIFORM_AND_CLOTHING` (RR No. 29-2025 sec. 2.78.1(A)(3)(e)). Under the minimum there is no line. Service that starts
 after January 1 counts only under an `ORIGINAL` appointment, which Personnel
 supplies. Every case no recorded rule settles blocks and writes no line: a
 period that is not one fiscal year; no version in effect on every date of the
@@ -1147,13 +1162,13 @@ CREATE TABLE tax_lines (
   year_to_date_snapshot jsonb NOT NULL,
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
-  UNIQUE (payroll_employee_id)
+  UNIQUE (agency_id, payroll_employee_id)
 );
 ```
 
 Employees' Compensation is employer-only, and there is no `OTHER` contribution
-type (#27, #328). A special period writes a tax line for its taxable lines and
-no contribution lines.
+type (#27, #328). A special period writes no contribution lines; it will
+write a tax line for its taxable lines with supplementary withholding (#351).
 
 Migration 0163 creates `contribution_lines` for `GSIS` and
 `EMPLOYEES_COMPENSATION` (#348); migration 0174 adds `PHILHEALTH` and
@@ -1201,6 +1216,91 @@ without is not in the calculation. PhilHealth and Pag-IBIG cover the same
 Employees, since both apply to appointed personnel through compulsory employee
 coverage (the same research file). A recorded coverage fact, when Personnel
 adds one, replaces this.
+
+Migration 0176 creates `tax_lines` (#350), with the same insert guard,
+immutability, and forced RLS as `contribution_lines`, and adds the
+`WITHHOLDING_TAX` component, an unconditional `DEDUCTION`. The withholding tax
+runs last in a regular period and reads each earlier line's
+`source_snapshot.taxTreatment`
+([authorities](../../research/native-payroll-component-authorities.md#tax-treatment)):
+`REGULAR_COMPENSATION` earnings, less the `DAYS_WITHOUT_PAY` deductions that
+carry the same treatment, are taxable; `MANDATORY_CONTRIBUTION` deductions,
+the employee's GSIS, PhilHealth, and Pag-IBIG shares, are excluded from that;
+`NON_TAXABLE` earnings, PERA and RATA, are not taxable; and `DE_MINIMIS`
+earnings are not, up to their benefit's annual ceiling in the
+`DE_MINIMIS_BENEFITS` version, counting what the tax year's finalized payrolls
+already paid. The month's taxable compensation is taxed by the
+`COMPENSATION_WITHHOLDING_TAX` version's monthly table. The tax is a
+`WITHHOLDING_TAX` `DEDUCTION` line, zero included, with the version as
+`rule_version_id`, no quantity or rate, and the bracket and every line's
+treatment in `source_snapshot`. The Tax Line holds the taxable compensation,
+the non-taxable compensation, which is the non-taxable earnings and the
+excluded shares, so the two add up to the compensation paid, the tax, the
+version, and `year_to_date_snapshot`. The tax year is the calendar year of
+the period's payment date, and the snapshot holds the sums of the tax lines
+and the de minimis benefits of the Agency's `FINALIZED` periods paid in it,
+at each one's final calculation version, with their ids. Every case it does
+not settle blocks and writes neither line: no version of either kind in
+effect on every date of the month, or one that changes in it, the de minimis
+version only when a line is de minimis; supplementary compensation or 13th-month
+pay and other benefits (#351); a line with no treatment, or one its line type
+does not admit; a de minimis benefit the version does not list, or one over
+its ceiling, whose excess counts toward the ₱90,000 exclusion (#351); and a
+tax that is not whole centavos, which no recorded rule rounds. With no earning,
+it writes nothing. A special period does not run it yet (#351).
+
+```sql
+CREATE TABLE contribution_billings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  contribution_type text NOT NULL
+    CHECK (contribution_type IN ('GSIS','PHILHEALTH','PAGIBIG','EMPLOYEES_COMPENSATION')),
+  employee_share numeric(19,4) NOT NULL CHECK (employee_share >= 0),
+  employer_share numeric(19,4) NOT NULL CHECK (employer_share >= 0),
+  evidence_document_version_id uuid NOT NULL,
+  supersedes_contribution_billing_id uuid UNIQUE,
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (contribution_type <> 'EMPLOYEES_COMPENSATION' OR employee_share = 0),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, supersedes_contribution_billing_id)
+    REFERENCES contribution_billings (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX contribution_billings_first_key
+  ON contribution_billings (payroll_period_id, employee_id, contribution_type)
+  WHERE supersedes_contribution_billing_id IS NULL;
+```
+
+A Contribution Billing is the issuer's validated billing of one Employee's
+contribution for a regular Payroll Period: both shares, and the finalized
+Document Version that evidences them (BRD PAY-004, #349). Migration 0175
+creates it. Recording one statement, one contribution type for many
+Employees, needs `payroll.deductions.manage` held Agency-wide and writes one
+Audit Event. It is recorded only while the period is `DRAFT`, with the period
+row locked `FOR SHARE`, so the next calculation compares it before the period
+can be certified; a trigger enforces the same. Rows are only inserted, and RLS
+is forced. Recording an Employee's billing again corrects it: the new row
+names the one it supersedes, and the current billing is the one no row
+supersedes.
+
+The billing is evidence, never a rule. It writes no line and changes no share;
+a difference it shows can support a versioned correction, such as a new rule
+version or a Payroll Adjustment, but never replaces the calculated line (#27).
+The calculation's `CONTRIBUTION_BILLING_DIFFERENCE` check (section 10)
+compares each current billing with the Contribution Line of its type in the
+Employee's `CALCULATED` result, or with zero when there is none. An Employee
+with no billing, or with no `CALCULATED` result, is not compared.
 
 Loan lines use a separate table because multiple deductions may exist.
 
@@ -1349,6 +1449,16 @@ to `DRAFT` and a warning alone does not:
 | `BASIC_SALARY_MISSING`   | BLOCKING | A `CALCULATED` result of a regular period with no `BASIC_SALARY` earning line                                          |
 | `PAYROLL_LINE_DUPLICATE` | BLOCKING | Two lines of one result with equal component, line type, rule version, quantity, rate, amount, and `source_snapshot`   |
 | `NET_PAY_VARIANCE`       | WARNING  | A `CALCULATED` result of a regular period whose net differs from the Employee's in the last `FINALIZED` regular period |
+
+`CONTRIBUTION_BILLING_DIFFERENCE` blocks a current Contribution Billing whose
+employee or employer share differs from the calculated one (#349). Its
+`details` store the difference: the billing, the contribution type, and the
+billed and calculated shares. A Payroll Preparer explains a difference by
+resolving the exception with a reason, and the explanation holds for that
+difference only: a later calculation of the period raises nothing while a
+`RESOLVED` exception of an earlier version names the same billing and the same
+calculated shares. A corrected billing or a changed calculation is a new
+difference, and blocks again.
 
 Two more checks block a `CALCULATED` result of a regular period that pays
 `OVERTIME_PAY` (#628).

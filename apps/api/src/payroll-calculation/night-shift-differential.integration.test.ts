@@ -30,7 +30,7 @@ const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
 describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
   // Test fixtures only: the rule values are RA No. 11701's, the 35,200 rate
-  // makes the hourly basic rate 200 (20 an hour at 10%, 30 at 15%), and 2894
+  // makes the hourly basic rate 200 (20 an hour at 10%, 30 at 15%), and 2877
   // sits clear of every other test's rule versions.
   const suffix = `${Date.now()}-nsd`;
   const scheduleCode = `${FIXTURE_PREFIX}NSD-SCHEDULE-${suffix}`;
@@ -53,6 +53,7 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
     nothing,
     nothing,
     new YearEndBonusCalculator(),
+    nothing,
     nothing,
     nothing,
     nothing,
@@ -91,8 +92,8 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
         sourceUrl: 'https://example.test/night-shift-differential',
         verifiedOn: date('2026-11-16'),
         verifiedBy: 'LingkodHR test fixture',
-        effectiveFrom: date('2894-01-01'),
-        effectiveTo: date('2894-12-31'),
+        effectiveFrom: date('2877-01-01'),
+        effectiveTo: date('2877-12-31'),
       };
       const schedule = await transaction.nationalPayrollRuleVersion.create({
         data: { ...rule, ruleKind: 'SALARY_SCHEDULE', code: scheduleCode, name: 'Test schedule' },
@@ -161,7 +162,7 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
       data: { agencyId, code: `UNIT-NSD-${suffix}`, unitType: 'DIVISION', status: 'ACTIVE' },
     });
 
-    /** An SG-11 Employee on the monthly full-time basis for all of 2894. */
+    /** An SG-11 Employee on the monthly full-time basis for all of 2877. */
     async function employee(label: string) {
       const row = await admin.employee.create({
         data: {
@@ -188,7 +189,7 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
               appointmentStatus: 'PERMANENT',
               salaryGrade: 11,
               salaryStep: 1,
-              effectiveFrom: date('2894-01-01'),
+              effectiveFrom: date('2877-01-01'),
               status: 'ACTIVE',
               createdByMembershipId: membershipId,
             },
@@ -251,7 +252,7 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
         value,
         paymentSchedule: 'EACH_REGULAR_PERIOD',
         authorityDocumentVersionId: authority,
-        sourceReference: `Office Order NSD-${value}, s. 2894`,
+        sourceReference: `Office Order NSD-${value}, s. 2877`,
         effectiveFrom,
         effectiveTo,
       });
@@ -259,10 +260,10 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
       return recorded.id;
     }
     // The rate changes inside March: 10% through the 15th, 15% from the 16th.
-    const tenPercent = await rate(covered, '0.10', '2894-01-01', '2894-03-15');
-    const fifteenPercent = await rate(covered, '0.15', '2894-03-16', null);
+    const tenPercent = await rate(covered, '0.10', '2877-01-01', '2877-03-15');
+    const fifteenPercent = await rate(covered, '0.15', '2877-03-16', null);
     // A rate recorded but never approved is no rate.
-    await rate(excluded, '0.10', '2894-01-01', null, false);
+    await rate(excluded, '0.10', '2877-01-01', null, false);
 
     // Attendance's lock of March publishes the night duty and the worked minutes.
     const nightFacts = await seed(async (transaction) => {
@@ -270,8 +271,8 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
         data: {
           agencyId,
           code: `P-NSD-${suffix}`,
-          dateFrom: date('2894-03-01'),
-          dateTo: date('2894-03-31'),
+          dateFrom: date('2877-03-01'),
+          dateTo: date('2877-03-31'),
           status: 'FINALIZED',
         },
       });
@@ -303,11 +304,11 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
       });
       const ids = new Map<string, string>();
       const seeds: [string, string, 'WORKED' | 'NIGHT_DUTY', number][] = [
-        [covered, '2894-03-10', 'NIGHT_DUTY', 480],
-        [covered, '2894-03-11', 'NIGHT_DUTY', 480],
-        [covered, '2894-03-20', 'NIGHT_DUTY', 240],
-        [excluded, '2894-03-10', 'NIGHT_DUTY', 480],
-        [daytime, '2894-03-10', 'WORKED', 480],
+        [covered, '2877-03-10', 'NIGHT_DUTY', 480],
+        [covered, '2877-03-11', 'NIGHT_DUTY', 480],
+        [covered, '2877-03-20', 'NIGHT_DUTY', 240],
+        [excluded, '2877-03-10', 'NIGHT_DUTY', 480],
+        [daytime, '2877-03-10', 'WORKED', 480],
       ];
       for (const [employeeId, workDate, factType, minutes] of seeds) {
         const day = await transaction.attendanceDay.create({
@@ -344,19 +345,19 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
       nightFacts.get(`${employeeId}|${workDate}`)!;
 
     const period = await periods.create(preparer(tenant), {
-      code: `NSD-2894-03-${suffix}`,
+      code: `NSD-2877-03-${suffix}`,
       runType: 'REGULAR',
-      periodFrom: '2894-03-01',
-      periodTo: '2894-03-31',
+      periodFrom: '2877-03-01',
+      periodTo: '2877-03-31',
       cutoffAt: '2026-01-01T00:00:00+08:00',
-      paymentDate: '2894-03-31',
+      paymentDate: '2877-03-31',
     });
     // A finalized payroll already consumed the 11 March night duty (ADR 0014).
     await seed((transaction) =>
       transaction.payrollConsumedAttendanceFact.create({
         data: {
           agencyId,
-          attendancePayrollFactId: factOf(covered, '2894-03-11'),
+          attendancePayrollFactId: factOf(covered, '2877-03-11'),
           payrollPeriodId: period.id,
         },
       }),
@@ -419,9 +420,9 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
     ).toEqual(
       [
         // 8 hours × 200 × 10%.
-        ['480', '160', [factOf(covered, '2894-03-10'), tenPercent].sort()],
+        ['480', '160', [factOf(covered, '2877-03-10'), tenPercent].sort()],
         // 4 hours × 200 × 15%.
-        ['240', '120', [factOf(covered, '2894-03-20'), fifteenPercent].sort()],
+        ['240', '120', [factOf(covered, '2877-03-20'), fifteenPercent].sort()],
       ].sort(),
     );
     expect(nightLines(covered)[0]!.sourceSnapshot).toMatchObject({
@@ -442,8 +443,8 @@ describe.skipIf(!enabled)('Night-shift differential in PostgreSQL', () => {
       [excluded, 'NIGHT_SHIFT_DIFFERENTIAL_RATE_NOT_IN_EFFECT', 'BLOCKING'],
     ]);
     expect(exceptions[0]!.details).toMatchObject({
-      workDates: ['2894-03-10'],
-      facts: [{ attendancePayrollFactId: factOf(excluded, '2894-03-10'), minutes: 480 }],
+      workDates: ['2877-03-10'],
+      facts: [{ attendancePayrollFactId: factOf(excluded, '2877-03-10'), minutes: 480 }],
     });
   });
 });
