@@ -116,8 +116,8 @@ export class PayrollCalculationService {
     @Inject(WithholdingTaxCalculator) withholdingTax: WithholdingTaxCalculator,
   ) {
     // Contributions read the earnings before them, and the withholding tax
-    // reads every line, so they stay last. PERA reads basic salary and the
-    // days without pay.
+    // reads every line, so they stay last, in a special period too. PERA
+    // reads basic salary and the days without pay.
     this.calculators = [
       basicSalary,
       daysWithoutPay,
@@ -133,7 +133,7 @@ export class PayrollCalculationService {
       pagIbig,
       withholdingTax,
     ];
-    this.specialCalculators = [yearEndBonus, clothingAllowance];
+    this.specialCalculators = [yearEndBonus, clothingAllowance, withholdingTax];
   }
 
   async run(job: CalculationJob): Promise<CalculationOutcome> {

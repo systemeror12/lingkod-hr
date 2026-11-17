@@ -28,7 +28,6 @@ import { OvertimePayCalculator } from './overtime-pay.calculator';
 import { PeraCalculator } from './pera.calculator';
 import { ClothingAllowanceCalculator } from './clothing-allowance.calculator';
 import { YearEndBonusCalculator } from './year-end-bonus.calculator';
-import { WithholdingTaxCalculator } from './withholding-tax.calculator';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -57,7 +56,8 @@ describe.skipIf(!enabled)('Year-end bonus and cash gift calculation in PostgreSQ
     new ClothingAllowanceCalculator(),
     new PhilHealthContributionCalculator(),
     new PagIbigContributionCalculator(),
-    new WithholdingTaxCalculator(),
+    // The withholding tax has its own test; no version of it is loaded here.
+    { calculate: () => ({ lines: [], exceptions: [] }) },
   );
   let admin: PrismaClient;
   let ruleId: string;

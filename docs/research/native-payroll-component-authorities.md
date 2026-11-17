@@ -70,6 +70,17 @@ The medical-allowance and night-shift-differential findings narrow the unqualifi
 
 The payroll tax engine must apply ordinary periodic and supplementary withholding, the PHP 90,000 annual aggregate, current de minimis ceilings, and year-end adjustment as versioned rules. A benefit's compensation authority does not by itself establish a tax exemption.
 
+### Supplementary withholding
+
+Read from the [RR No. 11-2018 PDF](https://bir-cdn.bir.gov.ph/local/pdf/RR%20No.%2011-2018.pdf), sec. 2.79(B), pages 26-30, on 2026-11-17:
+
+- **Classification** (item 3, step 1): "Classify taxable compensation into regular and supplementary compensation. Regular compensation includes basic salary, fixed allowances for representation, transportation and other allowances paid to an employee per payroll period. Supplementary compensation includes payments to an employee in addition to the regular compensation, such as commission, overtime pay, taxable retirement, taxable bonus, and other taxable benefits, with or without regard to a payroll period."
+- **Table** (steps 3 and 4): "Determine the compensation range of the employee by taking into account only the total amount of taxable regular compensation income and apply the applicable tax rates prescribed thereon." Then "Compute the withholding tax due by adding the tax predetermined in the compensation range as indicated on the column used and the rate of tax on the excess of the total compensation over the minimum of the compensation range."
+- **Illustration 9** (item 4) applies this to ₱165,000 regular and ₱5,000 supplementary compensation in a month: the tabulated computation is "On ₱66,667.00 ₱10,833.33" plus "On Excess (₱165,000.00 - ₱66,667.00 + Supplemental compensation of ₱5,000.00) x 30% 30,999.90", total ₱41,833.23. Its narrative sentence prints ₱103,833 and ₱43,659.89, which the tabulated figures do not support.
+- **Cumulative average method** (item 5(a)): it applies "If in respect of a particular employee, the regular compensation is exempt from withholding tax because the amount thereof is below the compensation level, but supplementary compensation is paid during the calendar year; or the supplementary compensation is equal to or more than the regular compensation to be paid; or the employee was newly hired and had a previous employer/s within the calendar year". Its steps divide the year's taxable compensation "by the number of payroll period to which the amount relates", and "once applicable to a particular employee at any time during the calendar year, shall be the same method to be consistently used for the remaining payroll period/s of the same calendar year."
+
+Open: for a special Payroll Period that pays a bonus apart from salary (ADR 0015), the text does not say which payroll period the bonus "relates" to when counting periods, so LingkodHR does not yet apply the cumulative average method (#351 blocks those cases).
+
 ## Effectivity and fail-closed controls
 
 - **Annual currency:** PERA, uniform/clothing allowance, medical allowance, RATA, bonuses, cash gift, and related conditions or amounts must be revalidated against each fiscal year's GAA.

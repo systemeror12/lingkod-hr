@@ -29,9 +29,11 @@ const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
 
 describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
   // Test fixtures only: the tax table follows Annex E's monthly table (research
-  // R24) and the contribution rates research R17 to R21, but no real version
-  // is loaded. The salary rates are illustrative. 2894 and 2895 sit clear of
-  // every other test's rule versions; the tax version covers only 2894.
+  // R24), the exclusion RR No. 11-2018 sec. 2.78.1(B)(11) (R26), and the
+  // contribution rates research R17 to R21, but no real version is loaded.
+  // The salary rates are illustrative. 2894 and 2895 sit clear of every
+  // other test's rule versions; the tax, de minimis, and year-end bonus
+  // versions cover only 2894.
   const suffix = `${Date.now()}-wtax`;
   const codes = {
     schedule: `${FIXTURE_PREFIX}WTAX-SCHEDULE-${suffix}`,
@@ -40,6 +42,8 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
     pagIbig: `${FIXTURE_PREFIX}WTAX-PAGIBIG-${suffix}`,
     pera: `${FIXTURE_PREFIX}WTAX-PERA-${suffix}`,
     tax: `${FIXTURE_PREFIX}WTAX-TAX-${suffix}`,
+    deMinimis: `${FIXTURE_PREFIX}WTAX-DE-MINIMIS-${suffix}`,
+    yearEndBonus: `${FIXTURE_PREFIX}WTAX-YEB-${suffix}`,
   };
   const periods = new PayrollPeriodsService();
   const facts = new RecordedPayBases();
@@ -66,6 +70,8 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
   let admin: PrismaClient;
   let taxId: string;
   const tenants: PayrollTenant[] = [];
+  const withholding = async () =>
+    (await admin.payComponent.findUniqueOrThrow({ where: { code: 'WITHHOLDING_TAX' } })).id;
 
   const preparer = (tenant: PayrollTenant): RequestContext => ({
     ...tenant.persons[0]!.context,
@@ -105,6 +111,7 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
         data: [
           { ruleVersionId: schedule, salaryGrade: 1, salaryStep: 1, monthlyRate: '40000' },
           { ruleVersionId: schedule, salaryGrade: 1, salaryStep: 2, monthlyRate: '20000' },
+          { ruleVersionId: schedule, salaryGrade: 1, salaryStep: 3, monthlyRate: '100000' },
         ],
       });
       await version('GSIS_CONTRIBUTION', codes.gsis, {
@@ -130,6 +137,7 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
         'COMPENSATION_WITHHOLDING_TAX',
         codes.tax,
         {
+          thirteenthMonthAndOtherBenefitsExclusion: '90000',
           monthlyTable: [
             { compensationLevel: '0', baseTax: '0', rateOverCompensationLevel: '0' },
             { compensationLevel: '20833', baseTax: '0', rateOverCompensationLevel: '0.15' },
@@ -142,6 +150,25 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
               rateOverCompensationLevel: '0.35',
             },
           ],
+        },
+        '2894-12-31',
+      );
+      await version(
+        'DE_MINIMIS_BENEFITS',
+        codes.deMinimis,
+        { benefits: [{ benefit: 'CHRISTMAS_GIFT', annualCeiling: '6000' }] },
+        '2894-12-31',
+      );
+      await version(
+        'YEAR_END_BONUS_AND_CASH_GIFT',
+        codes.yearEndBonus,
+        {
+          serviceFrom: '2894-01-01',
+          asOf: '2894-10-31',
+          minimumServiceMonths: 4,
+          bonusMonthsOfBasicSalary: 1,
+          cashGiftAmount: '5000.00',
+          grantsSeparatedBeforeAsOf: false,
         },
         '2894-12-31',
       );
@@ -168,26 +195,28 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
     await admin.$disconnect();
   });
 
-  it('withholds on salary less contributions, reads the finalized year to date, and blocks without a version', async () => {
-    const tenant = await createPayrollTenant(admin, suffix, 'WTAX');
+  /** A tenant with one organization unit, and its SG-1 Employees and periods. */
+  async function payrollTenant(label: string) {
+    const tenant = await createPayrollTenant(admin, suffix, label);
     tenants.push(tenant);
     const agencyId = tenant.agency.id;
     const membershipId = tenant.persons[0]!.membership.id;
     const unit = await admin.organizationUnit.create({
-      data: { agencyId, code: `UNIT-WTAX-${suffix}`, unitType: 'DIVISION', status: 'ACTIVE' },
+      data: { agencyId, code: `UNIT-${label}-${suffix}`, unitType: 'DIVISION', status: 'ACTIVE' },
     });
 
     /** An SG-1 Employee at `salaryStep`, full-time since 2893. */
-    async function employeeAt(label: string, salaryStep: number) {
+    async function employeeAt(employeeLabel: string, salaryStep: number) {
+      const name = `${label}-${employeeLabel}`;
       const employee = await admin.employee.create({
         data: {
           agencyId,
-          employeeNumber: `WTAX-${label}-${suffix}`,
-          legalName: `Withholding ${label}`,
+          employeeNumber: `${name}-${suffix}`,
+          legalName: `Withholding ${name}`,
           birthDate: new Date('1990-01-01'),
           sex: 'FEMALE',
           civilStatus: 'SINGLE',
-          contactEmail: `wtax-${label.toLowerCase()}-${suffix}@example.test`,
+          contactEmail: `${name.toLowerCase()}-${suffix}@example.test`,
           serviceStatus: 'ACTIVE',
           createdByMembershipId: membershipId,
           updatedByMembershipId: membershipId,
@@ -213,17 +242,20 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
       facts.bases.set(employee.id, { payBasis: 'MONTHLY_FULL_TIME', employmentFraction: null });
       return employee.id;
     }
-    const taxed = await employeeAt('TAXED', 1);
-    const untaxed = await employeeAt('UNTAXED', 2);
 
-    async function calculate(month: string, last: string) {
+    async function calculate(
+      month: string,
+      last: string,
+      special?: { periodFrom: string; periodTo: string; payComponentIds: string[] },
+    ) {
       const draft = await periods.create(preparer(tenant), {
-        code: `WTAX-${month}-${suffix}`,
-        runType: 'REGULAR',
+        code: `${label}-${month}-${special ? 'SPECIAL' : 'REGULAR'}-${suffix}`,
+        runType: special ? 'SPECIAL' : 'REGULAR',
         periodFrom: `${month}-01`,
         periodTo: `${month}-${last}`,
         cutoffAt: '2026-01-01T00:00:00+08:00',
         paymentDate: `${month}-${last}`,
+        ...special,
       });
       const started = await periods.startCalculation(preparer(tenant), draft.id, {
         rowVersion: draft.rowVersion,
@@ -254,6 +286,14 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
           })
         ).map((result) => [result.employeeId, result]),
       );
+    return { tenant, employeeAt, calculate, finalize, resultsOf };
+  }
+
+  it('withholds on salary less contributions, reads the finalized year to date, and blocks without a version', async () => {
+    const { tenant, employeeAt, calculate, finalize, resultsOf } = await payrollTenant('WTAX');
+    const agencyId = tenant.agency.id;
+    const taxed = await employeeAt('TAXED', 1);
+    const untaxed = await employeeAt('UNTAXED', 2);
 
     const january = await calculate('2894-01', '31');
     expect(january.outcome).toEqual({ outcome: 'FOR_REVIEW', results: 2 });
@@ -262,10 +302,8 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
     // ₱40,000 less GSIS ₱3,600, PhilHealth ₱1,000, and Pag-IBIG ₱200 is
     // ₱35,200: ₱1,875 + 20% of ₱1,867. PERA is non-taxable.
     const taxedJanuary = januaryResults.get(taxed)!;
-    const withholding = await admin.payComponent.findUniqueOrThrow({
-      where: { code: 'WITHHOLDING_TAX' },
-    });
-    const taxLine = taxedJanuary.lines.find((line) => line.payComponentId === withholding.id);
+    const withholdingId = await withholding();
+    const taxLine = taxedJanuary.lines.find((line) => line.payComponentId === withholdingId);
     expect(taxLine).toMatchObject({ lineType: 'DEDUCTION', ruleVersionId: taxId });
     expect(String(taxLine?.amount)).toBe('2248.4');
     expect(taxedJanuary.taxLine).toMatchObject({ ruleVersionId: taxId });
@@ -294,6 +332,7 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
       nonTaxableCompensation: '0.0000',
       withholdingTax: '0.0000',
       deMinimisBenefits: {},
+      thirteenthMonthAndOtherBenefits: '0.0000',
     });
     // Tax lines are isolated by Agency, and immutable.
     const other = await createPayrollTenant(admin, suffix, 'WTAX-OTHER');
@@ -323,6 +362,7 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
       nonTaxableCompensation: '6800.0000',
       withholdingTax: '2248.4000',
       deMinimisBenefits: {},
+      thirteenthMonthAndOtherBenefits: '0.0000',
     });
 
     // 2895 has no withholding tax version: every Employee blocks, and no
@@ -342,5 +382,71 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
       ['EXCEPTION', null],
       ['EXCEPTION', null],
     ]);
+  });
+
+  it('excludes the year-end bonus in a special period, counts it in the next year to date, and blocks an excess paid alone', async () => {
+    const { employeeAt, calculate, finalize, resultsOf } = await payrollTenant('WTAX-BONUS');
+    const within = await employeeAt('WITHIN', 1);
+    const over = await employeeAt('OVER', 3);
+    const payComponentIds = (
+      await admin.payComponent.findMany({
+        where: { code: { in: ['YEAR_END_BONUS', 'CASH_GIFT'] } },
+      })
+    ).map((component) => component.id);
+
+    // The bonus is one month's salary as of 31 October, and the cash gift a
+    // de minimis Christmas gift. ₱40,000 is within the ₱90,000 exclusion, so
+    // nothing is taxed. ₱100,000 leaves ₱10,000 of supplementary compensation
+    // paid with no regular compensation, which only the cumulative average
+    // method withholds.
+    const special = await calculate('2894-11', '15', {
+      periodFrom: '2894-01-01',
+      periodTo: '2894-10-31',
+      payComponentIds,
+    });
+    expect(special.outcome).toEqual({ outcome: 'RETURNED', results: 2, blockingExceptions: 1 });
+    const specialResults = await resultsOf(special.job.payrollPeriodId);
+    const bonus = specialResults.get(within)!;
+    const withholdingId = await withholding();
+    expect(
+      bonus.lines
+        .filter((line) => line.payComponentId === withholdingId)
+        .map((line) => String(line.amount)),
+    ).toEqual(['0']);
+    expect(
+      [
+        bonus.taxLine!.taxableCompensation,
+        bonus.taxLine!.nonTaxableCompensation,
+        bonus.taxLine!.withholdingTax,
+      ].map(String),
+    ).toEqual(['0', '45000', '0']);
+    expect(specialResults.get(over)).toMatchObject({ status: 'EXCEPTION', taxLine: null });
+    const exceptions = await admin.payrollException.findMany({
+      where: { payrollPeriodId: special.job.payrollPeriodId, calculationVersion: 1 },
+    });
+    expect(exceptions.map((exception) => [exception.employeeId, exception.exceptionType])).toEqual([
+      [over, 'WITHHOLDING_TAX_CUMULATIVE_AVERAGE_UNSETTLED'],
+    ]);
+
+    // Once the special period is finalized, December reads the bonus toward
+    // the exclusion and the cash gift toward its ceiling.
+    await finalize(special.job.payrollPeriodId);
+    const december = await calculate('2894-12', '31');
+    expect(december.outcome).toEqual({ outcome: 'FOR_REVIEW', results: 2 });
+    const decemberResults = await resultsOf(december.job.payrollPeriodId);
+    expect(decemberResults.get(within)!.taxLine!.yearToDateSnapshot).toEqual({
+      taxYear: 2894,
+      payrollPeriodIds: [special.job.payrollPeriodId],
+      taxableCompensation: '0.0000',
+      nonTaxableCompensation: '45000.0000',
+      withholdingTax: '0.0000',
+      deMinimisBenefits: { CHRISTMAS_GIFT: '5000.0000' },
+      thirteenthMonthAndOtherBenefits: '40000.0000',
+    });
+    // The blocked result paid nothing, so nothing counts for it.
+    expect(decemberResults.get(over)!.taxLine!.yearToDateSnapshot).toMatchObject({
+      payrollPeriodIds: [special.job.payrollPeriodId],
+      thirteenthMonthAndOtherBenefits: '0.0000',
+    });
   });
 });

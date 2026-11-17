@@ -465,9 +465,16 @@ const taxRate = z
  * The first bracket starts at zero, and each bracket's base tax is the tax
  * the bracket before it reaches at its level, so the table is continuous and
  * an amount on a level is taxed the same by either bracket.
+ *
+ * `thirteenthMonthAndOtherBenefitsExclusion` is the most 13th-month pay and
+ * other benefits paid in a tax year that is excluded from tax: "the total
+ * amount shall not exceed ninety thousand pesos (₱ 90,000), which may be
+ * increased through rules and regulations" (RR No. 11-2018 sec.
+ * 2.78.1(B)(11); research register R26).
  */
 export const compensationWithholdingTaxParameters = z
   .object({
+    thirteenthMonthAndOtherBenefitsExclusion: pesoAmount,
     monthlyTable: z
       .array(
         z

@@ -82,8 +82,9 @@ export interface EmployeePayrollSources {
 /**
  * What the Agency's `FINALIZED` Payroll Periods paid the Employee in the tax
  * year, the calendar year of this period's payment date, before this period:
- * the sums of their tax lines, and the de minimis benefits their lines paid.
- * Amounts are four-place decimal strings.
+ * the sums of their tax lines, the de minimis benefits their lines paid, and
+ * the 13th-month pay and other benefits their lines paid, which count toward
+ * the yearly exclusion (#351). Amounts are four-place decimal strings.
  */
 export interface TaxYearToDate {
   taxYear: number;
@@ -92,6 +93,7 @@ export interface TaxYearToDate {
   nonTaxableCompensation: string;
   withholdingTax: string;
   deMinimisBenefits: Partial<Record<DeMinimisBenefit, string>>;
+  thirteenthMonthAndOtherBenefits: string;
 }
 
 /** An Agency Payroll Applicability of `OFFICIAL_VEHICLE_ASSIGNMENT` the rule snapshot froze. */
