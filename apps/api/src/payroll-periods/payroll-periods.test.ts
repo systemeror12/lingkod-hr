@@ -189,7 +189,7 @@ describe('the Payroll Period controller', () => {
 
   it('refuses another Agency or a malformed period before calling the service', async () => {
     const service = { create: vi.fn(), moveCutoff: vi.fn(), cancelDraft: vi.fn() };
-    const controller = new PayrollPeriodsController(service as never, {} as never);
+    const controller = new PayrollPeriodsController(service as never, {} as never, {} as never);
     const other = '00000000-0000-4000-8000-000000000009';
 
     await expect(controller.create(other, {}, context)).rejects.toMatchObject({ status: 404 });
@@ -212,7 +212,7 @@ describe('the Payroll Period controller', () => {
           new PayrollPeriodsServiceError('Not draft.', 409, 'PAYROLL_PERIOD_NOT_DRAFT'),
         ),
     };
-    const controller = new PayrollPeriodsController(service as never, {} as never);
+    const controller = new PayrollPeriodsController(service as never, {} as never, {} as never);
 
     await expect(
       controller.cancelDraft(agencyId, periodId, { reason: 'x', rowVersion: 1 }, context),

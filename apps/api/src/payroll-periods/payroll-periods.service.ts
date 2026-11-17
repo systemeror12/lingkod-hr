@@ -35,13 +35,15 @@ export interface PayrollPeriodSummary {
   rowVersion: number;
 }
 
-/** The Payroll Certification in force on a period. */
+/** The Payroll Certification in force on a period, and its current review export. */
 export interface PayrollCertificationSummary {
   id: string;
   calculationVersion: number;
   calculationHash: string;
   certifiedByMembershipId: string;
   certifiedAt: string;
+  /** The Certified Payroll Review Export certifying generated; null only before #636. */
+  reviewExportId: string | null;
 }
 
 /**
@@ -133,6 +135,16 @@ export class PayrollPeriodsService {
           certifiedAt: true,
         },
       });
+      const reviewExport =
+        certification &&
+        (await transaction.certifiedPayrollReviewExport.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            payrollCertificationId: certification.id,
+            supersededAt: null,
+          },
+          select: { id: true },
+        }));
       const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
       return {
         ...toSummary(period),
@@ -142,6 +154,7 @@ export class PayrollPeriodsService {
         certification: certification && {
           ...certification,
           certifiedAt: certification.certifiedAt.toISOString(),
+          reviewExportId: reviewExport?.id ?? null,
         },
       };
     });

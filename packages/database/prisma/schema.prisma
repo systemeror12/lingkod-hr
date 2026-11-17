@@ -5703,6 +5703,39 @@ model PayrollCertification {
   @@map("payroll_certifications")
 }
 
+/// A platform-wide, immutable definition of one payroll Structured Export
+/// (#636). A change is a successor version.
+model PayrollExportContractVersion {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String
+  version    Int
+  definition Json
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([code, version], map: "payroll_export_contract_versions_code_version_key")
+  @@map("payroll_export_contract_versions")
+}
+
+/// The immutable, checksummed Certified Payroll Review Export of one Payroll
+/// Certification (#636). Only `supersededAt` is ever written after insert.
+/// The foreign keys are in SQL.
+model CertifiedPayrollReviewExport {
+  id                             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String    @map("agency_id") @db.Uuid
+  payrollPeriodId                String    @map("payroll_period_id") @db.Uuid
+  payrollCertificationId         String    @unique(map: "certified_payroll_review_exports_certification_key") @map("payroll_certification_id") @db.Uuid
+  payrollExportContractVersionId String    @map("payroll_export_contract_version_id") @db.Uuid
+  content                        String
+  checksum                       String
+  generatedByMembershipId        String    @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime  @default(now()) @map("generated_at") @db.Timestamptz(6)
+  supersededAt                   DateTime? @map("superseded_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, payrollPeriodId], map: "certified_payroll_review_exports_period_idx")
+  @@map("certified_payroll_review_exports")
+}
+
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
 model PayrollRuleSnapshot {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
