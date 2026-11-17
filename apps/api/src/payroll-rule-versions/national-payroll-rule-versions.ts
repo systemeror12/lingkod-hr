@@ -108,8 +108,18 @@ const salaryScheduleFile = z
     { message: 'A Salary Grade and step appear once.', path: ['salaryGradeRates'] },
   );
 
-/** The GAA's authorized-deduction rule. It holds the allowed payee categories. */
-const authorizedDeductionsParameters = z
+const pesoAmount = z
+  .string()
+  .regex(/^\d{1,15}(\.\d{1,2})?$/, 'An amount is a decimal string of whole centavos.')
+  .refine((value) => new Prisma.Decimal(value).gt(0), 'An amount is greater than zero.');
+
+/**
+ * The GAA's authorized-deduction rule (FY 2026 GAA sec. 62): the payee
+ * categories it allows, the categories whose obligations are satisfied ahead
+ * of all others, in their order, and the monthly net take-home pay no
+ * deduction may go below. The rest are satisfied in the order incurred.
+ */
+export const authorizedDeductionsParameters = z
   .object({
     allowedPayeeCategories: z
       .array(deductionPayeeCategorySchema)
@@ -117,8 +127,19 @@ const authorizedDeductionsParameters = z
       .refine((categories) => new Set(categories).size === categories.length, {
         message: 'A payee category appears once.',
       }),
+    priorityPayeeCategories: z
+      .array(deductionPayeeCategorySchema)
+      .refine((categories) => new Set(categories).size === categories.length, {
+        message: 'A payee category appears once.',
+      }),
+    monthlyNetTakeHomeFloor: pesoAmount,
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ allowedPayeeCategories, priorityPayeeCategories }) =>
+      priorityPayeeCategories.every((category) => allowedPayeeCategories.includes(category)),
+    { message: 'A priority payee category is an allowed one.', path: ['priorityPayeeCategories'] },
+  );
 
 const authorizedDeductionsFile = z
   .object({
@@ -127,11 +148,6 @@ const authorizedDeductionsFile = z
     parameters: authorizedDeductionsParameters,
   })
   .strict();
-
-const pesoAmount = z
-  .string()
-  .regex(/^\d{1,15}(\.\d{1,2})?$/, 'An amount is a decimal string of whole centavos.')
-  .refine((value) => new Prisma.Decimal(value).gt(0), 'An amount is greater than zero.');
 
 /**
  * The year-end bonus and cash gift rule of one fiscal year: one month's basic

@@ -116,12 +116,19 @@ describe('rule version file', () => {
     expect(parse(withoutEffectiveTo)).toBe(false);
   });
 
-  it('accepts authorized deductions that list known payee categories once', () => {
-    const deductions = (parameters: unknown, extra: Record<string, unknown> = {}) => {
+  it('accepts authorized deductions that list known payee categories once, with their order and floor', () => {
+    const deductions = (
+      parameters: Record<string, unknown>,
+      extra: Record<string, unknown> = {},
+    ) => {
       const file: Record<string, unknown> = {
         ...scheduleFile('ad', '2030-01-01', null),
         ruleKind: 'AUTHORIZED_DEDUCTIONS',
-        parameters,
+        parameters: {
+          priorityPayeeCategories: [],
+          monthlyNetTakeHomeFloor: '5000.00',
+          ...parameters,
+        },
       };
       delete file.salaryGradeRates;
       return { ...file, ...extra };
@@ -135,6 +142,16 @@ describe('rule version file', () => {
     expect(
       parse(deductions({ allowedPayeeCategories: ['BIR'] }, { salaryGradeRates: rates })),
     ).toBe(false);
+
+    // The priority categories are allowed ones, each once; the floor is whole centavos.
+    const allowed = { allowedPayeeCategories: ['BIR', 'GSIS', 'LICENSED_INSURER'] };
+    expect(parse(deductions({ ...allowed, priorityPayeeCategories: ['BIR', 'GSIS'] }))).toBe(true);
+    expect(parse(deductions({ ...allowed, priorityPayeeCategories: ['HDMF'] }))).toBe(false);
+    expect(parse(deductions({ ...allowed, priorityPayeeCategories: ['BIR', 'BIR'] }))).toBe(false);
+    expect(parse(deductions({ ...allowed, priorityPayeeCategories: undefined }))).toBe(false);
+    expect(parse(deductions({ ...allowed, monthlyNetTakeHomeFloor: undefined }))).toBe(false);
+    expect(parse(deductions({ ...allowed, monthlyNetTakeHomeFloor: '5000.001' }))).toBe(false);
+    expect(parse(deductions({ ...allowed, monthlyNetTakeHomeFloor: '0' }))).toBe(false);
   });
 
   it('holds the year-end bonus and cash gift dates, threshold, and amounts as typed parameters', () => {

@@ -114,6 +114,7 @@ const sourcesWith = (
 ): EmployeePayrollSources => ({
   payrollInputs,
   absenceFacts: [],
+  deductionObligations: [],
   nightDutyFacts: [],
   nightShiftDifferentialRates: [],
   unchargedDeficitFacts: [],

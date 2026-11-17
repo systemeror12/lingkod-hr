@@ -5565,6 +5565,25 @@ model DeductionObligation {
   @@map("deduction_obligations")
 }
 
+/// What one Deduction Obligation was due in a result's period, what was
+/// deducted, and what the net-take-home floor stopped (#634). Immutable. Its
+/// foreign keys, guard, and RLS live in migration 0179.
+model LoanDeductionLine {
+  id                    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String  @map("agency_id") @db.Uuid
+  payrollEmployeeId     String  @map("payroll_employee_id") @db.Uuid
+  deductionObligationId String  @map("deduction_obligation_id") @db.Uuid
+  priority              Int
+  amountDue             Decimal @map("amount_due") @db.Decimal(19, 4)
+  deductedAmount        Decimal @map("deducted_amount") @db.Decimal(19, 4)
+  notDeductedAmount     Decimal @map("not_deducted_amount") @db.Decimal(19, 4)
+  ruleVersionId         String  @map("rule_version_id") @db.Uuid
+
+  @@unique([agencyId, payrollEmployeeId, deductionObligationId], map: "loan_deduction_lines_obligation_key")
+  @@unique([agencyId, payrollEmployeeId, priority], map: "loan_deduction_lines_priority_key")
+  @@map("loan_deduction_lines")
+}
+
 // #346 Authorized Payroll Component Inputs. Foreign keys, the mutation guard,
 // and RLS live in migrations 0156 and 0157; the model keeps scalars only.
 

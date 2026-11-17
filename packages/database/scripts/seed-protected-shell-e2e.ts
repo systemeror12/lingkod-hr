@@ -3109,7 +3109,11 @@ async function seedSyntheticRuleVersions(): Promise<void> {
         code: deductions,
         name: 'Synthetic E2E authorized deductions, not a GAA provision',
         effectiveFrom: new Date('2850-01-01'),
-        parameters: { allowedPayeeCategories: ['GSIS', 'HDMF'] },
+        parameters: {
+          allowedPayeeCategories: ['GSIS', 'HDMF'],
+          priorityPayeeCategories: ['GSIS', 'HDMF'],
+          monthlyNetTakeHomeFloor: '5000.00',
+        },
       },
     });
   }

@@ -819,19 +819,32 @@ Withholding-tax calculation detail
 
 ## `loan_deduction_lines`
 
-Government or authorized loan deduction
+What one Deduction Obligation was due in a regular period's result, what was
+deducted, and what the net-take-home floor stopped (#634)
 
-| Column              | Logical type | Null? | Key / rule           | Description                |
-| ------------------- | ------------ | ----- | -------------------- | -------------------------- |
-| id                  | uuid         | No    | PK                   | Loan line                  |
-| agency_id           | uuid         | No    | FK agencies          | Tenant                     |
-| payroll_employee_id | uuid         | No    | FK payroll_employees | Payroll Employee Result    |
-| loan_type           | string       | No    |                      | Loan code                  |
-| loan_reference      | string       | Yes   |                      | Account/reference          |
-| amount              | decimal      | No    |                      | Deduction                  |
-| source_reference    | string       | Yes   |                      | Imported/maintained source |
+| Column                  | Logical type | Null? | Key / rule                        | Description                             |
+| ----------------------- | ------------ | ----- | --------------------------------- | --------------------------------------- |
+| id                      | uuid         | No    | PK                                | Loan line                               |
+| agency_id               | uuid         | No    | FK agencies                       | Tenant                                  |
+| payroll_employee_id     | uuid         | No    | FK payroll_employees              | Payroll Employee Result                 |
+| deduction_obligation_id | uuid         | No    | FK deduction_obligations          | The obligation version applied          |
+| priority                | integer      | No    |                                   | 1 for the obligation satisfied first    |
+| amount_due              | decimal      | No    |                                   | Scheduled amount, capped at the balance |
+| deducted_amount         | decimal      | No    |                                   | Deducted                                |
+| not_deducted_amount     | decimal      | No    |                                   | Stopped by the net-take-home floor      |
+| rule_version_id         | uuid         | No    | FK national_payroll_rule_versions | The `AUTHORIZED_DEDUCTIONS` version     |
 
-**Deletion behavior:** Immutable after finalization.
+**Constraints and indexes**
+
+- `deducted_amount + not_deducted_amount = amount_due`.
+- Unique `(payroll_employee_id, deduction_obligation_id)` and
+  `(payroll_employee_id, priority)`.
+- Obligations of the version's priority payee categories come first, in its
+  order, then the rest in the order incurred, after every tax and
+  contribution. None takes monthly net pay below the version's floor (FY 2026
+  GAA sec. 62). A stopped amount is a warning and stays owed.
+
+**Deletion behavior:** Immutable.
 
 ## `payroll_exceptions`
 

@@ -86,7 +86,9 @@ its calculator and parameter schema in code. The load validates `parameters`
 against that schema. `SALARY_SCHEDULE` has empty parameters, because its rates
 are rows. `AUTHORIZED_DEDUCTIONS` is the GAA's authorized-deductions provision
 (FY 2026 GAA sec. 62); its parameters list `allowedPayeeCategories`, drawn
-from the categories that section names (section 9). `GSIS_CONTRIBUTION`
+from the categories that section names, the `priorityPayeeCategories` whose
+obligations are satisfied first, in order, and `monthlyNetTakeHomeFloor`
+(section 9). `GSIS_CONTRIBUTION`
 (RA No. 8291, sec. 5(a)) holds `employeeRate`, `employerRate`, and
 `monthlyCompensationLimit`, the AMC limit, which the file states as null only
 when its issuance sets none. `EMPLOYEES_COMPENSATION` (PD No. 626, art. 181)
@@ -1356,8 +1358,8 @@ the payee, the issuer's reference, the date incurred, the outstanding balance
 and scheduled amount the issuer validated, and the finalized Document Version
 that authorizes them. Payroll never calculates interest or amortization (#27).
 `incurred_on` gives the order incurred, by which obligations other than those
-due the BIR, PhilHealth, GSIS, and HDMF are satisfied (GAA sec. 62). Applying
-an obligation in calculation is #634.
+due the BIR, PhilHealth, GSIS, and HDMF are satisfied (GAA sec. 62). A regular
+period applies them through `loan_deduction_lines` below.
 
 The payee categories are those of FY 2026 GAA sec. 62: (a) the BIR,
 PhilHealth, GSIS, and HDMF; (b) the National Government under a final and
@@ -1379,6 +1381,57 @@ incurred, and does not start earlier. A deferred trigger refuses a
 no row is deleted. A partial unique index allows one `ACTIVE` row per Employee,
 payee category, payee name, and issuer reference. Record, change, and end need
 `payroll.deductions.manage` held Agency-wide and write an Audit Event.
+
+```sql
+CREATE TABLE loan_deduction_lines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_employee_id uuid NOT NULL,
+  deduction_obligation_id uuid NOT NULL,
+  priority integer NOT NULL CHECK (priority > 0),
+  amount_due numeric(19,4) NOT NULL,
+  deducted_amount numeric(19,4) NOT NULL,
+  not_deducted_amount numeric(19,4) NOT NULL,
+  rule_version_id uuid NOT NULL REFERENCES national_payroll_rule_versions (id),
+  CHECK (amount_due > 0 AND deducted_amount >= 0 AND not_deducted_amount >= 0
+         AND deducted_amount + not_deducted_amount = amount_due),
+  FOREIGN KEY (agency_id, payroll_employee_id)
+    REFERENCES payroll_employees (agency_id, id),
+  FOREIGN KEY (agency_id, deduction_obligation_id)
+    REFERENCES deduction_obligations (agency_id, id),
+  UNIQUE (agency_id, payroll_employee_id, deduction_obligation_id),
+  UNIQUE (agency_id, payroll_employee_id, priority)
+);
+```
+
+A Loan Deduction Line is what one Deduction Obligation was due in a regular
+period's result, what was deducted, and what the net-take-home floor stopped
+(#634). Migration 0179 creates it. The calculation applies the version of each
+obligation in effect on the period's last day as it stood at the cutoff (ADR
+0014): one recorded by the cutoff that started by then, has not ended before
+it, and has no successor recorded by the cutoff that started by then. An end
+recorded after the cutoff is ignored, because ending changes the row in place. It runs after
+every tax and contribution, by the `AUTHORIZED_DEDUCTIONS` version in effect on
+every date of the month (FY 2026 GAA sec. 62,
+[R6](../../research/salary-overpayment-recovery-authorities.md)):
+
+- the obligations of the version's `priorityPayeeCategories`, in that order,
+  then the rest in the order incurred; same-day obligations keep a fixed order
+  by payee name and issuer reference;
+- each for its scheduled amount, capped at its outstanding balance;
+- none below `monthlyNetTakeHomeFloor`: an obligation takes only what leaves
+  net pay at the floor, and the rest is its `not_deducted_amount`.
+
+A deducted amount is also a `LOAN_DEDUCTION` Payroll Line, so the result's
+totals include it. A stopped amount raises the `NET_PAY_FLOOR_STOPPED_DEDUCTION`
+warning, which lists each obligation and the amount not taken; it stays owed.
+No version in effect on every date, a version that changes inside the month,
+and an obligation whose payee category the version does not allow block the
+Employee instead. A special period applies no obligation.
+
+The line joins its result only in the transaction that writes the result, for
+an obligation of the result's Employee, and is never changed or deleted, like a
+Contribution Line. RLS is forced.
 
 ---
 

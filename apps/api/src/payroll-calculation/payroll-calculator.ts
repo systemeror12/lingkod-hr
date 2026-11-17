@@ -6,6 +6,7 @@ import type {
 } from '../attendance-periods/attendance-periods.types';
 import type { CompensationBasis } from '../compensation-basis/compensation-basis.service';
 import type {
+  DeductionPayeeCategory,
   DeMinimisBenefit,
   NationalPayrollRuleKind,
   RuleVersionWithEffectivity,
@@ -77,6 +78,23 @@ export interface EmployeePayrollSources {
   serviceSegmentAppointments: Omit<ServiceSegmentAppointment, 'employeeId'>[];
   /** The Employee's tax figures from the Agency's finalized payrolls of the tax year (#350). */
   taxYearToDate: TaxYearToDate;
+  /** For a regular period: the Employee's Deduction Obligations in effect on its last day (#634). */
+  deductionObligations: DeductionObligationDue[];
+}
+
+/**
+ * The version of one Deduction Obligation in effect on a regular period's
+ * last day: the issuer-validated terms the period deducts. Amounts are
+ * four-place decimal strings.
+ */
+export interface DeductionObligationDue {
+  id: string;
+  payeeCategory: DeductionPayeeCategory;
+  payeeName: string;
+  issuerReference: string;
+  incurredOn: string;
+  outstandingBalance: string;
+  scheduledAmount: string;
 }
 
 /**
@@ -184,11 +202,27 @@ export interface CalculatedTax {
   yearToDateSnapshot: TaxYearToDate;
 }
 
+/**
+ * One Loan Deduction Line (payroll-schema.md §9): what one Deduction
+ * Obligation was due in the period, what was deducted, and what the
+ * net-take-home floor stopped, as four-place decimal strings.
+ */
+export interface CalculatedLoanDeduction {
+  deductionObligationId: string;
+  /** 1 for the obligation satisfied first. */
+  priority: number;
+  amountDue: string;
+  deductedAmount: string;
+  notDeductedAmount: string;
+  ruleVersionId: string;
+}
+
 export interface CalculatorOutcome {
   lines: CalculatedLine[];
   exceptions: CalculatedException[];
   contributions?: CalculatedContribution[];
   tax?: CalculatedTax;
+  loanDeductions?: CalculatedLoanDeduction[];
 }
 
 /**
