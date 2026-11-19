@@ -59,6 +59,7 @@ async function cleanup(admin: PrismaClient, tenants: Tenant[]) {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     for (const { agency, user } of tenants) {
       await transaction.payrollInput.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.payrollException.deleteMany({ where: { agencyId: agency.id } });
       await transaction.payrollPeriod.deleteMany({ where: { agencyId: agency.id } });
       await transaction.employee.deleteMany({ where: { agencyId: agency.id } });
       await transaction.agencyMembership.deleteMany({ where: { agencyId: agency.id } });
@@ -310,7 +311,7 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
-  'withdraws a pending Payroll Input by its correction key and refuses one a payroll uses',
+  'withdraws a pending Payroll Input by its correction key and blocks the payroll that uses it',
   async () => {
     const admin = await createAdminClient();
     const suffix = `${Date.now()}`;
@@ -494,17 +495,31 @@ it.skipIf(!enabled)(
       ).resolves.toMatchObject({ status: 'CONSUMED', sourceCorrectionKey: null });
 
       // Once the period calculates, it uses every input accepted by its cutoff:
-      // that one is refused and stays PENDING, and a later one is withdrawn.
+      // withdrawing that one blocks the period, and a later one blocks nothing.
       await admin.payrollPeriod.update({
         where: { id: period.id },
         data: { status: 'CALCULATING', calculationVersion: 1 },
       });
-      await expect(withdraw(live, 'fix-live')).resolves.toMatchObject({
-        outcome: 'RETRYABLE_FAILURE',
-        code: 'PAYROLL_INPUT_IN_LIVE_CALCULATION',
-      });
-      expect(await status(live)).toBe('PENDING');
       await expect(withdraw(late, 'fix-late')).resolves.toMatchObject({ outcome: 'WITHDRAWN' });
+      await expect(
+        admin.payrollException.count({ where: { payrollPeriodId: period.id } }),
+      ).resolves.toBe(0);
+      await expect(withdraw(live, 'fix-live')).resolves.toEqual({
+        outcome: 'WITHDRAWN',
+        payrollInputId: live,
+      });
+      expect(await status(live)).toBe('CANCELLED');
+      await expect(
+        admin.payrollException.findMany({ where: { payrollPeriodId: period.id } }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          calculationVersion: 1,
+          employeeId: home.employee.id,
+          exceptionType: 'PAYROLL_INPUT_WITHDRAWN',
+          severity: 'BLOCKING',
+          status: 'OPEN',
+        }),
+      ]);
     } finally {
       await cleanup(admin, [home]);
       await admin.$disconnect();

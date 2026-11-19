@@ -417,18 +417,25 @@ input, in its own transaction and idempotently by a stable correction key
 
 There is no `REVERSED` or `SUPERSEDED` status.
 
-`withdrawInTransaction` builds the first case (#357). It writes the correction
-key with the cancellation, so a retry with the key answers `ALREADY_WITHDRAWN`,
-the key cannot withdraw another input, and another key cannot withdraw a
-cancelled one. Inputs cancelled before migration 0166 have no key. Per ADR
-0014, a live calculation uses the input when a period past `DRAFT` has a
-`cutoff_at` at or after its `accepted_at`. No recorded rule maps an input kind
-to a special period's components, so a live special period counts too. The
-withdrawal locks the Agency's open periods, so a calculation cannot start
-until it commits. Until #649 builds the second and third cases, Payroll refuses
-both as `RETRYABLE_FAILURE`, with `PAYROLL_INPUT_IN_LIVE_CALCULATION` or
-`PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE`, and changes nothing. A
-cancelled input stays readable with its key.
+`withdrawInTransaction` builds the first case (#357) and the second (#649).
+It writes the correction key with the cancellation, so a retry with the key
+answers `ALREADY_WITHDRAWN`, the key cannot withdraw another input, and
+another key cannot withdraw a cancelled one. Inputs cancelled before migration
+0166 have no key. Per ADR 0014, a live calculation uses the input when a
+period past `DRAFT` has a `cutoff_at` at or after its `accepted_at`. No
+recorded rule maps an input kind to a special period's components, so a live
+special period counts too. The withdrawal locks the Agency's open periods
+`FOR SHARE`, so a calculation cannot start, and no period can change status,
+until it commits; a running calculation is waited out, and the withdrawal
+marks what it committed. A cancelled input stays readable with its key.
+
+In the second case the withdrawal answers `WITHDRAWN`, and in the same
+transaction writes a `PAYROLL_INPUT_WITHDRAWN` blocking exception on the
+current calculation version of each live period (section 10). The input's
+payload is never edited, and no correction record links to it: the next
+calculation version reads only `PENDING` inputs. Until #650 builds the third
+case, Payroll refuses it as `RETRYABLE_FAILURE` with
+`PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE`, and changes nothing.
 
 For a Leave Monetization input, Payroll resolves the authoritative salary source
 and computes `amount`; Leave may not supply either as an unrestricted value. The
@@ -1488,8 +1495,8 @@ Employee, not a result, because a blocked or held Employee may have none.
 Migration 0162 creates `payroll_exceptions` (#621). The calculation writes
 them, `OPEN`, with the cause in `details.message`; `reason` stays for an
 acknowledgement or resolution. A trigger admits one only while its period is
-`CALCULATING` at its version, apart from the rule version mark below, and
-rejects every `DELETE`.
+`CALCULATING` at its version, apart from the rule version and withdrawn input
+marks below, and rejects every `DELETE`.
 
 A National Payroll Rule Version loaded after a snapshot never recalculates a
 period silently (#328). Migration 0170 marks each period the load affects, in
@@ -1512,6 +1519,27 @@ function, whose owner policies expose only those periods, admit only row locks
 on them, and admit only this exception type. `hris_app` cannot write the type,
 and the insert trigger admits it only on the current version, naming no
 Employee, with the severity its status takes.
+
+A source's withdrawal of a `PENDING` input a live calculation uses marks each
+such period with a `PAYROLL_INPUT_WITHDRAWN` exception (#649, section 4). It is
+`BLOCKING` at every status, `CALCULATING` through `APPROVED`, which is stricter
+than the rule version mark: paying a cancelled leave monetization while Leave
+restores the credits would pay twice (#330 D11 #15). It names the input's
+Employee, and its `details` name the `payrollInputId`, source module, input
+kind, and correction key. Migration 0181 lets `hris_app` write it under the
+Agency policy, and the insert trigger admits it only on the current version of
+a `CALCULATING`, `FOR_REVIEW`, `CERTIFIED`, or `APPROVED` period, as
+`BLOCKING`, naming the Employee of a `CANCELLED` input. A queued calculation
+counts it and returns to `DRAFT`. A `CERTIFIED` or `APPROVED` period stays as
+it is, certification included, until it is returned: a revoked certification
+and a return for correction, or a return before finalization, then a
+recalculation. The new version never reads the cancelled input, so the mark
+lifts with it.
+
+Migration 0181 also refuses every move of a period to `CERTIFIED`, `APPROVED`,
+or `FINALIZED` while its current version has an open `BLOCKING` exception, so
+the rule holds for approval and finalization before their commands exist. The
+certify command refuses first with `PAYROLL_PERIOD_BLOCKING_EXCEPTION`.
 
 After storing the lines, the calculation runs its checks (#623) in the same
 transaction and writes what they raise, so a blocking one returns the period
