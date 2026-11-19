@@ -38,6 +38,7 @@ import {
 } from './year-end-bonus.calculator';
 import { CommutableRataCalculator } from './commutable-rata.calculator';
 import { OvertimePayCalculator } from './overtime-pay.calculator';
+import { PAYROLL_INPUT_WITHDRAWN } from '../payroll-inputs/payroll-inputs.service';
 import { RULE_VERSION_LOADED_AFTER_SNAPSHOT } from '../payroll-periods/payroll-rule-snapshots';
 import {
   CLOTHING_ALLOWANCE_COMPONENT_CODE,
@@ -414,9 +415,13 @@ export class PayrollCalculationService {
         periodFrom: context.periodFrom,
       })
     ).blocking;
-    // A rule version loaded while this version was queued marked it (#624).
+    // A rule version loaded (#624), or a source withdrew an input it uses
+    // (#649), while this version was queued: either marked it.
     blockingExceptions += await transaction.payrollException.count({
-      where: { ...job, exceptionType: RULE_VERSION_LOADED_AFTER_SNAPSHOT },
+      where: {
+        ...job,
+        exceptionType: { in: [RULE_VERSION_LOADED_AFTER_SNAPSHOT, PAYROLL_INPUT_WITHDRAWN] },
+      },
     });
 
     if (blockingExceptions > 0) {

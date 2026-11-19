@@ -1155,7 +1155,7 @@ then. The reversal's source is the successor charge, with posting key
 correction through its withdrawal contract (payroll-schema.md §4): Leave
 withdraws the earlier charge's Payroll Input, which becomes `CANCELLED`, and a
 successor remainder is a new input whose `replaces_payroll_input_id` names it.
-A consumed input cannot be withdrawn until #649, so Payroll answers
+A consumed input cannot be withdrawn until #650, so Payroll answers
 `RETRYABLE_FAILURE` and the Employee's charges roll back. Nothing else changes
 a charge: later ledger entries never reopen it.
 

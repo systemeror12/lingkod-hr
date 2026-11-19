@@ -66,6 +66,12 @@ export class PayrollInputsServiceError extends Error {
 
 const LIST_LIMIT = 200;
 
+/**
+ * The blocking exception a withdrawal writes on each live period that uses the
+ * input (migration 0181).
+ */
+export const PAYROLL_INPUT_WITHDRAWN = 'PAYROLL_INPUT_WITHDRAWN';
+
 const summarySelect = {
   id: true,
   employeeId: true,
@@ -234,17 +240,17 @@ export class PayrollInputsService {
   /**
    * Withdraw a source module's own input inside the caller's transaction, which
    * must carry the caller's Agency database context (payroll-schema.md §4,
-   * #357). A `PENDING` input that no live calculation uses becomes `CANCELLED`
-   * under the source's correction key, and stays readable. A retry with the
-   * same key answers `ALREADY_WITHDRAWN`; the key cannot withdraw another input.
-   * A replacement is then accepted with `replacesPayrollInputId` in the same
-   * transaction.
+   * #330 D11 #15). A `PENDING` input becomes `CANCELLED` under the source's
+   * correction key, and stays readable. A retry with the same key answers
+   * `ALREADY_WITHDRAWN`; the key cannot withdraw another input. A replacement
+   * is then accepted with `replacesPayrollInputId` in the same transaction.
    *
-   * Payroll does not yet correct an input a live calculation uses or a
-   * finalized payroll consumed (#649), so it refuses both as retryable;
-   * `payroll_line_sources` records which calculation version used an input.
-   * Two concurrent withdrawals of different inputs under one key fail the
-   * second caller's transaction on the key's unique index.
+   * When a live calculation uses the input, {@link withdrawFromLiveCalculation}
+   * also blocks each such period until it is returned and recalculated (#649).
+   * Payroll does not yet correct an input a finalized payroll consumed (#650),
+   * so it refuses that as retryable. Two concurrent withdrawals of different
+   * inputs under one key fail the second caller's transaction on the key's
+   * unique index.
    */
   async withdrawInTransaction(
     transaction: Prisma.TransactionClient,
@@ -279,19 +285,17 @@ export class PayrollInputsService {
 
     // Before the period rows, in the order a calculation start takes them.
     await lockPayrollInputAcceptance(transaction, agencyId, 'SHARED');
-    if (await usedByLiveCalculation(transaction, agencyId, payrollInputId)) {
-      return {
-        outcome: 'RETRYABLE_FAILURE',
-        code: 'PAYROLL_INPUT_IN_LIVE_CALCULATION',
-        reason:
-          'A Payroll Period past DRAFT uses the Payroll Input; Payroll cannot yet withdraw it (#649).',
-      };
-    }
+    const live = await lockLiveCalculations(transaction, agencyId, payrollInputId);
     const cancelled = await transaction.payrollInput.updateMany({
       where: { agencyId, id: payrollInputId, sourceModule, status: 'PENDING' },
       data: { status: 'CANCELLED', sourceCorrectionKey: correctionKey },
     });
-    if (cancelled.count === 1) return { outcome: 'WITHDRAWN', payrollInputId };
+    if (cancelled.count === 1) {
+      if (live.length > 0) {
+        await withdrawFromLiveCalculation(transaction, agencyId, payrollInputId, live);
+      }
+      return { outcome: 'WITHDRAWN', payrollInputId };
+    }
     // A finalization or another withdrawal changed the input after the check.
     const raced = settledWithdrawal(await read(), request, correctionKey);
     if (!raced) throw new Error('The Payroll Input stayed PENDING but could not be withdrawn.');
@@ -357,7 +361,7 @@ function settledWithdrawal(
     return {
       outcome: 'RETRYABLE_FAILURE',
       code: 'PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE',
-      reason: 'The Payroll Input was consumed by a payroll; Payroll cannot yet correct it (#649).',
+      reason: 'The Payroll Input was consumed by a payroll; Payroll cannot yet correct it (#650).',
     };
   }
   return null;
@@ -388,25 +392,84 @@ export async function lockPayrollInputAcceptance(
   return now;
 }
 
+interface LiveCalculation {
+  payrollPeriodId: string;
+  calculationVersion: number;
+  status: string;
+}
+
 /**
- * Whether a live calculation uses the input. By ADR 0014 a period uses every
- * unconsumed input accepted at or before its cutoff; past `DRAFT` that use is
- * live. No recorded rule maps an input kind to a special period's components,
- * so a live special period counts too. Locking the Agency's open periods holds
- * a calculation start or cutoff move until the caller commits.
+ * The open periods whose live calculation uses the input. By ADR 0014 a period
+ * uses every unconsumed input accepted at or before its cutoff; past `DRAFT`
+ * that use is live. No recorded rule maps an input kind to a special period's
+ * components, so a live special period counts too. Locking the Agency's open
+ * periods holds a calculation start, a cutoff move, or a status move until
+ * the caller commits, and waits out a running calculation.
  */
-async function usedByLiveCalculation(
+async function lockLiveCalculations(
   transaction: Prisma.TransactionClient,
   agencyId: string,
   payrollInputId: string,
-): Promise<boolean> {
-  const periods = await transaction.$queryRaw<{ live: boolean }[]>`
-    SELECT p."status" <> 'DRAFT' AND p."cutoff_at" >= i."accepted_at" AS "live"
+): Promise<LiveCalculation[]> {
+  const periods = await transaction.$queryRaw<
+    { id: string; calculation_version: number; status: string; live: boolean }[]
+  >`
+    SELECT p."id", p."calculation_version", p."status",
+           p."status" <> 'DRAFT' AND p."cutoff_at" >= i."accepted_at" AS "live"
     FROM "payroll_periods" p
     JOIN "payroll_inputs" i ON i."agency_id" = p."agency_id" AND i."id" = ${payrollInputId}::uuid
     WHERE p."agency_id" = ${agencyId}::uuid AND p."status" NOT IN ('FINALIZED', 'VOIDED')
+    ORDER BY p."id"
     FOR SHARE OF p`;
-  return periods.some((period) => period.live);
+  return periods
+    .filter((period) => period.live)
+    .map((period) => ({
+      payrollPeriodId: period.id,
+      calculationVersion: period.calculation_version,
+      status: period.status,
+    }));
+}
+
+/**
+ * The handler for an input a `CALCULATING`, `FOR_REVIEW`, `CERTIFIED`, or
+ * `APPROVED` period uses, once the caller has cancelled it (#649, #330 D11
+ * #15). Each such period gets a `PAYROLL_INPUT_WITHDRAWN` blocking exception
+ * on its current version, which refuses certification, approval, and
+ * finalization until the period is returned and recalculated; the next
+ * version no longer reads the cancelled input. Nothing else changes: the
+ * input keeps its payload, and no correction record links to it. A queued
+ * calculation counts the exception and returns to `DRAFT`; a running one was
+ * waited out, so the mark lands on the version it committed.
+ */
+async function withdrawFromLiveCalculation(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  payrollInputId: string,
+  live: LiveCalculation[],
+): Promise<void> {
+  const input = await transaction.payrollInput.findFirstOrThrow({
+    where: { agencyId, id: payrollInputId },
+    select: { employeeId: true, sourceModule: true, inputKind: true, sourceCorrectionKey: true },
+  });
+  await transaction.payrollException.createMany({
+    data: live.map((period) => ({
+      agencyId,
+      payrollPeriodId: period.payrollPeriodId,
+      calculationVersion: period.calculationVersion,
+      employeeId: input.employeeId,
+      exceptionType: PAYROLL_INPUT_WITHDRAWN,
+      severity: 'BLOCKING',
+      status: 'OPEN',
+      details: {
+        message: `${input.sourceModule} withdrew a ${input.inputKind} Payroll Input that calculation version ${period.calculationVersion} uses. Return the period and calculate it again; certification, approval, and finalization are refused until then.`,
+        payrollInputId,
+        sourceModule: input.sourceModule,
+        inputKind: input.inputKind,
+        sourceCorrectionKey: input.sourceCorrectionKey,
+        periodStatus: period.status,
+      },
+    })),
+  });
 }
 
 function findByKey(
