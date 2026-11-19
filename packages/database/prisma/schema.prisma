@@ -5923,6 +5923,8 @@ model TaxLine {
   withholdingTax         Decimal @map("withholding_tax") @db.Decimal(19, 4)
   ruleVersionId          String  @map("rule_version_id") @db.Uuid
   yearToDateSnapshot     Json    @map("year_to_date_snapshot")
+  /// The year-end adjustment's basis (#633); null in any other period.
+  yearEndAdjustment      Json?   @map("year_end_adjustment")
 
   payrollEmployee PayrollEmployee @relation(fields: [agencyId, payrollEmployeeId], references: [agencyId, id], onDelete: Restrict, map: "tax_lines_payroll_employee_fkey")
 

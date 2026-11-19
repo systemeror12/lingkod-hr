@@ -377,12 +377,14 @@ export class PayrollCalculationService {
         })),
       });
       if (tax) {
+        const { yearToDateSnapshot, yearEndAdjustment, ...figures } = tax;
         await transaction.taxLine.create({
           data: {
             agencyId: job.agencyId,
             payrollEmployeeId: result.id,
-            ...tax,
-            yearToDateSnapshot: toJson(tax.yearToDateSnapshot),
+            ...figures,
+            yearToDateSnapshot: toJson(yearToDateSnapshot),
+            ...(yearEndAdjustment ? { yearEndAdjustment: toJson(yearEndAdjustment) } : {}),
           },
         });
       }

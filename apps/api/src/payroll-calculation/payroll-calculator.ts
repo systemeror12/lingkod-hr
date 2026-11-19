@@ -80,6 +80,19 @@ export interface EmployeePayrollSources {
   taxYearToDate: TaxYearToDate;
   /** For a regular period: the Employee's Deduction Obligations in effect on its last day (#634). */
   deductionObligations: DeductionObligationDue[];
+  /**
+   * For a regular period: the Employee's `EFFECTIVE` Separation Case, effectuated
+   * by the cutoff, whose last day of service falls in the period (#633). Absent
+   * when there is none.
+   */
+  separation?: EmployeeSeparation;
+}
+
+/** A separation that makes a regular period the Employee's last payroll of the year. */
+export interface EmployeeSeparation {
+  separationCaseId: string;
+  /** The first day out of service; the last day of service is the day before. */
+  effectiveDate: string;
 }
 
 /**
@@ -202,6 +215,31 @@ export interface CalculatedTax {
   withholdingTax: string;
   ruleVersionId: string;
   yearToDateSnapshot: TaxYearToDate;
+  /** Present only when the period makes the year-end adjustment (#633). */
+  yearEndAdjustment?: YearEndAdjustment;
+}
+
+/**
+ * The basis of a year-end adjustment (BIR RR No. 11-2018 sec. 2.79(B)(5)(b)),
+ * stored on the Tax Line: the year's taxable compensation, the finalized year
+ * to date plus this period, the annual table's tax on it, and the difference
+ * from the tax the year's finalized payrolls withheld. The difference is the
+ * period's withholding tax, negative when it is refunded. Amounts are
+ * four-place decimal strings.
+ */
+export interface YearEndAdjustment {
+  authority: 'BIR RR No. 11-2018 sec. 2.79(B)(5)(b)';
+  /** `SEPARATION` when the Employee's service ends in the period, else `YEAR_END`. */
+  reason: 'YEAR_END' | 'SEPARATION';
+  separation: EmployeeSeparation | null;
+  taxYear: number;
+  yearToDateTaxableCompensation: string;
+  periodTaxableCompensation: string;
+  annualTaxableCompensation: string;
+  bracket: { compensationLevel: string; baseTax: string; rateOverCompensationLevel: string };
+  annualTaxDue: string;
+  yearToDateWithholdingTax: string;
+  withholdingTax: string;
 }
 
 /**
