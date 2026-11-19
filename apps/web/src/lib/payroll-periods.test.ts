@@ -6,6 +6,7 @@ import {
   periodStatusDisplay,
   stageCells,
   startsCollapsed,
+  yearToDateFacts,
 } from './payroll-periods';
 
 describe('stageCells', () => {
@@ -66,5 +67,24 @@ describe('labels', () => {
     );
     expect(exceptionMessage({})).toBeNull();
     expect(exceptionMessage(null)).toBeNull();
+  });
+});
+
+describe('yearToDateFacts', () => {
+  it('reads the stored snapshot as labelled facts and skips what it lacks', () => {
+    expect(
+      yearToDateFacts({
+        taxYear: 2026,
+        payrollPeriodIds: ['period-1'],
+        taxableCompensation: '1000.0000',
+        withholdingTax: '0.0000',
+      }),
+    ).toEqual([
+      ['Tax year', '2026'],
+      ['Finalized periods counted', '1 period'],
+      ['Taxable compensation', '₱1,000.00'],
+      ['Withholding tax', '₱0.00'],
+    ]);
+    expect(yearToDateFacts(null)).toEqual([]);
   });
 });

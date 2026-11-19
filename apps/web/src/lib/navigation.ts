@@ -260,6 +260,12 @@ const destinations: readonly (Destination & {
     permission: 'payroll.inputs.read',
   },
   {
+    href: '/deduction-obligations',
+    label: 'Deduction Obligations',
+    stage: 'Payroll',
+    permission: 'payroll.deductions.manage',
+  },
+  {
     href: '/compensation',
     label: 'Compensation',
     stage: 'Payroll',

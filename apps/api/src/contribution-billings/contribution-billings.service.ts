@@ -21,6 +21,17 @@ export interface RecordedContributionBilling {
   billings: ContributionBillingSummary[];
 }
 
+/**
+ * One recorded billing row of a period. `current` is false once a later
+ * billing of the same Employee and contribution type supersedes it.
+ */
+export interface ContributionBillingView extends ContributionBillingSummary {
+  contributionType: RecordContributionBillingInput['contributionType'];
+  evidenceDocumentVersionId: string;
+  recordedAt: string;
+  current: boolean;
+}
+
 export class ContributionBillingsServiceError extends Error {
   constructor(
     message: string,
@@ -33,6 +44,7 @@ export class ContributionBillingsServiceError extends Error {
 }
 
 const PERMISSION = 'payroll.deductions.manage';
+const READ_PERMISSION = 'payroll.periods.read';
 
 /**
  * The current billing of each Employee and contribution type among `billings`:
@@ -57,6 +69,57 @@ export function currentBillings<
 @Injectable()
 export class ContributionBillingsService {
   constructor(@Inject(DocumentsService) private readonly documentsService: DocumentsService) {}
+
+  /**
+   * Every billing recorded for the period, current and superseded, by
+   * contribution type and then in the order recorded. It is read with the
+   * period, so it needs `payroll.periods.read` for the whole Agency.
+   */
+  async list(context: RequestContext, periodId: string): Promise<ContributionBillingView[]> {
+    if (!holdsAgencyWide(context, READ_PERMISSION)) {
+      throw new ContributionBillingsServiceError(
+        `Reading contribution billing needs the ${READ_PERMISSION} permission for the whole Agency.`,
+        403,
+        'CONTRIBUTION_BILLING_READ_FORBIDDEN',
+      );
+    }
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const period = await transaction.payrollPeriod.findUnique({
+        where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
+        select: { id: true },
+      });
+      if (!period) {
+        throw new ContributionBillingsServiceError(
+          'The Payroll Period could not be found.',
+          404,
+          'PAYROLL_PERIOD_NOT_FOUND',
+        );
+      }
+      const rows = await transaction.contributionBilling.findMany({
+        where: { agencyId: context.agencyId, payrollPeriodId: periodId },
+        orderBy: [{ contributionType: 'asc' }, { recordedAt: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          employeeId: true,
+          contributionType: true,
+          employeeShare: true,
+          employerShare: true,
+          evidenceDocumentVersionId: true,
+          supersedesContributionBillingId: true,
+          recordedAt: true,
+        },
+      });
+      const current = new Set(currentBillings(rows).map((row) => row.id));
+      return rows.map((row) => ({
+        ...row,
+        contributionType: row.contributionType as ContributionBillingView['contributionType'],
+        employeeShare: row.employeeShare.toFixed(2),
+        employerShare: row.employerShare.toFixed(2),
+        recordedAt: row.recordedAt.toISOString(),
+        current: current.has(row.id),
+      }));
+    });
+  }
 
   async record(
     context: RequestContext,

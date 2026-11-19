@@ -1,4 +1,13 @@
-import { Body, Controller, HttpException, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpException,
+  Inject,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
 import type { z } from 'zod';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
@@ -24,6 +33,28 @@ export class DeductionObligationsController {
   constructor(
     @Inject(DeductionObligationsService) private readonly service: DeductionObligationsService,
   ) {}
+
+  @Get(':agencyId/employees/:employeeId/deduction-obligations')
+  @RequirePermission('payroll.deductions.manage')
+  async list(
+    @Param('agencyId') agencyId: string,
+    @Param('employeeId') employeeId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ obligations: DeductionObligationSummary[] }> {
+    this.assertAgency(agencyId, context);
+    const employee = employeeIdSchema.safeParse(employeeId);
+    if (!employee.success) {
+      throw failure(context, 404, 'EMPLOYEE_NOT_FOUND', 'The Employee could not be found.');
+    }
+    try {
+      return { obligations: await this.service.list(context, employee.data) };
+    } catch (error: unknown) {
+      if (error instanceof DeductionObligationsServiceError) {
+        throw failure(context, error.statusCode, error.code, error.message);
+      }
+      throw error;
+    }
+  }
 
   @Post(':agencyId/employees/:employeeId/deduction-obligations')
   @RequirePermission('payroll.deductions.manage')

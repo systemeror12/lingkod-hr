@@ -264,6 +264,27 @@ describe.skipIf(!enabled)('Deduction Obligations in PostgreSQL', () => {
       [changed.id, 'ENDED'],
     ]);
     expect(rows[0]?.outstandingBalance.toFixed(4)).toBe('24000.0000');
+    // The list reads every version, oldest first, with why each changed or ended.
+    expect(
+      (await service.list(home.context, home.employee.id)).map((obligation) => [
+        obligation.id,
+        obligation.status,
+        obligation.outstandingBalance,
+        obligation.supersedesObligationId,
+        obligation.changeReason,
+        obligation.endReason,
+      ]),
+    ).toEqual([
+      [recorded.id, 'SUPERSEDED', '24000.0000', null, null, null],
+      [
+        changed.id,
+        'ENDED',
+        '20000.0000',
+        recorded.id,
+        'Issuer statement of 2960-03-31',
+        'Paid in full per issuer notice',
+      ],
+    ]);
 
     const events = await admin.auditEvent.findMany({
       where: { agencyId: home.agency.id, entityType: 'DeductionObligation' },
@@ -320,6 +341,11 @@ describe.skipIf(!enabled)('Deduction Obligations in PostgreSQL', () => {
     await expect(
       service.record(foreign.context, foreign.employee.id, loan()),
     ).rejects.toMatchObject({ code: 'DEDUCTION_OBLIGATION_AUTHORITY_NOT_FOUND' });
+    await expect(service.list(foreign.context, home.employee.id)).rejects.toMatchObject({
+      code: 'EMPLOYEE_NOT_FOUND',
+      statusCode: 404,
+    });
+    expect(await service.list(foreign.context, foreign.employee.id)).toEqual([]);
     await expect(
       service.change(foreign.context, homeObligation.id, {
         ...foreign.authority,
@@ -369,6 +395,9 @@ describe.skipIf(!enabled)('Deduction Obligations in PostgreSQL', () => {
         home.employee.id,
         loan({ issuerReference: 'NO-PERMISSION' }),
       ),
+    ).rejects.toMatchObject({ code: 'DEDUCTION_OBLIGATION_MANAGE_FORBIDDEN', statusCode: 403 });
+    await expect(
+      service.list({ ...home.context, permissions: [] }, home.employee.id),
     ).rejects.toMatchObject({ code: 'DEDUCTION_OBLIGATION_MANAGE_FORBIDDEN', statusCode: 403 });
   });
 });

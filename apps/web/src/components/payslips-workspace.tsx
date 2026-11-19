@@ -1,9 +1,10 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { EmployeeOption } from '../lib/payroll-page-data';
+import type { AuthorityOption, EmployeeOption } from '../lib/payroll-page-data';
 import { decimalLabel } from '../lib/payroll-inputs';
 import {
+  contributionTypeLabel,
   exceptionMessage,
   exceptionStatusDisplay,
   exceptionTypeLabel,
@@ -16,6 +17,7 @@ import {
   severityDisplay,
   stageCells,
   startsCollapsed,
+  type ContributionBilling,
   type PayrollException,
   type PayrollLine,
   type PayrollPeriod,
@@ -26,7 +28,13 @@ import {
 } from '../lib/payroll-periods';
 import { dateLabel } from '../lib/overtime-format';
 import { cn } from '../lib/class-names';
+import {
+  ContributionBillingForm,
+  ContributionBillingTable,
+  type ContributionBillingInput,
+} from './contribution-billings';
 import { Facts } from './payroll-inputs-workspace';
+import { ContributionsTaxDeductions } from './payslip-deductions';
 import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import {
@@ -52,9 +60,19 @@ const CALCULATING_POLL_MS = 3_000;
 type PeriodDetail =
   | { key: string; state: 'loading' }
   | { key: string; state: 'error'; message: string }
-  | { key: string; state: 'ready'; results: PayrollResult[]; exceptions: PayrollException[] };
+  | {
+      key: string;
+      state: 'ready';
+      results: PayrollResult[];
+      exceptions: PayrollException[];
+      billings: ContributionBilling[];
+    };
 
-type Form = { kind: 'create' } | { kind: 'payslip'; periodId: string; resultId: string } | null;
+type Form =
+  | { kind: 'create' }
+  | { kind: 'payslip'; periodId: string; resultId: string }
+  | { kind: 'billing'; periodId: string }
+  | null;
 
 type Payslip =
   | { state: 'loading' }
@@ -89,18 +107,24 @@ function message(caught: unknown, fallback: string): string {
  * Employee Payslips, the Payroll workspace (#327): payslips grouped by Payroll Period, each
  * group with its stage, totals, the next step the signed-in actor can take, and its Payroll
  * Exceptions; and the payslip form, whose Salary Computation shows each Payroll Line with its
- * rule version and sources. The API decides every refusal; this screen shows its reason.
+ * rule version and sources, then its contributions, tax, and deductions. A regular period also
+ * lists its issuer contribution billing, which a deductions manager records while it is in Draft.
+ * The API decides every refusal; this screen shows its reason.
  */
 export function PayslipsWorkspace({
   agencyId,
+  authorities,
   canCreate,
   canCalculate,
+  canManageDeductions,
   employees,
   initialList,
 }: {
   agencyId: string;
+  authorities: AuthorityOption[];
   canCreate: boolean;
   canCalculate: boolean;
+  canManageDeductions: boolean;
   employees: EmployeeOption[];
   initialList: PayrollPeriodList;
 }) {
@@ -146,16 +170,24 @@ export function PayslipsWorkspace({
       try {
         // A version that is computing has no results yet, and an uncalculated period has none.
         const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
-        const [results, exceptions] = calculated
-          ? await Promise.all([
-              request(`/payroll-periods/${period.id}/results`) as Promise<{
+        const [results, exceptions, billings] = await Promise.all([
+          calculated
+            ? (request(`/payroll-periods/${period.id}/results`) as Promise<{
                 results: PayrollResult[];
-              }>,
-              request(`/payroll-periods/${period.id}/exceptions`) as Promise<{
+              }>)
+            : { results: [] },
+          calculated
+            ? (request(`/payroll-periods/${period.id}/exceptions`) as Promise<{
                 exceptions: PayrollException[];
-              }>,
-            ])
-          : [{ results: [] }, { exceptions: [] }];
+              }>)
+            : { exceptions: [] },
+          // Only a regular period takes contribution billing.
+          period.runType === 'REGULAR'
+            ? (request(`/payroll-periods/${period.id}/contribution-billings`) as Promise<{
+                billings: ContributionBilling[];
+              }>)
+            : { billings: [] },
+        ]);
         setDetails((current) => ({
           ...current,
           [period.id]: {
@@ -163,6 +195,7 @@ export function PayslipsWorkspace({
             state: 'ready',
             results: results.results,
             exceptions: exceptions.exceptions,
+            billings: billings.billings,
           },
         }));
       } catch (caught: unknown) {
@@ -282,6 +315,40 @@ export function PayslipsWorkspace({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function recordBilling(periodId: string, input: ContributionBillingInput): Promise<void> {
+    setBusy(true);
+    setError('');
+    try {
+      await request(`/payroll-periods/${periodId}/contribution-billings`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      const period = periodById.get(periodId);
+      if (period) await loadDetail(period);
+      setForm(null);
+      const count = input.lines.length;
+      setNotice(
+        `${contributionTypeLabel[input.contributionType]} billing recorded for ${count === 1 ? '1 Employee' : `${count} Employees`}. The next calculation compares it.`,
+      );
+    } catch (caught: unknown) {
+      setError(message(caught, 'The contribution billing could not be recorded.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openBilling(periodId: string): void {
+    setError('');
+    setNotice('');
+    setForm({ kind: 'billing', periodId });
+  }
+
+  function evidenceLabel(versionId: string): ReactNode {
+    const authority = authorities.find((option) => option.id === versionId);
+    if (authority) return authority.label;
+    return <span className="font-mono text-caption break-all">{versionId}</span>;
   }
 
   async function openPayslip(periodId: string, resultId: string): Promise<void> {
@@ -572,6 +639,29 @@ export function PayslipsWorkspace({
                 )}
               </section>
             ) : null}
+            {period.runType === 'REGULAR' ? (
+              <section
+                aria-label={`${period.code} contribution billing`}
+                className="grid gap-2 pb-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4">
+                  <h3 className="m-0 text-panel-title text-ink">Contribution billing</h3>
+                  {canManageDeductions && period.status === 'DRAFT' ? (
+                    <DialogTrigger asChild>
+                      <Button onClick={() => openBilling(period.id)} type="button">
+                        Record billing
+                        <span className="sr-only"> for {period.code}</span>
+                      </Button>
+                    </DialogTrigger>
+                  ) : null}
+                </div>
+                <ContributionBillingTable
+                  billings={detail.billings}
+                  employeeLabel={employeeLabel}
+                  evidenceLabel={evidenceLabel}
+                />
+              </section>
+            ) : null}
           </>
         )}
       </div>
@@ -583,6 +673,7 @@ export function PayslipsWorkspace({
   }
 
   const openPeriod = form?.kind === 'payslip' ? periodById.get(form.periodId) : undefined;
+  const billingPeriod = form?.kind === 'billing' ? periodById.get(form.periodId) : undefined;
   const openResult = payslip?.state === 'ready' ? payslip.result : null;
   const openEmployee = openResult ? employeeById.get(openResult.employeeId) : undefined;
   const openDetail = openPeriod ? details[openPeriod.id] : undefined;
@@ -593,6 +684,9 @@ export function PayslipsWorkspace({
 
   const breadcrumbs: Breadcrumb[] = [{ label: 'Payroll' }, { label: 'Employee Payslips' }];
   if (form?.kind === 'create') breadcrumbs.push({ label: 'New Payroll Period' });
+  if (billingPeriod) {
+    breadcrumbs.push({ label: billingPeriod.code }, { label: 'Record contribution billing' });
+  }
   if (openPeriod) breadcrumbs.push({ label: openPeriod.code });
   if (openResult) breadcrumbs.push({ label: openEmployee?.legalName ?? openResult.employeeId });
 
@@ -796,6 +890,15 @@ export function PayslipsWorkspace({
                 </Button>
               </DialogFooter>
             </form>
+          ) : billingPeriod ? (
+            <ContributionBillingForm
+              authorities={authorities}
+              busy={busy}
+              employees={employees}
+              error={error}
+              onSubmit={(input) => void recordBilling(billingPeriod.id, input)}
+              periodCode={billingPeriod.code}
+            />
           ) : form?.kind === 'payslip' ? (
             <>
               <DialogHeader>
@@ -850,6 +953,7 @@ export function PayslipsWorkspace({
                       ]}
                     />
                     <SalaryComputation result={openResult} />
+                    <ContributionsTaxDeductions result={openResult} />
                     {openExceptions.length > 0 ? (
                       <section aria-label="Payslip exceptions" className="grid gap-2">
                         <h3 className="m-0 text-panel-title text-ink">Exceptions</h3>

@@ -67,9 +67,106 @@ export interface PayrollLine {
   sourceSnapshot: unknown;
 }
 
+export type ContributionType = 'GSIS' | 'EMPLOYEES_COMPENSATION' | 'PHILHEALTH' | 'PAGIBIG';
+type RuleVersionRef = { id: string; code: string; name: string };
+
+/** One statutory contribution of a payslip, with the base its shares were figured on. */
+export interface ContributionLine {
+  id: string;
+  contributionType: ContributionType;
+  employeeShare: string;
+  employerShare: string;
+  compensationBase: string;
+  ruleVersion: RuleVersionRef;
+}
+
+/**
+ * The withholding tax of a payslip. `yearToDateSnapshot` is what the calculation read of the
+ * Agency's finalized periods earlier in the tax year, as stored; `yearToDateFacts` reads it.
+ */
+export interface TaxLine {
+  id: string;
+  taxableCompensation: string;
+  nonTaxableCompensation: string;
+  withholdingTax: string;
+  ruleVersion: RuleVersionRef;
+  yearToDateSnapshot: unknown;
+}
+
+/** What one Deduction Obligation was due, what was deducted, and what the net-pay floor stopped. */
+export interface LoanDeductionLine {
+  id: string;
+  deductionObligationId: string;
+  payeeCategory: string;
+  payeeName: string;
+  issuerReference: string;
+  priority: number;
+  amountDue: string;
+  deductedAmount: string;
+  notDeductedAmount: string;
+  ruleVersion: RuleVersionRef;
+}
+
 export interface PayrollResultDetail extends PayrollResult {
   calculationHash: string;
   lines: PayrollLine[];
+  contributions: ContributionLine[];
+  taxLine: TaxLine | null;
+  loanDeductions: LoanDeductionLine[];
+}
+
+/** One issuer billing row of a period; a later billing of the Employee and type supersedes it. */
+export interface ContributionBilling {
+  id: string;
+  employeeId: string;
+  contributionType: ContributionType;
+  employeeShare: string;
+  employerShare: string;
+  evidenceDocumentVersionId: string;
+  supersedesContributionBillingId: string | null;
+  recordedAt: string;
+  current: boolean;
+}
+
+export const contributionTypeLabel: Record<ContributionType, string> = {
+  GSIS: 'GSIS',
+  EMPLOYEES_COMPENSATION: "Employees' Compensation",
+  PHILHEALTH: 'PhilHealth',
+  PAGIBIG: 'Pag-IBIG',
+};
+
+/**
+ * The year-to-date figures a Tax Line read, as labelled facts, skipping any the snapshot lacks.
+ * Amounts read as pesos; the de minimis benefits read one per benefit.
+ */
+export function yearToDateFacts(snapshot: unknown): [string, string][] {
+  if (typeof snapshot !== 'object' || snapshot === null) return [];
+  const value = snapshot as Record<string, unknown>;
+  const facts: [string, string][] = [];
+  if (typeof value.taxYear === 'number') facts.push(['Tax year', String(value.taxYear)]);
+  if (Array.isArray(value.payrollPeriodIds)) {
+    const count = value.payrollPeriodIds.length;
+    facts.push(['Finalized periods counted', count === 1 ? '1 period' : `${count} periods`]);
+  }
+  const amounts: [string, string][] = [
+    ['taxableCompensation', 'Taxable compensation'],
+    ['nonTaxableCompensation', 'Non-taxable compensation'],
+    ['withholdingTax', 'Withholding tax'],
+    ['thirteenthMonthAndOtherBenefits', '13th-month pay and other benefits'],
+  ];
+  for (const [key, label] of amounts) {
+    const amount = value[key];
+    if (typeof amount === 'string') facts.push([label, moneyLabel(amount)]);
+  }
+  const deMinimis = value.deMinimisBenefits;
+  if (typeof deMinimis === 'object' && deMinimis !== null) {
+    for (const [benefit, amount] of Object.entries(deMinimis)) {
+      if (typeof amount === 'string') {
+        facts.push([`De minimis: ${exceptionTypeLabel(benefit)}`, moneyLabel(amount)]);
+      }
+    }
+  }
+  return facts;
 }
 
 export interface PayrollException {

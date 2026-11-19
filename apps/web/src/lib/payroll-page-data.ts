@@ -45,10 +45,13 @@ export async function loadEmployeeOptions(session: ActiveSession): Promise<Emplo
 /** A finalized Document Version a Payroll record may name as its authority. */
 export interface AuthorityOption {
   id: string;
+  /** The Document the version belongs to, for the commands that name both. */
+  documentId: string;
   label: string;
 }
 
 interface LinkableVersion {
+  documentId: string;
   documentNo: string | null;
   documentType: string;
   version: { id: string; versionNo: number };
@@ -64,6 +67,7 @@ export async function loadAuthorityOptions(session: ActiveSession): Promise<Auth
   const documents = (value as { documents?: LinkableVersion[] } | null)?.documents ?? [];
   return documents.map((document) => ({
     id: document.version.id,
+    documentId: document.documentId,
     label: `${document.documentNo ?? document.documentType} · v${document.version.versionNo}`,
   }));
 }
