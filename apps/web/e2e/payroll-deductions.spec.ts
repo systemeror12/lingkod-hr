@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { MARISOL_EMAIL, signIn } from './sign-in';
 
 // Marisol Santos holds the Payroll Preparer role, which manages Deduction Obligations and records
@@ -10,9 +10,39 @@ import { MARISOL_EMAIL, signIn } from './sign-in';
 const AUTHORITY = 'E2E-PAYROLL-AUTHORITY · v1';
 const ALEX = 'E2E-0001 · Alex Rivera';
 
+// An Agency holds one open regular period at a time, and later specs in the same run create
+// their own, so the billing test cancels its Draft period however it ends.
+let draftRegularCode: string | null = null;
+
 test.beforeEach(async ({ page }) => {
   await signIn(page, MARISOL_EMAIL);
 });
+
+test.afterEach(async ({ page }) => {
+  if (!draftRegularCode) return;
+  await cancelDraftPeriod(page, draftRegularCode);
+  draftRegularCode = null;
+});
+
+async function cancelDraftPeriod(page: Page, code: string) {
+  const headers = { origin: new URL(page.url()).origin };
+  const me = await page.request.get('/api/v1/auth/me', { headers });
+  expect(me.ok(), await me.text()).toBe(true);
+  const { agencyId } = (await me.json()) as { agencyId: string };
+  const base = `/api/v1/agencies/${agencyId}/payroll-periods`;
+  const list = await page.request.get(base, { headers });
+  expect(list.ok(), await list.text()).toBe(true);
+  const { periods } = (await list.json()) as {
+    periods: Array<{ id: string; code: string; status: string; rowVersion: number }>;
+  };
+  const period = periods.find((row) => row.code === code && row.status === 'DRAFT');
+  if (!period) return;
+  const cancelled = await page.request.post(`${base}/${period.id}/cancel`, {
+    headers,
+    data: { reason: 'E2E cleanup', rowVersion: period.rowVersion },
+  });
+  expect(cancelled.ok(), await cancelled.text()).toBe(true);
+}
 
 test('records a loan obligation for a seeded Employee and reads its line', async ({ page }) => {
   const reference = `E2E-GSIS-LOAN-${Date.now()}`;
@@ -63,6 +93,7 @@ test('records issuer billing for a Draft regular period, corrects it, and reads 
   await create.getByLabel('Payment date').fill('2850-03-31');
   await create.getByRole('button', { name: 'Create period' }).click();
   await expect(page.getByText(`Payroll Period ${code} created in Draft.`)).toBeVisible();
+  draftRegularCode = code;
 
   const group = page.getByRole('region', { name: code, exact: true });
   const billing = group.getByRole('region', { name: `${code} contribution billing` });
