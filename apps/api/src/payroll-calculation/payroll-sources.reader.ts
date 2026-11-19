@@ -14,6 +14,7 @@ import type {
   ClothingAllowanceGrant,
   DeductionObligationDue,
   EmployeePayrollSources,
+  EmployeeSeparation,
   NightShiftDifferentialRate,
   OfficialVehicleAssignment,
   PendingPayrollInput,
@@ -79,7 +80,8 @@ export interface AgencyPayrollSources {
  * For every period it reads each Employee's tax figures from the Agency's
  * finalized payrolls of the tax year, the withholding tax's year to date.
  * For a regular period it reads each Employee's Deduction Obligations in
- * effect on the period's last day, as they stood at the cutoff.
+ * effect on the period's last day, as they stood at the cutoff, and the
+ * separation that ends the Employee's service in the period, if any.
  */
 @Injectable()
 export class PayrollSourcesReader {
@@ -168,6 +170,10 @@ export class PayrollSourcesReader {
       scope.runType === 'REGULAR'
         ? await deductionObligationsInTransaction(transaction, agencyId, cutoffAt, scope.periodTo)
         : () => [];
+    const separations =
+      scope.runType === 'REGULAR'
+        ? await separationsInTransaction(transaction, agencyId, cutoffAt, scope)
+        : new Map<string, EmployeeSeparation>();
 
     return {
       forEmployee: (employeeId) => ({
@@ -204,6 +210,7 @@ export class PayrollSourcesReader {
         }),
         taxYearToDate: taxYearToDate(employeeId),
         deductionObligations: deductionObligations(employeeId),
+        ...(separations.has(employeeId) ? { separation: separations.get(employeeId)! } : {}),
       }),
     };
   }
@@ -463,6 +470,40 @@ async function deductionObligationsInTransaction(
         outstandingBalance: row.outstandingBalance.toFixed(4),
         scheduledAmount: row.scheduledAmount.toFixed(4),
       }));
+}
+
+/**
+ * Each Employee's `EFFECTIVE` Separation Case, effectuated by `cutoffAt`, whose
+ * last day of service, the day before its approved effective date, falls in
+ * the period (#633). The withholding tax makes its year-end adjustment then.
+ */
+async function separationsInTransaction(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  cutoffAt: Date,
+  scope: CalculationScope,
+): Promise<Map<string, EmployeeSeparation>> {
+  const dayAfter = new Date(`${scope.periodTo}T00:00:00.000Z`);
+  dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
+  const cases = await transaction.separationCase.findMany({
+    where: {
+      agencyId,
+      status: 'EFFECTIVE',
+      effectuatedAt: { lte: cutoffAt },
+      approvedEffectiveDate: { gt: new Date(`${scope.periodFrom}T00:00:00.000Z`), lte: dayAfter },
+    },
+    orderBy: [{ approvedEffectiveDate: 'asc' }, { id: 'asc' }],
+    select: { id: true, employeeId: true, approvedEffectiveDate: true },
+  });
+  return new Map(
+    cases.map((row) => [
+      row.employeeId,
+      {
+        separationCaseId: row.id,
+        effectiveDate: row.approvedEffectiveDate!.toISOString().slice(0, 10),
+      },
+    ]),
+  );
 }
 
 /**

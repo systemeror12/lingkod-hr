@@ -150,6 +150,19 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
               rateOverCompensationLevel: '0.35',
             },
           ],
+          // RR No. 11-2018 sec. 2.79(B)(5)(b) step 3(b), for the year-end adjustment.
+          annualTable: [
+            { compensationLevel: '0', baseTax: '0', rateOverCompensationLevel: '0' },
+            { compensationLevel: '250000', baseTax: '0', rateOverCompensationLevel: '0.15' },
+            { compensationLevel: '400000', baseTax: '22500', rateOverCompensationLevel: '0.20' },
+            { compensationLevel: '800000', baseTax: '102500', rateOverCompensationLevel: '0.25' },
+            { compensationLevel: '2000000', baseTax: '402500', rateOverCompensationLevel: '0.30' },
+            {
+              compensationLevel: '8000000',
+              baseTax: '2202500',
+              rateOverCompensationLevel: '0.35',
+            },
+          ],
         },
         '2894-12-31',
       );
@@ -180,6 +193,7 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
       const where = { agencyId: { in: tenants.map((tenant) => tenant.agency.id) } };
+      await transaction.separationCase.deleteMany({ where });
       await transaction.serviceSegment.deleteMany({ where });
       await transaction.employee.deleteMany({ where });
       await transaction.organizationUnit.deleteMany({ where });
@@ -286,7 +300,34 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
           })
         ).map((result) => [result.employeeId, result]),
       );
-    return { tenant, employeeAt, calculate, finalize, resultsOf };
+    /** An effective separation whose first day out of service is `effectiveDate`. */
+    async function separate(employeeId: string, effectiveDate: string) {
+      const lastDay = new Date(date(effectiveDate).getTime() - 24 * 60 * 60 * 1000);
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.serviceSegment.updateMany({
+          where: { agencyId, employeeId },
+          data: { effectiveTo: lastDay, status: 'CLOSED' },
+        });
+      });
+      return (
+        await admin.separationCase.create({
+          data: {
+            agencyId,
+            employeeId,
+            separationType: 'RESIGNATION',
+            proposedEffectiveDate: date(effectiveDate),
+            approvedEffectiveDate: date(effectiveDate),
+            status: 'EFFECTIVE',
+            initiatedByMembershipId: membershipId,
+            approvedByMembershipId: membershipId,
+            // Before the fixture periods' cutoff, so the calculation reads it.
+            effectuatedAt: new Date('2025-12-01T00:00:00.000Z'),
+          },
+        })
+      ).id;
+    }
+    return { tenant, employeeAt, separate, calculate, finalize, resultsOf };
   }
 
   it('withholds on salary less contributions, reads the finalized year to date, and blocks without a version', async () => {
@@ -447,6 +488,68 @@ describe.skipIf(!enabled)('Withholding tax in PostgreSQL', () => {
     expect(decemberResults.get(over)!.taxLine!.yearToDateSnapshot).toMatchObject({
       payrollPeriodIds: [special.job.payrollPeriodId],
       thirteenthMonthAndOtherBenefits: '0.0000',
+    });
+  });
+
+  it("makes the year-end adjustment in a separated Employee's last month and in December, storing its basis", async () => {
+    const { employeeAt, separate, calculate, finalize, resultsOf } =
+      await payrollTenant('WTAX-YEAR-END');
+    const stayer = await employeeAt('STAYER', 1);
+    const leaver = await employeeAt('LEAVER', 1);
+    const separationCaseId = await separate(leaver, '2894-03-01');
+    const withholdingId = await withholding();
+    const taxOf = (result: { lines: { payComponentId: string; amount: unknown }[] }) =>
+      result.lines
+        .filter((line) => line.payComponentId === withholdingId)
+        .map((line) => String(line.amount));
+
+    const january = await calculate('2894-01', '31');
+    expect(january.outcome).toEqual({ outcome: 'FOR_REVIEW', results: 2 });
+    await finalize(january.job.payrollPeriodId);
+
+    // February is the leaver's last month. January withheld ₱2,248.40 on
+    // ₱35,200; the year's ₱70,400 is below ₱250,000, so February refunds it.
+    // The stayer is withheld on the monthly table.
+    const february = await calculate('2894-02', '28');
+    expect(february.outcome).toEqual({ outcome: 'FOR_REVIEW', results: 2 });
+    const februaryResults = await resultsOf(february.job.payrollPeriodId);
+    const left = februaryResults.get(leaver)!;
+    expect(taxOf(left)).toEqual(['-2248.4']);
+    expect(String(left.taxLine!.withholdingTax)).toBe('-2248.4');
+    expect(left.taxLine!.yearEndAdjustment).toEqual({
+      authority: 'BIR RR No. 11-2018 sec. 2.79(B)(5)(b)',
+      reason: 'SEPARATION',
+      separation: { separationCaseId, effectiveDate: '2894-03-01' },
+      taxYear: 2894,
+      yearToDateTaxableCompensation: '35200.0000',
+      periodTaxableCompensation: '35200.0000',
+      annualTaxableCompensation: '70400.0000',
+      bracket: { compensationLevel: '0', baseTax: '0', rateOverCompensationLevel: '0' },
+      annualTaxDue: '0.0000',
+      yearToDateWithholdingTax: '2248.4000',
+      withholdingTax: '-2248.4000',
+    });
+    // The refund lowers the deductions: ₱4,800 of shares less ₱2,248.40.
+    expect([String(left.totalDeductions), String(left.netAmount)]).toEqual(['2551.6', '39448.4']);
+    const stayed = februaryResults.get(stayer)!;
+    expect(taxOf(stayed)).toEqual(['2248.4']);
+    expect(stayed.taxLine!.yearEndAdjustment).toBeNull();
+
+    // December adjusts the stayer: the year's ₱105,600 owes nothing, so the
+    // ₱4,496.80 January and February withheld is refunded. The leaver is no
+    // longer in service.
+    await finalize(february.job.payrollPeriodId);
+    const december = await calculate('2894-12', '31');
+    expect(december.outcome).toEqual({ outcome: 'FOR_REVIEW', results: 1 });
+    const decemberResult = (await resultsOf(december.job.payrollPeriodId)).get(stayer)!;
+    expect(taxOf(decemberResult)).toEqual(['-4496.8']);
+    expect(decemberResult.taxLine!.yearEndAdjustment).toMatchObject({
+      reason: 'YEAR_END',
+      separation: null,
+      yearToDateTaxableCompensation: '70400.0000',
+      annualTaxableCompensation: '105600.0000',
+      yearToDateWithholdingTax: '4496.8000',
+      withholdingTax: '-4496.8000',
     });
   });
 });

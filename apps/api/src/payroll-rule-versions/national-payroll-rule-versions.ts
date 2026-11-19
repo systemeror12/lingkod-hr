@@ -473,14 +473,58 @@ const taxRate = z
   .regex(/^0(\.\d{1,8})?$/, 'A rate is a fraction below 1 with up to 8 places, such as 0.15.');
 
 /**
- * The compensation withholding tax rule (BIR RR No. 11-2018, sec. 2.79;
- * Annex E, "effective January 1, 2023 and onwards"; research register R24).
- * `monthlyTable` is Annex E's monthly table, the one a regular Payroll Period
- * of one calendar month takes (ADR 0015): each bracket's tax is `baseTax` plus
+ * A withholding tax table: each bracket's tax is `baseTax` plus
  * `rateOverCompensationLevel` of the compensation over `compensationLevel`.
  * The first bracket starts at zero, and each bracket's base tax is the tax
  * the bracket before it reaches at its level, so the table is continuous and
  * an amount on a level is taxed the same by either bracket.
+ */
+const withholdingTaxTable = z
+  .array(
+    z
+      .object({
+        compensationLevel: nonNegativePesoAmount,
+        baseTax: nonNegativePesoAmount,
+        rateOverCompensationLevel: taxRate,
+      })
+      .strict(),
+  )
+  .min(1)
+  .refine((table) => new Prisma.Decimal(table[0]!.compensationLevel).isZero(), {
+    message: 'The first bracket starts at a compensation level of 0.',
+  })
+  .refine(
+    (table) =>
+      table.every((bracket, index) => {
+        if (index === 0) return true;
+        const before = table[index - 1]!;
+        return (
+          new Prisma.Decimal(bracket.compensationLevel).gt(before.compensationLevel) &&
+          new Prisma.Decimal(before.baseTax)
+            .add(
+              new Prisma.Decimal(bracket.compensationLevel)
+                .sub(before.compensationLevel)
+                .mul(before.rateOverCompensationLevel),
+            )
+            .equals(bracket.baseTax)
+        );
+      }),
+    {
+      message:
+        "Compensation levels rise, and each bracket's base tax is the tax the bracket before it reaches at its level.",
+    },
+  );
+
+/**
+ * The compensation withholding tax rule (BIR RR No. 11-2018, sec. 2.79;
+ * Annex E, "effective January 1, 2023 and onwards"; research register R24).
+ * `monthlyTable` is Annex E's monthly table, the one a regular Payroll Period
+ * of one calendar month takes (ADR 0015).
+ *
+ * `annualTable` is the schedule of sec. 2.79(B)(5)(b) step 3, the one the
+ * year-end adjustment taxes the year's taxable compensation by (#633). A
+ * version loaded without it still withholds monthly, but its year-end
+ * adjustment blocks.
  *
  * `thirteenthMonthAndOtherBenefitsExclusion` is the most 13th-month pay and
  * other benefits paid in a tax year that is excluded from tax: "the total
@@ -491,41 +535,8 @@ const taxRate = z
 export const compensationWithholdingTaxParameters = z
   .object({
     thirteenthMonthAndOtherBenefitsExclusion: pesoAmount,
-    monthlyTable: z
-      .array(
-        z
-          .object({
-            compensationLevel: nonNegativePesoAmount,
-            baseTax: nonNegativePesoAmount,
-            rateOverCompensationLevel: taxRate,
-          })
-          .strict(),
-      )
-      .min(1)
-      .refine((table) => new Prisma.Decimal(table[0]!.compensationLevel).isZero(), {
-        message: 'The first bracket starts at a compensation level of 0.',
-      })
-      .refine(
-        (table) =>
-          table.every((bracket, index) => {
-            if (index === 0) return true;
-            const before = table[index - 1]!;
-            return (
-              new Prisma.Decimal(bracket.compensationLevel).gt(before.compensationLevel) &&
-              new Prisma.Decimal(before.baseTax)
-                .add(
-                  new Prisma.Decimal(bracket.compensationLevel)
-                    .sub(before.compensationLevel)
-                    .mul(before.rateOverCompensationLevel),
-                )
-                .equals(bracket.baseTax)
-            );
-          }),
-        {
-          message:
-            "Compensation levels rise, and each bracket's base tax is the tax the bracket before it reaches at its level.",
-        },
-      ),
+    monthlyTable: withholdingTaxTable,
+    annualTable: withholdingTaxTable.optional(),
   })
   .strict();
 

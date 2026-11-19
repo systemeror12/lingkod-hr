@@ -16,8 +16,10 @@ import {
   type CalculationContext,
   type CalculatorOutcome,
   type EmployeePayrollSources,
+  type EmployeeSeparation,
   type FrozenRuleVersion,
   type PayrollCalculator,
+  type YearEndAdjustment,
 } from './payroll-calculator';
 import type { TaxTreatment } from './year-end-bonus.calculator';
 
@@ -83,6 +85,14 @@ export function withholdingTaxDue(
  * excluded benefits, and the excluded contributions, so the two add up to the
  * compensation paid.
  *
+ * A regular period of December, or one in which the Employee's service ends,
+ * makes the year-end adjustment instead (RR No. 11-2018 sec. 2.79(B)(5)(b);
+ * #633). The year's taxable compensation is the finalized year to date plus
+ * this period's; the version's annual table taxes it; and the period withholds
+ * the difference from what the year's finalized payrolls withheld, a negative
+ * tax when it refunds the excess. The monthly table and the cumulative
+ * average method play no part, and the Tax Line stores the basis.
+ *
  * Every case it does not settle blocks:
  *
  * - no withholding tax version in effect on every date of the period, or one
@@ -94,7 +104,9 @@ export function withholdingTaxDue(
  *   method, which this calculation does not apply;
  * - a line with no tax treatment, or one its line type does not admit;
  * - a de minimis benefit the version does not list, or one over its ceiling;
- * - a tax that is not whole centavos, which no recorded rule rounds.
+ * - a tax that is not whole centavos, which no recorded rule rounds;
+ * - a year-end adjustment with a version that has no annual table, or in a
+ *   period paid after the calendar year it closes.
  *
  * With no earning it writes nothing and needs no rule version: in a regular
  * period, basic salary's own exception already blocks the Employee; in a
@@ -213,24 +225,80 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
     supplementary = supplementary.add(benefits.sub(excluded));
     const taxable = regular.add(supplementary);
 
-    const onRegular = withholdingTaxDue(regular, parameters.monthlyTable);
-    if (supplementary.gt(0) && (onRegular.tax.isZero() || supplementary.gte(regular))) {
-      return {
-        lines: [],
-        exceptions: [
-          blocking(
-            'WITHHOLDING_TAX_CUMULATIVE_AVERAGE_UNSETTLED',
-            `Supplementary compensation of ${supplementary.toFixed(2)} is paid with taxable regular compensation of ${regular.toFixed(2)}, ${onRegular.tax.isZero() ? 'which the monthly table does not tax' : 'no more than the supplementary'}. RR No. 11-2018 sec. 2.79(B)(5)(a) then requires the cumulative average method, which this calculation does not apply.`,
-            {
-              regularCompensation: regular.toFixed(4),
-              supplementaryCompensation: supplementary.toFixed(4),
-            },
-          ),
-        ],
+    const yearEnd = yearEndAdjustmentOf(context, sources);
+    let computed: { tax: Prisma.Decimal; table: 'MONTHLY' | 'ANNUAL'; bracket: Bracket };
+    let yearEndAdjustment: YearEndAdjustment | undefined;
+    if (yearEnd) {
+      const periodYear = Number(context.periodFrom.slice(0, 4));
+      if (yearToDate.taxYear !== periodYear) {
+        return {
+          lines: [],
+          exceptions: [
+            blocking(
+              'WITHHOLDING_TAX_YEAR_END_OUTSIDE_TAX_YEAR',
+              `The period ${context.periodFrom} to ${context.periodTo} makes the year-end adjustment for ${periodYear} but pays in ${yearToDate.taxYear}. RR No. 11-2018 sec. 2.79(B)(5)(b) adjusts the tax on the last compensation paid in the calendar year, and no recorded rule settles one paid after it.`,
+              { periodYear, taxYear: yearToDate.taxYear },
+            ),
+          ],
+        };
+      }
+      const annualTable = parameters.annualTable;
+      if (!annualTable) {
+        return {
+          lines: [],
+          exceptions: [
+            blocking(
+              'WITHHOLDING_TAX_ANNUAL_TABLE_MISSING',
+              `Withholding tax version ${withholding.code} has no annual table, so the year-end adjustment of RR No. 11-2018 sec. 2.79(B)(5)(b) is not calculated. Load a version with the annual schedule of its step 3.`,
+              { ruleVersionCode: withholding.code },
+            ),
+          ],
+        };
+      }
+      // Steps 1 and 3: the year's taxable compensation, by the annual schedule.
+      const yearToDateTaxable = new Prisma.Decimal(yearToDate.taxableCompensation);
+      const annualTaxable = yearToDateTaxable.add(taxable);
+      const annual = withholdingTaxDue(annualTaxable, annualTable);
+      // Step 4: the deficiency is withheld, and the excess refunded, now.
+      const withheld = new Prisma.Decimal(yearToDate.withholdingTax);
+      computed = { tax: annual.tax.sub(withheld), table: 'ANNUAL', bracket: annual.bracket };
+      yearEndAdjustment = {
+        authority: 'BIR RR No. 11-2018 sec. 2.79(B)(5)(b)',
+        reason: yearEnd.separation ? 'SEPARATION' : 'YEAR_END',
+        separation: yearEnd.separation,
+        taxYear: yearToDate.taxYear,
+        yearToDateTaxableCompensation: yearToDateTaxable.toFixed(4),
+        periodTaxableCompensation: taxable.toFixed(4),
+        annualTaxableCompensation: annualTaxable.toFixed(4),
+        bracket: annual.bracket,
+        annualTaxDue: annual.tax.toFixed(4),
+        yearToDateWithholdingTax: withheld.toFixed(4),
+        withholdingTax: computed.tax.toFixed(4),
+      };
+    } else {
+      const onRegular = withholdingTaxDue(regular, parameters.monthlyTable);
+      if (supplementary.gt(0) && (onRegular.tax.isZero() || supplementary.gte(regular))) {
+        return {
+          lines: [],
+          exceptions: [
+            blocking(
+              'WITHHOLDING_TAX_CUMULATIVE_AVERAGE_UNSETTLED',
+              `Supplementary compensation of ${supplementary.toFixed(2)} is paid with taxable regular compensation of ${regular.toFixed(2)}, ${onRegular.tax.isZero() ? 'which the monthly table does not tax' : 'no more than the supplementary'}. RR No. 11-2018 sec. 2.79(B)(5)(a) then requires the cumulative average method, which this calculation does not apply.`,
+              {
+                regularCompensation: regular.toFixed(4),
+                supplementaryCompensation: supplementary.toFixed(4),
+              },
+            ),
+          ],
+        };
+      }
+      computed = {
+        tax: onRegular.tax.add(supplementary.mul(onRegular.bracket.rateOverCompensationLevel)),
+        table: 'MONTHLY',
+        bracket: onRegular.bracket,
       };
     }
-    const { bracket } = onRegular;
-    const tax = onRegular.tax.add(supplementary.mul(bracket.rateOverCompensationLevel));
+    const { tax, table, bracket } = computed;
     if (!tax.equals(tax.toDecimalPlaces(2))) {
       return {
         lines: [],
@@ -255,7 +323,7 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
           amount: tax.toFixed(4),
           source: {
             ruleVersionCode: withholding.code,
-            table: 'MONTHLY',
+            table,
             regularCompensation: regular.toFixed(4),
             supplementaryCompensation: supplementary.toFixed(4),
             taxableCompensation: taxable.toFixed(4),
@@ -269,8 +337,10 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
               taxable: benefits.sub(excluded).toFixed(4),
             },
             bracket,
-            formula:
-              'base tax + rate × (regular compensation − compensation level + supplementary compensation)',
+            formula: yearEndAdjustment
+              ? "annual table's tax on the year's taxable compensation − tax the year's finalized payrolls withheld"
+              : 'base tax + rate × (regular compensation − compensation level + supplementary compensation)',
+            ...(yearEndAdjustment ? { yearEndAdjustment } : {}),
             lines: compensation.map((line) => ({
               componentCode: line.componentCode,
               lineType: line.lineType,
@@ -290,6 +360,7 @@ export class WithholdingTaxCalculator implements PayrollCalculator {
         withholdingTax: tax.toFixed(4),
         ruleVersionId: withholding.id,
         yearToDateSnapshot: yearToDate,
+        ...(yearEndAdjustment ? { yearEndAdjustment } : {}),
       },
     };
   }
@@ -333,4 +404,19 @@ function ruleVersionFor(
     return null;
   }
   return versions.find((version) => version.id === coverage.ruleVersionIds[0]) ?? null;
+}
+
+/**
+ * Whether the period makes the Employee's year-end adjustment (RR No. 11-2018
+ * sec. 2.79(B)(5)(b)): a regular period whose month is December, or one in
+ * which the Employee's service ends. A special period never does; it pays no
+ * regular compensation.
+ */
+function yearEndAdjustmentOf(
+  context: CalculationContext,
+  sources: EmployeePayrollSources,
+): { separation: EmployeeSeparation | null } | null {
+  if (context.componentCodes.size > 0) return null;
+  if (sources.separation) return { separation: sources.separation };
+  return context.periodFrom.slice(5, 7) === '12' ? { separation: null } : null;
 }

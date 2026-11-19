@@ -484,3 +484,194 @@ describe('WithholdingTaxCalculator on supplementary compensation', () => {
     expect(outcome.tax?.withholdingTax).toBe('0.0000');
   });
 });
+
+// RR No. 11-2018 sec. 2.79(B)(5)(b): the annualized computation of the year's
+// last payroll, or the Employee's last.
+describe('the year-end adjustment', () => {
+  // Test fixture only: the schedule of sec. 2.79(B)(5)(b) step 3(b), "for
+  // compensation income earned for taxable year 2023 and onwards".
+  const annualSchedule = [
+    { compensationLevel: '0', baseTax: '0', rateOverCompensationLevel: '0' },
+    { compensationLevel: '250000', baseTax: '0', rateOverCompensationLevel: '0.15' },
+    { compensationLevel: '400000', baseTax: '22500', rateOverCompensationLevel: '0.20' },
+    { compensationLevel: '800000', baseTax: '102500', rateOverCompensationLevel: '0.25' },
+    { compensationLevel: '2000000', baseTax: '402500', rateOverCompensationLevel: '0.30' },
+    { compensationLevel: '8000000', baseTax: '2202500', rateOverCompensationLevel: '0.35' },
+  ];
+  const annualVersion = withholdingVersion({
+    parameters: {
+      thirteenthMonthAndOtherBenefitsExclusion: '90000',
+      monthlyTable: annexEMonthly,
+      annualTable: annualSchedule,
+    },
+  });
+  const month = (from: string, to: string, ...versions: FrozenRuleVersion[]) => ({
+    ...contextWith(...versions),
+    periodFrom: from,
+    periodTo: to,
+  });
+  const december = month('2026-12-01', '2026-12-31', annualVersion);
+  const yearToDate = (taxableCompensation: string, withholdingTax: string): TaxYearToDate => ({
+    ...noYearToDate,
+    payrollPeriodIds: ['earlier-period'],
+    taxableCompensation,
+    withholdingTax,
+  });
+
+  it('loads the annual schedule with the monthly table, and refuses one that is not continuous', () => {
+    expect(compensationWithholdingTaxParameters.safeParse(annualVersion.parameters).success).toBe(
+      true,
+    );
+    const gap = annualSchedule.map((bracket, index) =>
+      index === 2 ? { ...bracket, baseTax: '22000' } : bracket,
+    );
+    expect(
+      compensationWithholdingTaxParameters.safeParse({
+        ...(annualVersion.parameters as object),
+        annualTable: gap,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('withholds an under-withholding in December, on the annual schedule', () => {
+    // Illustration 15's Ms. Grace on the 2023 schedule: ₱50,000 a month and
+    // ₱10,000 of November overtime. January to November withheld 11 ×
+    // ₱5,208.40 and 20% of the overtime, ₱59,292.40. The year's ₱610,000 is
+    // taxed ₱22,500 + 20% of ₱210,000, ₱64,500, so December withholds
+    // ₱5,207.60.
+    const outcome = calculate(
+      [salary('50000')],
+      december,
+      sourcesWith(yearToDate('560000.0000', '59292.4000')),
+    );
+    expect(outcome.exceptions).toEqual([]);
+    const basis = {
+      authority: 'BIR RR No. 11-2018 sec. 2.79(B)(5)(b)',
+      reason: 'YEAR_END',
+      separation: null,
+      taxYear: 2026,
+      yearToDateTaxableCompensation: '560000.0000',
+      periodTaxableCompensation: '50000.0000',
+      annualTaxableCompensation: '610000.0000',
+      bracket: annualSchedule[2],
+      annualTaxDue: '64500.0000',
+      yearToDateWithholdingTax: '59292.4000',
+      withholdingTax: '5207.6000',
+    };
+    expect(outcome.lines).toEqual([
+      expect.objectContaining({
+        componentCode: 'WITHHOLDING_TAX',
+        lineType: 'DEDUCTION',
+        amount: '5207.6000',
+        source: expect.objectContaining({
+          table: 'ANNUAL',
+          bracket: annualSchedule[2],
+          yearEndAdjustment: basis,
+        }),
+      }),
+    ]);
+    expect(outcome.tax).toEqual({
+      taxableCompensation: '50000.0000',
+      nonTaxableCompensation: '0.0000',
+      withholdingTax: '5207.6000',
+      ruleVersionId: 'tax-a',
+      yearToDateSnapshot: yearToDate('560000.0000', '59292.4000'),
+      yearEndAdjustment: basis,
+    });
+  });
+
+  it('refunds an over-withholding in December as a negative tax', () => {
+    // Hired in July at ₱25,000: July to November withheld 5 × 15% of ₱4,167,
+    // ₱3,125.25. The year's ₱150,000 is below ₱250,000, so all of it is
+    // refunded.
+    const outcome = calculate(
+      [salary('25000')],
+      december,
+      sourcesWith(yearToDate('125000.0000', '3125.2500')),
+    );
+    expect(outcome.exceptions).toEqual([]);
+    expect(outcome.lines.map((taxLine) => [taxLine.lineType, taxLine.amount])).toEqual([
+      ['DEDUCTION', '-3125.2500'],
+    ]);
+    expect(outcome.tax).toMatchObject({
+      withholdingTax: '-3125.2500',
+      yearEndAdjustment: expect.objectContaining({
+        reason: 'YEAR_END',
+        annualTaxableCompensation: '150000.0000',
+        annualTaxDue: '0.0000',
+        withholdingTax: '-3125.2500',
+      }),
+    });
+  });
+
+  it('adjusts in the last month of an Employee who separated mid-year, and refunds the excess then', () => {
+    // As Illustration 13: service ends 30 June. January to May withheld 5 ×
+    // ₱5,208.40, ₱26,042; the year's ₱300,000 is taxed 15% of ₱50,000,
+    // ₱7,500, so June refunds ₱18,542.
+    const separation = { separationCaseId: 'separation-1', effectiveDate: '2026-07-01' };
+    const outcome = calculate([salary('50000')], month('2026-06-01', '2026-06-30', annualVersion), {
+      ...sourcesWith(yearToDate('250000.0000', '26042.0000')),
+      separation,
+    });
+    expect(outcome.exceptions).toEqual([]);
+    expect(outcome.lines.map((taxLine) => taxLine.amount)).toEqual(['-18542.0000']);
+    expect(outcome.tax?.yearEndAdjustment).toMatchObject({
+      reason: 'SEPARATION',
+      separation,
+      annualTaxableCompensation: '300000.0000',
+      annualTaxDue: '7500.0000',
+      yearToDateWithholdingTax: '26042.0000',
+      withholdingTax: '-18542.0000',
+    });
+  });
+
+  it('applies neither the monthly table nor the cumulative average method', () => {
+    // Overtime as large as salary blocks in any other month.
+    const lines = [salary('30000'), overtime('30000')];
+    expect(
+      exceptionTypes(calculate(lines, month('2026-11-01', '2026-11-30', annualVersion))),
+    ).toEqual(['WITHHOLDING_TAX_CUMULATIVE_AVERAGE_UNSETTLED']);
+    const outcome = calculate(lines, december, sourcesWith(yearToDate('330000.0000', '8000.0000')));
+    expect(outcome.exceptions).toEqual([]);
+    // ₱390,000 is taxed 15% of ₱140,000, ₱21,000.
+    expect(outcome.tax?.withholdingTax).toBe('13000.0000');
+  });
+
+  it('leaves another regular month and a December special period to the monthly table', () => {
+    const november = calculate([salary('50000')], month('2026-11-01', '2026-11-30', annualVersion));
+    const special = calculate([bonus('40000')], {
+      ...december,
+      componentCodes: new Set(['YEAR_END_BONUS']),
+    });
+    for (const outcome of [november, special]) {
+      expect(outcome.exceptions).toEqual([]);
+      expect(outcome.tax?.yearEndAdjustment).toBeUndefined();
+      expect(outcome.lines[0]?.source.table).toBe('MONTHLY');
+    }
+  });
+
+  it('blocks without an annual schedule, and in a December paid after the year', () => {
+    expect(
+      exceptionTypes(
+        calculate([salary('50000')], month('2026-12-01', '2026-12-31', withholdingVersion())),
+      ),
+    ).toEqual(['WITHHOLDING_TAX_ANNUAL_TABLE_MISSING']);
+    const paidInJanuary = calculate(
+      [salary('50000')],
+      december,
+      sourcesWith({ ...noYearToDate, taxYear: 2027 }),
+    );
+    expect(exceptionTypes(paidInJanuary)).toEqual(['WITHHOLDING_TAX_YEAR_END_OUTSIDE_TAX_YEAR']);
+    expect(paidInJanuary.tax).toBeUndefined();
+  });
+
+  it('blocks an annual tax that is not whole centavos', () => {
+    // ₱250,000.01 is taxed 15% of ₱0.01.
+    const outcome = calculate(
+      [salary('50000.01')],
+      december,
+      sourcesWith(yearToDate('200000.0000', '0.0000')),
+    );
+    expect(exceptionTypes(outcome)).toEqual(['WITHHOLDING_TAX_ROUNDING_UNSETTLED']);
+  });
+});

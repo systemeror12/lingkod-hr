@@ -138,7 +138,10 @@ rate's divisors. It carries no default rate (sections 3 and 8).
 takes: brackets of `compensationLevel`, `baseTax`, and
 `rateOverCompensationLevel`. The first bracket starts at 0, levels rise, and
 each base tax is what the bracket before it reaches at its level, so the
-table is continuous. It also holds `thirteenthMonthAndOtherBenefitsExclusion`,
+table is continuous. It may hold `annualTable`, the schedule of sec.
+2.79(B)(5)(b) step 3 in the same shape, which the year-end adjustment takes
+(#633); a version without it blocks that adjustment. It also holds
+`thirteenthMonthAndOtherBenefitsExclusion`,
 the most 13th-month pay and other benefits paid in a tax year that is
 excluded from tax, ₱90,000 under RR No. 11-2018 sec. 2.78.1(B)(11)
 ([R26](../../research/national-payroll-rule-versions-2027.md)). `DE_MINIMIS_BENEFITS` (RR No. 2-98 sec. 2.78.1(A)(3), as
@@ -1167,6 +1170,10 @@ CREATE TABLE tax_lines (
   withholding_tax numeric(19,4) NOT NULL,
   rule_version_id uuid NOT NULL REFERENCES national_payroll_rule_versions (id),
   year_to_date_snapshot jsonb NOT NULL,
+  year_end_adjustment jsonb
+    CHECK (year_end_adjustment IS NULL OR jsonb_typeof(year_end_adjustment) = 'object'),
+  -- Only a year-end adjustment refunds.
+  CHECK (withholding_tax >= 0 OR year_end_adjustment IS NOT NULL),
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
   UNIQUE (agency_id, payroll_employee_id)
@@ -1271,6 +1278,28 @@ minimis benefit the version does not list, or one over its ceiling; and a tax
 that is not whole centavos, which no recorded rule rounds. With no earning,
 it writes nothing and needs no version, so a special period that pays an
 Employee nothing does not block them.
+
+Migration 0182 adds the year-end adjustment (#633; BIR RR No. 11-2018 sec.
+2.79(B)(5)(b), [authorities](../../research/native-payroll-component-authorities.md#year-end-adjustment)).
+A regular period of December makes it, and so does a regular period in which
+an Employee's service ends: the Employee has an `EFFECTIVE` Separation Case,
+effectuated by the cutoff, whose approved effective date is the day after a
+date in the period. The year's taxable compensation is the year to date's
+plus the period's, and the version's `annualTable` taxes it. The period's
+withholding tax is that tax less the year to date's withholding tax, so the
+tax year's tax lines add up to the year's tax: a deficiency is withheld, and
+an excess is refunded as a negative `WITHHOLDING_TAX` deduction and a negative
+`withholding_tax`, which the table admits only with `year_end_adjustment`.
+The monthly table and the cumulative average method play no part then.
+`year_end_adjustment`, null in every other period, is the basis: the
+authority, `YEAR_END` or `SEPARATION` with the Separation Case, the tax year,
+the year to date's, the period's, and the year's taxable compensation, the
+annual bracket and tax, the year to date's withholding tax, and the period's;
+the line's `source_snapshot` repeats it. It blocks with a version that has no
+`annualTable`, in a period paid after the calendar year it closes, and on an
+annual tax that is not whole centavos. Sec. 2.79(B)(5)(b) step 2 adds the
+taxable compensation of the year's earlier employers, which LingkodHR does
+not record, so the adjustment covers only the Agency's own payrolls.
 
 ```sql
 CREATE TABLE contribution_billings (

@@ -81,6 +81,20 @@ Read from the [RR No. 11-2018 PDF](https://bir-cdn.bir.gov.ph/local/pdf/RR%20No.
 
 Open: for a special Payroll Period that pays a bonus apart from salary (ADR 0015), the text does not say which payroll period the bonus "relates" to when counting periods, so LingkodHR does not yet apply the cumulative average method (#351 blocks those cases).
 
+### Year-end adjustment
+
+Read from the [RR No. 11-2018 PDF](https://bir-cdn.bir.gov.ph/local/pdf/RR%20No.%2011-2018.pdf), sec. 2.79(B)(5)(b), pages 33-37, on 2026-11-19:
+
+- **When** (item (b)): "(1) When the employer-employee relationship is terminated before end of the calendar year; and (2) when computing for the year-end adjustment, the employer shall determine the amount to be withheld from the compensation on the last month of employment or in December of the current calendar year".
+- **Step 1:** "Determine the taxable regular and supplementary compensation paid to the employee for the entire calendar year." Step 2(a): on termination before December, it is "the amount paid since the beginning of the current calendar year to the termination of employment"; step 2(b), for the year-end adjustment, "the amount paid since the beginning of the current calendar year to December".
+- **Previous employers** (step 2): "If the employee has previous employment/s within the year, add the amount of taxable regular and supplementary compensation paid to the employee by the present employer doing the annualized computation to the taxable compensation income received from previous employer/s during the calendar year."
+- **Annual schedule** (step 3(b), "for compensation income earned for taxable year 2023 and onwards"): over ₱250,000 to ₱400,000, 15% of the excess over ₱250,000; to ₱800,000, ₱22,500 + 20% over ₱400,000; to ₱2,000,000, ₱102,500 + 25% over ₱800,000; to ₱8,000,000, ₱402,500 + 30% over ₱2,000,000; over ₱8,000,000, ₱2,202,500 + 35% over ₱8,000,000.
+- **Deficiency** (step 4): "The deficiency withholding tax ... shall be withheld from the last payment of compensation for the calendar year. If the deficiency withholding tax is more than the amount of the last compensation to be paid to an employee, the employer shall be liable to pay the amount of tax which cannot be withheld from the employee's last compensation for the year."
+- **Excess** (step 4): "The excess withholding tax ... shall be credited or refunded to the employee not later than January 25 of the following year. However, in case of termination of employment before December, the refund shall be given to the employee at the payment of the last compensation during the year. In return, the employer is entitled to deduct the amount refunded to the employee/s from the remittable amount of taxes withheld from compensation income for the current month in which the refund was made".
+- **Illustrations 13 and 15** apply it: Mr. Bembem, who resigned effective 30 June, is refunded ₱24,164.50 at his last payment; Ms. Grace is withheld ₱9,165.75 in December; Mr. Gerry, hired in July, is refunded ₱3,334.00.
+
+Open: LingkodHR records no compensation from an Employee's previous employers within the year (step 2), so its adjustment covers only the Agency's own payrolls.
+
 ## Effectivity and fail-closed controls
 
 - **Annual currency:** PERA, uniform/clothing allowance, medical allowance, RATA, bonuses, cash gift, and related conditions or amounts must be revalidated against each fiscal year's GAA.
