@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
 import { PayslipsWorkspace } from '../../../components/payslips-workspace';
 import { ShellState } from '../../../components/shell-state';
-import { getAgencyJson, loadEmployeeOptions } from '../../../lib/payroll-page-data';
+import {
+  getAgencyJson,
+  loadAuthorityOptions,
+  loadEmployeeOptions,
+} from '../../../lib/payroll-page-data';
 import type { PayrollPeriodList } from '../../../lib/payroll-periods';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 
@@ -20,9 +24,11 @@ export default async function PayslipsPage() {
   const session = await getActiveSession();
   if (!hasPermission(session, 'payroll.periods.read')) return forbidden;
 
-  const [list, employees] = await Promise.all([
+  const canManageDeductions = hasPermission(session, 'payroll.deductions.manage');
+  const [list, employees, authorities] = await Promise.all([
     getAgencyJson(session, '/payroll-periods'),
     loadEmployeeOptions(session),
+    canManageDeductions ? loadAuthorityOptions(session) : Promise.resolve([]),
   ]);
   if (list.status === 403) return forbidden;
   const value = list.value as Partial<PayrollPeriodList> | null;
@@ -33,8 +39,10 @@ export default async function PayslipsPage() {
   return (
     <PayslipsWorkspace
       agencyId={session.agencyId}
+      authorities={authorities}
       canCalculate={hasPermission(session, 'payroll.periods.calculate')}
       canCreate={hasPermission(session, 'payroll.periods.create')}
+      canManageDeductions={canManageDeductions}
       employees={employees}
       initialList={value as PayrollPeriodList}
     />

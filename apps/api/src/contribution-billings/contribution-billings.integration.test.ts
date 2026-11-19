@@ -322,6 +322,67 @@ describe.skipIf(!enabled)('Contribution billing reconciliation in PostgreSQL', (
     expect(await differences(period.id, 3)).toEqual([]);
   });
 
+  it('lists current and superseded billings of a period, for its own Agency only', async () => {
+    const { tenant, employeeIds, period } = await payrollWith('LIST', 2);
+    const [first, second] = employeeIds as [string, string];
+    const reader: RequestContext = {
+      ...tenant.persons[0]!.context,
+      permissions: [{ code: 'payroll.periods.read', scopePolicy: 'AGENCY' }],
+    };
+    expect(await billings.list(reader, period.id)).toEqual([]);
+
+    const recorded = await billings.record(preparer(tenant), period.id, {
+      contributionType: 'PHILHEALTH',
+      ...(await evidence(tenant, 'LIST')),
+      lines: [
+        { employeeId: first, employeeShare: '750', employerShare: '750' },
+        { employeeId: second, employeeShare: '800', employerShare: '800' },
+      ],
+    });
+    const corrected = await billings.record(preparer(tenant), period.id, {
+      contributionType: 'PHILHEALTH',
+      ...(await evidence(tenant, 'LIST-CORRECTED')),
+      lines: [{ employeeId: second, employeeShare: '750', employerShare: '750' }],
+    });
+    const earlier = recorded.billings.find((billing) => billing.employeeId === second)!;
+
+    const listed = await billings.list(reader, period.id);
+    expect(listed).toHaveLength(3);
+    expect(listed.find((billing) => billing.id === earlier.id)).toMatchObject({
+      contributionType: 'PHILHEALTH',
+      employeeShare: '800.00',
+      current: false,
+    });
+    expect(listed.find((billing) => billing.id === corrected.billings[0]!.id)).toMatchObject({
+      employeeId: second,
+      employeeShare: '750.00',
+      employerShare: '750.00',
+      supersedesContributionBillingId: earlier.id,
+      evidenceDocumentVersionId: corrected.evidenceDocumentVersionId,
+      current: true,
+      recordedAt: expect.any(String),
+    });
+    expect(
+      listed.filter((billing) => billing.current).map((billing) => billing.employeeId),
+    ).toEqual(expect.arrayContaining([first, second]));
+
+    // Another Agency's reader cannot find the period, and reading needs the permission.
+    const { tenant: other } = await payrollWith('LIST-OTHER', 0);
+    await expect(
+      billings.list(
+        {
+          ...other.persons[0]!.context,
+          permissions: [{ code: 'payroll.periods.read', scopePolicy: 'AGENCY' }],
+        },
+        period.id,
+      ),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'PAYROLL_PERIOD_NOT_FOUND' });
+    await expect(billings.list(preparer(tenant), period.id)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'CONTRIBUTION_BILLING_READ_FORBIDDEN',
+    });
+  });
+
   it('needs payroll.deductions.manage, a finalized evidence version, and a DRAFT period', async () => {
     const { tenant, employeeIds, period } = await payrollWith('GUARD', 1);
     const line = { employeeId: employeeIds[0]!, employeeShare: '750', employerShare: '750' };

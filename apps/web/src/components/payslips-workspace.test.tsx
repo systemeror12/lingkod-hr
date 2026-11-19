@@ -28,6 +28,9 @@ const result: PayrollResultDetail = {
   netAmount: '281.2500',
   calculationHash: 'a'.repeat(64),
   lines: [line],
+  contributions: [],
+  taxLine: null,
+  loanDeductions: [],
 };
 
 describe('SalaryComputation', () => {

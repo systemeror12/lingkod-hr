@@ -82,6 +82,33 @@ const dateOf = (value: string) => new Date(`${value}T00:00:00.000Z`);
 export class DeductionObligationsService {
   constructor(@Inject(DocumentsService) private readonly documentsService: DocumentsService) {}
 
+  /**
+   * Every version of the Employee's obligations, active, superseded and ended,
+   * oldest first, so a change reads after the version it supersedes.
+   */
+  async list(context: RequestContext, employeeId: string): Promise<DeductionObligationSummary[]> {
+    this.assertPermission(context);
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const employee = await transaction.employee.findFirst({
+        where: { agencyId: context.agencyId, id: employeeId },
+        select: { id: true },
+      });
+      if (!employee) {
+        throw new DeductionObligationsServiceError(
+          'The Employee could not be found.',
+          404,
+          'EMPLOYEE_NOT_FOUND',
+        );
+      }
+      const rows = await transaction.deductionObligation.findMany({
+        where: { agencyId: context.agencyId, employeeId },
+        orderBy: [{ recordedAt: 'asc' }, { id: 'asc' }],
+        select: obligationSelect,
+      });
+      return rows.map(summary);
+    });
+  }
+
   async record(
     context: RequestContext,
     employeeId: string,

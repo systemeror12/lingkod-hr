@@ -152,3 +152,13 @@ it('shows Employee Payslips to readers of Payroll Periods', () => {
   expect(payroll(['payroll.periods.read'])).toEqual(['/payslips']);
   expect(payroll(['payroll.periods.create'])).toEqual([]);
 });
+
+it('shows Deduction Obligations to deductions managers only', () => {
+  const payroll = (permissions: readonly string[]) =>
+    authorizedDestinations(session('payroll_preparer', permissions))
+      .filter(({ stage }) => stage === 'Payroll')
+      .map(({ href }) => href);
+
+  expect(payroll(['payroll.deductions.manage'])).toEqual(['/deduction-obligations']);
+  expect(payroll(['payroll.periods.read'])).not.toContain('/deduction-obligations');
+});

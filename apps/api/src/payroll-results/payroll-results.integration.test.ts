@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CompensationBasisService } from '../compensation-basis/compensation-basis.service';
 import { BasicSalaryCalculator } from '../payroll-calculation/basic-salary.calculator';
 import { PayrollCalculationService } from '../payroll-calculation/payroll-calculation.service';
+import type { CalculatorOutcome } from '../payroll-calculation/payroll-calculator';
 import { payrollSourcesReader } from '../payroll-calculation/payroll-calculation.test-fixtures';
 import { PayrollPeriodsService } from '../payroll-periods/payroll-periods.service';
 import {
@@ -46,11 +47,53 @@ describe.skipIf(!enabled)('Payroll workspace reads in PostgreSQL', () => {
   const reads = new PayrollResultsService();
   const basis = new CompensationBasisService(new MonthlyFullTime());
   const nothing = { calculate: () => ({ lines: [], exceptions: [] }) };
+  // Writes one Contribution Line, the Tax Line, and one Loan Deduction Line with
+  // fixture amounts, so the read can be checked without the rules behind them.
+  const recordedLines = {
+    calculate: (): CalculatorOutcome => ({
+      lines: [],
+      exceptions: [],
+      contributions: [
+        {
+          contributionType: 'PHILHEALTH',
+          employeeShare: '792.6250',
+          employerShare: '792.6250',
+          compensationBase: '31705.0000',
+          ruleVersionId: scheduleId,
+        },
+      ],
+      tax: {
+        taxableCompensation: '30912.3750',
+        nonTaxableCompensation: '792.6250',
+        withholdingTax: '1234.5000',
+        ruleVersionId: scheduleId,
+        yearToDateSnapshot: {
+          taxYear: 2876,
+          payrollPeriodIds: [],
+          taxableCompensation: '61824.7500',
+          nonTaxableCompensation: '1585.2500',
+          withholdingTax: '2469.0000',
+          deMinimisBenefits: {},
+          thirteenthMonthAndOtherBenefits: '0.0000',
+        },
+      },
+      loanDeductions: [
+        {
+          deductionObligationId: obligationId,
+          priority: 1,
+          amountDue: '2000.0000',
+          deductedAmount: '1500.0000',
+          notDeductedAmount: '500.0000',
+          ruleVersionId: scheduleId,
+        },
+      ],
+    }),
+  };
   const calculation = new PayrollCalculationService(
     basis,
     new BasicSalaryCalculator(),
     payrollSourcesReader(basis),
-    nothing,
+    recordedLines,
     nothing,
     nothing,
     nothing,
@@ -66,6 +109,8 @@ describe.skipIf(!enabled)('Payroll workspace reads in PostgreSQL', () => {
   let scheduleId: string;
   let tenant: PayrollTenant;
   let employeeId: string;
+  let obligationId: string;
+  let other: PayrollTenant;
 
   const preparer = (): RequestContext => ({
     ...tenant.persons[0]!.context,
@@ -124,6 +169,30 @@ describe.skipIf(!enabled)('Payroll workspace reads in PostgreSQL', () => {
       },
     });
     employeeId = employee.id;
+    // The obligation's authority and payee rule are not what this test reads, so
+    // the fixture skips their foreign keys.
+    obligationId = await admin.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      const obligation = await transaction.deductionObligation.create({
+        data: {
+          agencyId: agency.id,
+          employeeId,
+          payeeCategory: 'GSIS',
+          payeeName: 'Government Service Insurance System',
+          issuerReference: `RESULTS-LOAN-${suffix}`,
+          incurredOn: new Date('2876-01-15'),
+          outstandingBalance: '24000',
+          scheduledAmount: '2000',
+          authorityDocumentVersionId: '00000000-0000-4000-8000-000000000001',
+          payeeRuleVersionId: scheduleId,
+          effectiveFrom: new Date('2876-01-01'),
+          status: 'ACTIVE',
+          recordedByMembershipId: membershipId,
+        },
+      });
+      return obligation.id;
+    });
+    other = await createPayrollTenant(admin, suffix, 'RESULTS-OTHER');
     await withDatabaseContext(
       { ...persons[0]!.scope, capabilities: ['personnel-baseline-transition'] },
       (transaction) =>
@@ -150,12 +219,14 @@ describe.skipIf(!enabled)('Payroll workspace reads in PostgreSQL', () => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
       const where = { agencyId: tenant.agency.id };
       await transaction.serviceSegment.deleteMany({ where });
+      await transaction.loanDeductionLine.deleteMany({ where });
+      await transaction.deductionObligation.deleteMany({ where });
       await transaction.employee.deleteMany({ where });
       await transaction.organizationUnit.deleteMany({ where });
       await transaction.salaryGradeRate.deleteMany({ where: { ruleVersionId: scheduleId } });
       await transaction.nationalPayrollRuleVersion.deleteMany({ where: { id: scheduleId } });
     });
-    await cleanupPayrollTenants(admin, [tenant]);
+    await cleanupPayrollTenants(admin, [tenant, other]);
     await admin.$disconnect();
   });
 
@@ -221,6 +292,52 @@ describe.skipIf(!enabled)('Payroll workspace reads in PostgreSQL', () => {
         sourceSnapshot: expect.objectContaining({ unit: 'MONTH', salaryGrade: 11 }),
       }),
     ]);
+    const ruleVersion = { id: scheduleId, code: scheduleCode, name: 'Test salary schedule' };
+    expect(detail.contributions).toEqual([
+      {
+        id: expect.any(String),
+        contributionType: 'PHILHEALTH',
+        employeeShare: '792.6250',
+        employerShare: '792.6250',
+        compensationBase: '31705.0000',
+        ruleVersion,
+      },
+    ]);
+    expect(detail.taxLine).toEqual({
+      id: expect.any(String),
+      taxableCompensation: '30912.3750',
+      nonTaxableCompensation: '792.6250',
+      withholdingTax: '1234.5000',
+      ruleVersion,
+      yearToDateSnapshot: expect.objectContaining({
+        taxYear: 2876,
+        taxableCompensation: '61824.7500',
+        withholdingTax: '2469.0000',
+      }),
+    });
+    expect(detail.loanDeductions).toEqual([
+      {
+        id: expect.any(String),
+        deductionObligationId: obligationId,
+        payeeCategory: 'GSIS',
+        payeeName: 'Government Service Insurance System',
+        issuerReference: `RESULTS-LOAN-${suffix}`,
+        priority: 1,
+        amountDue: '2000.0000',
+        deductedAmount: '1500.0000',
+        notDeductedAmount: '500.0000',
+        ruleVersion,
+      },
+    ]);
+
+    // Another Agency's reader finds neither the period nor the result.
+    const foreign: RequestContext = {
+      ...other.persons[0]!.context,
+      permissions: [{ code: 'payroll.periods.read', scopePolicy: 'AGENCY' }],
+    };
+    await expect(reads.readResult(foreign, created.id, results[0]!.id)).rejects.toMatchObject({
+      code: 'PAYROLL_RESULT_NOT_FOUND',
+    });
   });
 
   it('refuses a reader without payroll.periods.read and a result of another period', async () => {
