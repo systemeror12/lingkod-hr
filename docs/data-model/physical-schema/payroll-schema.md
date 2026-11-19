@@ -1824,11 +1824,66 @@ the same transaction; a returned checkpoint review (#637) revokes the
 certification and so supersedes it the same way. A later certification of
 the same version gets its own export.
 
+```sql
+CREATE TABLE payroll_export_checkpoint_reviews (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  certified_payroll_review_export_id uuid NOT NULL,
+  checkpoint text NOT NULL CHECK (checkpoint IN ('BUDGET','ACCOUNTING')),
+  outcome text NOT NULL CHECK (outcome IN ('CONFIRMED','RETURNED')),
+  external_reference text CHECK (external_reference IS NULL OR btrim(external_reference) <> ''),
+  evidence_document_version_id uuid,
+  reason text,
+  reviewed_by_membership_id uuid NOT NULL,
+  reviewed_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (outcome <> 'CONFIRMED'
+         OR (external_reference IS NOT NULL AND evidence_document_version_id IS NOT NULL)),
+  CHECK ((outcome = 'RETURNED') = (reason IS NOT NULL)
+         AND (reason IS NULL OR btrim(reason) <> '')),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, certified_payroll_review_export_id)
+    REFERENCES certified_payroll_review_exports (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, reviewed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (certified_payroll_review_export_id, checkpoint)
+);
+```
+
 A Budget Officer and an Accounting Reviewer each record one immutable Payroll
 Export Checkpoint Review against the current Certified Payroll Review Export,
-in either order. Approval needs both confirmed. A returned review moves the
-period to `FOR_REVIEW` and revokes the certification, the export, and the other
-review (#29, #330). Its table is specified with #637.
+in either order (#29, #330, #637). Approval needs both confirmed. Each names
+the exact export it reviewed in its route, and is refused with
+`PAYROLL_REVIEW_EXPORT_SUPERSEDED` when that export is no longer current. A
+reviewer who is only waiting records nothing.
+
+- `POST .../review-exports/:exportId/budget-review` needs
+  `payroll.periods.review_funding` and claims `BUDGET_REVIEW`.
+- `POST .../review-exports/:exportId/accounting-review` needs
+  `payroll.periods.review_accounting` and claims `ACCOUNTING_REVIEW`.
+
+A confirmation names the external reference, such as the ORS or JEV number,
+and the exact finalized Document Version of the Agency that evidences it. A
+return gives its reason and may name either. Neither asserts that funds were
+obligated or an entry posted. A confirmation keeps the period `CERTIFIED`. A
+return, in the same transaction, revokes the certification in force with the
+reviewer as the revoker and the review's reason, supersedes the export, and
+moves the period to `FOR_REVIEW`. Each outcome is an Audit Event on the
+period; a return's names the revoked certification, the superseded export,
+and the other review it revoked.
+
+A review is in force while its export is current, so superseding the export
+revokes its reviews and nothing on the review changes: revoking the
+certification, a returned review, and a return before finalization all
+revoke them that way. The period detail lists the reviews of its current
+export as `certification.checkpointReviews`. A trigger admits a review only
+against the current export of its period while the period is `CERTIFIED`, and
+rejects every `UPDATE` and `DELETE`. Migration 0180 creates the table and
+grants `payroll.periods.review_funding` to the Budget Officer and
+`payroll.periods.review_accounting` to the Accounting Reviewer, Agency-wide.
 
 Files are stored through the shared document service.
 

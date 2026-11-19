@@ -84,3 +84,32 @@ export type PayrollPeriodCertifyInput = z.input<typeof payrollPeriodCertifySchem
 export const payrollPeriodReasonedCommandSchema = z.object({ reason, rowVersion }).strict();
 
 export type PayrollPeriodReasonedCommandInput = z.input<typeof payrollPeriodReasonedCommandSchema>;
+
+export const PAYROLL_EXPORT_CHECKPOINTS = ['BUDGET', 'ACCOUNTING'] as const;
+
+export type PayrollExportCheckpoint = (typeof PAYROLL_EXPORT_CHECKPOINTS)[number];
+
+const externalReference = z.string().trim().min(1, 'Enter the external reference.').max(200);
+const evidenceDocumentVersionId = z.string().uuid();
+
+/**
+ * A Payroll Export Checkpoint Review of the export named in the route (#29,
+ * #637). A confirmation names the external reference and the finalized
+ * Document Version that evidences it; a return gives its reason and may name
+ * either.
+ */
+export const payrollCheckpointReviewSchema = z.discriminatedUnion('outcome', [
+  z
+    .object({ outcome: z.literal('CONFIRMED'), externalReference, evidenceDocumentVersionId })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('RETURNED'),
+      reason,
+      externalReference: externalReference.optional(),
+      evidenceDocumentVersionId: evidenceDocumentVersionId.optional(),
+    })
+    .strict(),
+]);
+
+export type PayrollCheckpointReviewInput = z.input<typeof payrollCheckpointReviewSchema>;

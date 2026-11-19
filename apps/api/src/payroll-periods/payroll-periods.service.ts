@@ -14,6 +14,7 @@ import {
   payrollPeriodCancelSchema,
   payrollPeriodCreateSchema,
   payrollPeriodCutoffMoveSchema,
+  type PayrollExportCheckpoint,
   type PayrollPeriodStatus,
   type PayrollRunType,
 } from './payroll-periods.schemas';
@@ -44,6 +45,46 @@ export interface PayrollCertificationSummary {
   certifiedAt: string;
   /** The Certified Payroll Review Export certifying generated; null only before #636. */
   reviewExportId: string | null;
+  /** The checkpoint reviews recorded against that export, which are the ones in force (#637). */
+  checkpointReviews: PayrollCheckpointReviewView[];
+}
+
+/** One Payroll Export Checkpoint Review (#637). */
+export interface PayrollCheckpointReviewView {
+  id: string;
+  reviewExportId: string;
+  checkpoint: PayrollExportCheckpoint;
+  outcome: 'CONFIRMED' | 'RETURNED';
+  externalReference: string | null;
+  evidenceDocumentVersionId: string | null;
+  reason: string | null;
+  reviewedByMembershipId: string;
+  reviewedAt: string;
+}
+
+export const checkpointReviewSelect = {
+  id: true,
+  certifiedPayrollReviewExportId: true,
+  checkpoint: true,
+  outcome: true,
+  externalReference: true,
+  evidenceDocumentVersionId: true,
+  reason: true,
+  reviewedByMembershipId: true,
+  reviewedAt: true,
+} satisfies Prisma.PayrollExportCheckpointReviewSelect;
+
+export function toCheckpointReviewView(
+  row: Prisma.PayrollExportCheckpointReviewGetPayload<{ select: typeof checkpointReviewSelect }>,
+): PayrollCheckpointReviewView {
+  const { certifiedPayrollReviewExportId, checkpoint, outcome, reviewedAt, ...rest } = row;
+  return {
+    ...rest,
+    reviewExportId: certifiedPayrollReviewExportId,
+    checkpoint: checkpoint as PayrollExportCheckpoint,
+    outcome: outcome as PayrollCheckpointReviewView['outcome'],
+    reviewedAt: reviewedAt.toISOString(),
+  };
 }
 
 /**
@@ -145,6 +186,13 @@ export class PayrollPeriodsService {
           },
           select: { id: true },
         }));
+      const checkpointReviews = reviewExport
+        ? await transaction.payrollExportCheckpointReview.findMany({
+            where: { agencyId: context.agencyId, certifiedPayrollReviewExportId: reviewExport.id },
+            select: checkpointReviewSelect,
+            orderBy: { reviewedAt: 'asc' },
+          })
+        : [];
       const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
       return {
         ...toSummary(period),
@@ -155,6 +203,7 @@ export class PayrollPeriodsService {
           ...certification,
           certifiedAt: certification.certifiedAt.toISOString(),
           reviewExportId: reviewExport?.id ?? null,
+          checkpointReviews: checkpointReviews.map(toCheckpointReviewView),
         },
       };
     });

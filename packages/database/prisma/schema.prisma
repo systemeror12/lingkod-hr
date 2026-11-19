@@ -5722,6 +5722,27 @@ model PayrollCertification {
   @@map("payroll_certifications")
 }
 
+/// A Budget or Accounting review, confirmed or returned, of one Certified
+/// Payroll Review Export (#637). It is in force while its export is current;
+/// it is never changed or deleted. The foreign keys are in SQL.
+model PayrollExportCheckpointReview {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @map("payroll_period_id") @db.Uuid
+  certifiedPayrollReviewExportId String   @map("certified_payroll_review_export_id") @db.Uuid
+  checkpoint                     String
+  outcome                        String
+  externalReference              String?  @map("external_reference")
+  evidenceDocumentVersionId      String?  @map("evidence_document_version_id") @db.Uuid
+  reason                         String?
+  reviewedByMembershipId         String   @map("reviewed_by_membership_id") @db.Uuid
+  reviewedAt                     DateTime @default(now()) @map("reviewed_at") @db.Timestamptz(6)
+
+  @@unique([certifiedPayrollReviewExportId, checkpoint], map: "payroll_export_checkpoint_reviews_export_checkpoint_key")
+  @@index([agencyId, payrollPeriodId], map: "payroll_export_checkpoint_reviews_period_idx")
+  @@map("payroll_export_checkpoint_reviews")
+}
+
 /// A platform-wide, immutable definition of one payroll Structured Export
 /// (#636). A change is a successor version.
 model PayrollExportContractVersion {

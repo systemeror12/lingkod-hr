@@ -16,6 +16,10 @@ import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import { PayrollCertificationService } from './payroll-certification.service';
 import {
+  PayrollCheckpointReviewService,
+  type PayrollCheckpointReviewResult,
+} from './payroll-checkpoint-review.service';
+import {
   PayrollPeriodsService,
   PayrollPeriodsServiceError,
   type PayrollPeriodDetail,
@@ -37,6 +41,8 @@ export class PayrollPeriodsController {
     private readonly certification: PayrollCertificationService,
     @Inject(PayrollReviewExportService)
     private readonly reviewExport: PayrollReviewExportService,
+    @Inject(PayrollCheckpointReviewService)
+    private readonly checkpointReview: PayrollCheckpointReviewService,
   ) {}
 
   @Get(':agencyId/payroll-periods/:periodId')
@@ -163,20 +169,46 @@ export class PayrollPeriodsController {
   ): Promise<{ export: CertifiedPayrollReviewExportView }> {
     assertAgency(agencyId, context);
     const id = parsePeriodId(periodId, context);
-    const parsedExportId = periodIdSchema.safeParse(exportId);
-    if (!parsedExportId.success) {
-      throw failure(
-        context,
-        404,
-        'PAYROLL_REVIEW_EXPORT_NOT_FOUND',
-        'The Certified Payroll Review Export could not be found.',
-      );
-    }
+    const parsedExportId = parseExportId(exportId, context);
     return {
-      export: await translate(context, () =>
-        this.reviewExport.read(context, id, parsedExportId.data),
-      ),
+      export: await translate(context, () => this.reviewExport.read(context, id, parsedExportId)),
     };
+  }
+
+  /** Confirm or return the Budget checkpoint review of the named, current export. */
+  @Post(':agencyId/payroll-periods/:periodId/review-exports/:exportId/budget-review')
+  @RequirePermission('payroll.periods.review_funding')
+  async recordBudgetReview(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Param('exportId') exportId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PayrollCheckpointReviewResult> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    const parsedExportId = parseExportId(exportId, context);
+    return translate(context, () =>
+      this.checkpointReview.record(context, 'BUDGET', id, parsedExportId, body),
+    );
+  }
+
+  /** Confirm or return the Accounting checkpoint review of the named, current export. */
+  @Post(':agencyId/payroll-periods/:periodId/review-exports/:exportId/accounting-review')
+  @RequirePermission('payroll.periods.review_accounting')
+  async recordAccountingReview(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Param('exportId') exportId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PayrollCheckpointReviewResult> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    const parsedExportId = parseExportId(exportId, context);
+    return translate(context, () =>
+      this.checkpointReview.record(context, 'ACCOUNTING', id, parsedExportId, body),
+    );
   }
 }
 
@@ -199,6 +231,19 @@ function parsePeriodId(periodId: string, context: RequestContext): string {
       404,
       'PAYROLL_PERIOD_NOT_FOUND',
       'The Payroll Period could not be found.',
+    );
+  }
+  return id.data;
+}
+
+function parseExportId(exportId: string, context: RequestContext): string {
+  const id = periodIdSchema.safeParse(exportId);
+  if (!id.success) {
+    throw failure(
+      context,
+      404,
+      'PAYROLL_REVIEW_EXPORT_NOT_FOUND',
+      'The Certified Payroll Review Export could not be found.',
     );
   }
   return id.data;

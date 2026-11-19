@@ -21,7 +21,7 @@ import {
   type PayrollPeriodStatus,
 } from './payroll-periods.schemas';
 
-interface LockedPeriod {
+export interface LockedPeriod {
   status: PayrollPeriodStatus;
   calculationVersion: number;
   rowVersion: number;
@@ -133,9 +133,9 @@ export class PayrollCertificationService {
 
   /**
    * Revoke the certification in force and supersede its Certified Payroll
-   * Review Export. The HR Certifier acts in HR_CERTIFICATION; a Payroll
-   * Approver, who holds no certify permission, acts in APPROVAL (#330). The
-   * export's checkpoint reviews this must also revoke arrive with #637.
+   * Review Export, which revokes the export's checkpoint reviews. The HR
+   * Certifier acts in HR_CERTIFICATION; a Payroll Approver, who holds no
+   * certify permission, acts in APPROVAL (#330).
    */
   async revokeCertification(
     context: RequestContext,
@@ -159,25 +159,11 @@ export class PayrollCertificationService {
         holdsAgencyWide(context, 'payroll.periods.certify') ? 'HR_CERTIFICATION' : 'APPROVAL',
       );
 
-      const certification = await transaction.payrollCertification.findFirst({
-        where: { agencyId: context.agencyId, payrollPeriodId: periodId, revokedAt: null },
-        select: { id: true, calculationVersion: true, calculationHash: true },
-      });
-      if (!certification) {
-        throw new Error('A CERTIFIED Payroll Period has no certification in force.');
-      }
-      await transaction.payrollCertification.update({
-        where: { id: certification.id },
-        data: {
-          revokedByMembershipId: context.membershipId,
-          revokedAt: new Date(),
-          revocationReason: input.reason,
-        },
-      });
-      const supersededReviewExportId = await supersedeReviewExport(
+      const revoked = await revokeCertificationInForce(
         transaction,
-        context.agencyId,
-        certification.id,
+        context,
+        periodId,
+        input.reason,
       );
       const after = await moveStatus(transaction, context, periodId, period, 'FOR_REVIEW');
       await transaction.auditEvent.create({
@@ -187,12 +173,7 @@ export class PayrollCertificationService {
           previousStatus: 'CERTIFIED',
           newStatus: 'FOR_REVIEW',
           reason: input.reason,
-          metadata: {
-            payrollCertificationId: certification.id,
-            calculationVersion: certification.calculationVersion,
-            calculationHash: certification.calculationHash,
-            supersededReviewExportId,
-          },
+          metadata: revoked,
         }),
       });
       return after;
@@ -227,7 +208,11 @@ export class PayrollCertificationService {
   }
 }
 
-function requirePermission(context: RequestContext, permission: string, command: string): void {
+export function requirePermission(
+  context: RequestContext,
+  permission: string,
+  command: string,
+): void {
   if (!holdsAgencyWide(context, permission)) {
     throw new PayrollPeriodsServiceError(
       `${command} needs the ${permission} permission for the whole Agency.`,
@@ -238,7 +223,7 @@ function requirePermission(context: RequestContext, permission: string, command:
 }
 
 /** The period row, locked FOR UPDATE until the command commits. */
-async function lockPeriod(
+export async function lockPeriod(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
   periodId: string,
@@ -265,7 +250,7 @@ async function lockPeriod(
   };
 }
 
-function requireStatus(period: LockedPeriod, status: PayrollPeriodStatus): void {
+export function requireStatus(period: LockedPeriod, status: PayrollPeriodStatus): void {
   if (period.status !== status) {
     throw new PayrollPeriodsServiceError(
       `The Payroll Period is ${period.status}; this command applies only while it is ${status}.`,
@@ -275,7 +260,7 @@ function requireStatus(period: LockedPeriod, status: PayrollPeriodStatus): void 
   }
 }
 
-async function claimFunction(
+export async function claimFunction(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
   payrollPeriodId: string,
@@ -296,7 +281,7 @@ async function claimFunction(
   }
 }
 
-async function moveStatus(
+export async function moveStatus(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
   periodId: string,
@@ -309,4 +294,56 @@ async function moveStatus(
     select: summarySelect,
   });
   return toSummary(row);
+}
+
+/**
+ * Revoke the certification in force on a CERTIFIED period, with the reason,
+ * as the acting member, and supersede its Certified Payroll Review Export. A
+ * checkpoint review is in force only while its export is current, so this
+ * revokes the export's reviews too (#330). Returns what it revoked, for the
+ * caller's Audit Event.
+ */
+export async function revokeCertificationInForce(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  periodId: string,
+  reason: string,
+) {
+  const certification = await transaction.payrollCertification.findFirst({
+    where: { agencyId: context.agencyId, payrollPeriodId: periodId, revokedAt: null },
+    select: { id: true, calculationVersion: true, calculationHash: true },
+  });
+  if (!certification) {
+    throw new Error('A CERTIFIED Payroll Period has no certification in force.');
+  }
+  await transaction.payrollCertification.update({
+    where: { id: certification.id },
+    data: {
+      revokedByMembershipId: context.membershipId,
+      revokedAt: new Date(),
+      revocationReason: reason,
+    },
+  });
+  const supersededReviewExportId = await supersedeReviewExport(
+    transaction,
+    context.agencyId,
+    certification.id,
+  );
+  const revokedCheckpointReviews = supersededReviewExportId
+    ? await transaction.payrollExportCheckpointReview.findMany({
+        where: {
+          agencyId: context.agencyId,
+          certifiedPayrollReviewExportId: supersededReviewExportId,
+        },
+        select: { id: true },
+        orderBy: { reviewedAt: 'asc' },
+      })
+    : [];
+  return {
+    payrollCertificationId: certification.id,
+    calculationVersion: certification.calculationVersion,
+    calculationHash: certification.calculationHash,
+    supersededReviewExportId,
+    revokedCheckpointReviewIds: revokedCheckpointReviews.map((review) => review.id),
+  };
 }
