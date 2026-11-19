@@ -1186,8 +1186,8 @@ that an entry was posted, or that a receiving system accepted the data (#29).
 
 The Certified Payroll Review Export is specified below (#636). The Finalized
 Payroll Accounting Support Export, its Employee Detail Companion, and Payroll
-Export External Outcomes arrive with #355, and Payroll Export Checkpoint
-Reviews with #637.
+Export External Outcomes arrive with #355. Payroll Export Checkpoint Reviews
+are specified below (#637).
 
 ## `payroll_export_contract_versions`
 
@@ -1255,6 +1255,37 @@ Certification, for budget and accounting review before approval (#29, #636)
 - Generating claims no payroll function beyond the certifier's.
 
 **Deletion behavior:** Immutable. Only the supersession is recorded, once.
+
+## `payroll_export_checkpoint_reviews`
+
+Payroll Export Checkpoint Review: a Budget or Accounting review outcome
+recorded against one Certified Payroll Review Export (#29, #330, #637)
+
+| Column                             | Logical type | Null? | Key / rule                           | Description                               |
+| ---------------------------------- | ------------ | ----- | ------------------------------------ | ----------------------------------------- |
+| id                                 | uuid         | No    | PK                                   | Review                                    |
+| agency_id                          | uuid         | No    | FK agencies                          | Tenant                                    |
+| payroll_period_id                  | uuid         | No    | FK payroll_periods                   | Period                                    |
+| certified_payroll_review_export_id | uuid         | No    | FK certified_payroll_review_exports  | The exact export reviewed                 |
+| checkpoint                         | enum         | No    | Unique with the export               | BUDGET, ACCOUNTING                        |
+| outcome                            | enum         | No    |                                      | CONFIRMED, RETURNED                       |
+| external_reference                 | string       | Yes   | Required when CONFIRMED              | External reference, such as an ORS or JEV |
+| evidence_document_version_id       | uuid         | Yes   | FK document_versions; when CONFIRMED | Finalized External Evidence               |
+| reason                             | string       | Yes   | Exactly when RETURNED                | Why the snapshot was returned             |
+| reviewed_by_membership_id          | uuid         | No    | FK agency_memberships                | The Budget Officer or Accounting Reviewer |
+| reviewed_at                        | datetime     | No    |                                      | When it was recorded                      |
+
+**Constraints and indexes**
+
+- Recorded only against the current export while the period is `CERTIFIED`,
+  one per checkpoint per export, in either order.
+- In force while its export is current: superseding the export revokes it,
+  and the review itself never changes.
+- A return revokes the certification, supersedes the export, and so revokes
+  the other review, and moves the period to `FOR_REVIEW`.
+- Recording claims `BUDGET_REVIEW` or `ACCOUNTING_REVIEW` on the period (#330).
+
+**Deletion behavior:** Immutable.
 
 # Domain invariants
 

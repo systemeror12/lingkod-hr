@@ -1,14 +1,21 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { DocumentsModule } from '../documents/documents.module';
 import { PayrollCertificationService } from './payroll-certification.service';
+import { PayrollCheckpointReviewService } from './payroll-checkpoint-review.service';
 import { PayrollPeriodsController } from './payroll-periods.controller';
 import { PayrollPeriodsService } from './payroll-periods.service';
 import { PayrollReviewExportService } from './payroll-review-export.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, DocumentsModule],
   controllers: [PayrollPeriodsController],
-  providers: [PayrollPeriodsService, PayrollCertificationService, PayrollReviewExportService],
+  providers: [
+    PayrollPeriodsService,
+    PayrollCertificationService,
+    PayrollReviewExportService,
+    PayrollCheckpointReviewService,
+  ],
   exports: [PayrollPeriodsService],
 })
 export class PayrollPeriodsModule {}

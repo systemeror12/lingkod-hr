@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { REQUIRED_PERMISSIONS } from '../auth/auth.decorators';
 import { calculationHash, payrollCalculationHash } from '../payroll-calculation/calculation-hash';
 import { PayrollCertificationService } from './payroll-certification.service';
+import { PayrollCheckpointReviewService } from './payroll-checkpoint-review.service';
+import { payrollCheckpointReviewSchema } from './payroll-periods.schemas';
 import { ruleVersionsInEffectDuring } from './payroll-rule-snapshots';
 import { PayrollPeriodsController } from './payroll-periods.controller';
 import {
@@ -154,6 +156,83 @@ describe('the Payroll Period controller', () => {
     expect(required('certify')).toEqual(['payroll.periods.certify']);
     expect(required('revokeCertification')).toEqual(['payroll.periods.revoke_certification']);
     expect(required('returnForCorrection')).toEqual(['payroll.periods.return']);
+    expect(required('recordBudgetReview')).toEqual(['payroll.periods.review_funding']);
+    expect(required('recordAccountingReview')).toEqual(['payroll.periods.review_accounting']);
+  });
+
+  it('refuses each checkpoint review without its own permission held Agency-wide', async () => {
+    const service = new PayrollCheckpointReviewService({} as never);
+    const confirm = {
+      outcome: 'CONFIRMED',
+      externalReference: 'ORS-2026-03-0001',
+      evidenceDocumentVersionId: periodId,
+    };
+    const forbidden = { statusCode: 403, code: 'PAYROLL_PERIOD_REVIEW_FORBIDDEN' };
+    // Each permission records only its own checkpoint, and an OWN grant records neither.
+    const holding = (code: string, scopePolicy: 'AGENCY' | 'OWN' = 'AGENCY'): RequestContext => ({
+      ...context,
+      permissions: [{ code, scopePolicy }],
+    });
+    await expect(
+      service.record(
+        holding('payroll.periods.review_accounting'),
+        'BUDGET',
+        periodId,
+        periodId,
+        confirm,
+      ),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/review_funding/) });
+    await expect(
+      service.record(
+        holding('payroll.periods.review_funding'),
+        'ACCOUNTING',
+        periodId,
+        periodId,
+        confirm,
+      ),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/review_accounting/) });
+    await expect(
+      service.record(
+        holding('payroll.periods.review_funding', 'OWN'),
+        'BUDGET',
+        periodId,
+        periodId,
+        confirm,
+      ),
+    ).rejects.toMatchObject(forbidden);
+  });
+
+  it('confirms with an external reference and evidence, and returns only with a reason', () => {
+    const evidenceDocumentVersionId = periodId;
+    const valid = (input: unknown) => payrollCheckpointReviewSchema.safeParse(input).success;
+    expect(
+      valid({ outcome: 'CONFIRMED', externalReference: 'ORS-1', evidenceDocumentVersionId }),
+    ).toBe(true);
+    expect(valid({ outcome: 'CONFIRMED', externalReference: 'ORS-1' })).toBe(false);
+    expect(valid({ outcome: 'CONFIRMED', evidenceDocumentVersionId })).toBe(false);
+    expect(valid({ outcome: 'CONFIRMED', externalReference: ' ', evidenceDocumentVersionId })).toBe(
+      false,
+    );
+    expect(
+      valid({
+        outcome: 'CONFIRMED',
+        externalReference: 'ORS-1',
+        evidenceDocumentVersionId,
+        reason: 'No reason on a confirmation.',
+      }),
+    ).toBe(false);
+    expect(valid({ outcome: 'RETURNED', reason: 'Funds are not available.' })).toBe(true);
+    expect(
+      valid({
+        outcome: 'RETURNED',
+        reason: 'See memo.',
+        externalReference: 'MEMO-1',
+        evidenceDocumentVersionId,
+      }),
+    ).toBe(true);
+    expect(valid({ outcome: 'RETURNED' })).toBe(false);
+    expect(valid({ outcome: 'RETURNED', reason: '  ' })).toBe(false);
+    expect(valid({ outcome: 'PENDING' })).toBe(false);
   });
 
   it('refuses each review command without its permission held Agency-wide', async () => {
@@ -189,7 +268,12 @@ describe('the Payroll Period controller', () => {
 
   it('refuses another Agency or a malformed period before calling the service', async () => {
     const service = { create: vi.fn(), moveCutoff: vi.fn(), cancelDraft: vi.fn() };
-    const controller = new PayrollPeriodsController(service as never, {} as never, {} as never);
+    const controller = new PayrollPeriodsController(
+      service as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
     const other = '00000000-0000-4000-8000-000000000009';
 
     await expect(controller.create(other, {}, context)).rejects.toMatchObject({ status: 404 });
@@ -212,7 +296,12 @@ describe('the Payroll Period controller', () => {
           new PayrollPeriodsServiceError('Not draft.', 409, 'PAYROLL_PERIOD_NOT_DRAFT'),
         ),
     };
-    const controller = new PayrollPeriodsController(service as never, {} as never, {} as never);
+    const controller = new PayrollPeriodsController(
+      service as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     await expect(
       controller.cancelDraft(agencyId, periodId, { reason: 'x', rowVersion: 1 }, context),
