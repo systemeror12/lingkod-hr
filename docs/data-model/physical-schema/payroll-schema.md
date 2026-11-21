@@ -2072,6 +2072,131 @@ rejects every `UPDATE` and `DELETE`. Migration 0180 creates the table and
 grants `payroll.periods.review_funding` to the Budget Officer and
 `payroll.periods.review_accounting` to the Accounting Reviewer, Agency-wide.
 
+```sql
+CREATE TABLE payment_exports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  payment_date date NOT NULL,
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  currency text NOT NULL CHECK (currency = 'PHP'),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL,
+  checksum text NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
+  summary_content text NOT NULL,
+  summary_checksum text NOT NULL
+    CHECK (summary_checksum = encode(sha256(convert_to(summary_content, 'UTF8')), 'hex')),
+  source_result_count integer NOT NULL,
+  source_net_total numeric(19,2) NOT NULL,
+  instruction_count integer NOT NULL,
+  instruction_total numeric(19,2) NOT NULL,
+  excluded_result_count integer NOT NULL,
+  excluded_result_total numeric(19,2) NOT NULL,
+  CHECK (instruction_count >= 0 AND excluded_result_count >= 0
+         AND source_result_count = instruction_count + excluded_result_count
+         AND instruction_total >= 0 AND excluded_result_total <= 0
+         AND source_net_total = instruction_total + excluded_result_total),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE payment_instructions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payment_export_id uuid NOT NULL,
+  payroll_employee_id uuid NOT NULL,
+  payroll_bank_account_id uuid NOT NULL,
+  agency_employee_number text NOT NULL,
+  payee_legal_name text NOT NULL,
+  destination_type text NOT NULL CHECK (destination_type = 'BANK_ACCOUNT'),
+  institution_identifier_scheme text NOT NULL
+    CHECK (institution_identifier_scheme = 'AGENCY_BANK_CODE'),
+  institution_identifier text NOT NULL,
+  institution_name text NOT NULL,
+  masked_account_identifier text NOT NULL,
+  account_holder_name text NOT NULL,
+  amount numeric(19,2) NOT NULL CHECK (amount > 0),
+  payment_reference text NOT NULL,
+  FOREIGN KEY (agency_id, payment_export_id)
+    REFERENCES payment_exports (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_employee_id)
+    REFERENCES payroll_employees (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_bank_account_id)
+    REFERENCES payroll_bank_accounts (agency_id, id),
+  UNIQUE (payment_export_id, payroll_employee_id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Payment Export (#28, #337) is generated from a `FINALIZED` Payroll Period
+by `POST .../payroll-periods/:periodId/payment-exports`, which needs
+`payroll.payment_exports.generate` held Agency-wide and claims no payroll
+function. It locks the period, reads the period's `FINALIZED` results at the
+finalized calculation version, and writes the export, its instructions, and a
+`PAYMENT_EXPORT_GENERATED` Audit Event (idempotency key `generated`) in one
+transaction. A period has one export: generating again, by anyone permitted,
+returns the stored one, its checksums unchanged, and writes nothing.
+Migration 0186 adds `PAYMENT_EXPORT` version 1 to the contract versions, and
+its definition names every CSV column, the row order, and the control rules.
+
+Each positive-net-pay result gets one instruction to its Employee's
+designated destination: the `ACTIVE` Payroll Bank Account (so `VERIFIED`)
+whose effective dates cover the generation date in Asia/Manila (_reading_:
+#28 snapshots the destination designated "at generation", not on the payment
+date). The bank code is the institution identifier under the
+`AGENCY_BANK_CODE` scheme and, since the HRIS keeps no bank catalogue, also
+the institution name. The account name is the account-holder name, the
+Employee's legal name the payee's, and the payment reference is the period
+code and the agency employee number joined by a hyphen. A zero- or
+negative-net-pay result gets no instruction and is counted in the
+`excluded_result_*` controls. Generation refuses the whole export, storing
+nothing, with:
+
+- `PAYMENT_EXPORT_PAYROLL_NOT_FINALIZED` when the period is not `FINALIZED`;
+- `PAYMENT_EXPORT_RECONCILIATION_FAILED` when a result's earning or deduction
+  lines differ from its totals, its net is not gross less deductions, its net
+  is not whole centavos (the export never rounds), or the controls do not
+  account for every result;
+- `PAYMENT_EXPORT_DESTINATION_BLOCKED` when any positive-net-pay result's
+  destination is missing, ineffective, or unverified, naming every Employee
+  affected.
+
+The CSV is UTF-8 without a byte order mark, RFC 4180, every field
+double-quoted, CRLF line endings, one row per instruction. It carries the full
+account number, so it is not stored: `GET .../payment-exports/:exportId/csv`
+renders it again from the export, its instructions, the period's fixed code,
+run type, and dates, and the destination's account number, decrypted from
+the immutable ciphertext of `payroll_bank_accounts`. It refuses with
+`PAYMENT_EXPORT_CHECKSUM_MISMATCH` unless the bytes hash to `checksum`
+(_reading_: this keeps account numbers encrypted at rest; the logical ERD's
+`document_id` and `summary_document_id` are not used). The summary holds
+masked account numbers only, the last four characters visible, and is stored
+as `summary_content`, so it keeps the excluded results' names as they were;
+`GET .../payment-exports/:exportId/summary` returns it. It names the CSV's
+checksum, so the two artifacts are tied. Both downloads need the same
+permission, and each is a `PAYMENT_EXPORT_DOWNLOADED` Audit Event naming the
+artifact and its checksum.
+
+Triggers keep both tables immutable, even for the database owner. An export
+is admitted only for a `FINALIZED` period at its calculation version. An
+instruction is admitted only in the transaction that writes its export, for
+a `FINALIZED` result of that period and version, for exactly the result's
+net, to that Employee's `ACTIVE` account effective that day. `hris_app` holds
+`SELECT` and `INSERT` only. Migration 0186 adds the `cashier` role and grants
+`payroll.payment_exports.generate` Agency-wide to the Accounting Reviewer,
+the Payroll Approver, and the Cashier; the Payroll Preparer's `C` and the
+Auditor's `R` are not seeded.
+
+A superseding export, its retry linkage, a voided payroll's supersession
+(#643), and Disbursement Outcomes (#642) are not built yet, so the tables
+have no `supersedes_payment_export_id`, `prior_payment_instruction_id`, or
+`retry_reason`, and `payroll_period_id` is UNIQUE.
+
 Files are stored through the shared document service.
 
 ---
@@ -2094,7 +2219,9 @@ Application permissions separately control:
 - finalization;
 - void request and void approval;
 - Payslip release, withholding, and self-service;
-- Payment Exports;
+- Payment Exports, whose CSV carries full account numbers, so
+  `payroll.payment_exports.generate` is its bank-detail control and each
+  download is audited;
 - Disbursement Outcomes.
 
 A permission is not enough on its own: `payroll_period_actors` keeps each

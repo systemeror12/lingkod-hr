@@ -5776,6 +5776,58 @@ model CertifiedPayrollReviewExport {
   @@map("certified_payroll_review_exports")
 }
 
+/// The immutable, checksummed Payment Export of one FINALIZED payroll (#28,
+/// #337). Its CSV is rendered from these rows and its instructions, and
+/// `checksum` is of the rendering's bytes; the summary is stored.
+model PaymentExport {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "payment_exports_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  paymentDate                    DateTime @map("payment_date") @db.Date
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  currency                       String
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  checksum                       String
+  summaryContent                 String   @map("summary_content")
+  summaryChecksum                String   @map("summary_checksum")
+  sourceResultCount              Int      @map("source_result_count")
+  sourceNetTotal                 Decimal  @map("source_net_total") @db.Decimal(19, 2)
+  instructionCount               Int      @map("instruction_count")
+  instructionTotal               Decimal  @map("instruction_total") @db.Decimal(19, 2)
+  excludedResultCount            Int      @map("excluded_result_count")
+  excludedResultTotal            Decimal  @map("excluded_result_total") @db.Decimal(19, 2)
+
+  @@unique([agencyId, id], map: "payment_exports_agency_id_id_key")
+  @@map("payment_exports")
+}
+
+/// One positive-net-pay Payroll Employee Result's Payment Instruction in a
+/// Payment Export (#28). It keeps the destination's mask, not its number.
+model PaymentInstruction {
+  id                          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String  @map("agency_id") @db.Uuid
+  paymentExportId             String  @map("payment_export_id") @db.Uuid
+  payrollEmployeeId           String  @map("payroll_employee_id") @db.Uuid
+  payrollBankAccountId        String  @map("payroll_bank_account_id") @db.Uuid
+  agencyEmployeeNumber        String  @map("agency_employee_number")
+  payeeLegalName              String  @map("payee_legal_name")
+  destinationType             String  @map("destination_type")
+  institutionIdentifierScheme String  @map("institution_identifier_scheme")
+  institutionIdentifier       String  @map("institution_identifier")
+  institutionName             String  @map("institution_name")
+  maskedAccountIdentifier     String  @map("masked_account_identifier")
+  accountHolderName           String  @map("account_holder_name")
+  amount                      Decimal @db.Decimal(19, 2)
+  paymentReference            String  @map("payment_reference")
+
+  @@unique([paymentExportId, payrollEmployeeId], map: "payment_instructions_export_result_key")
+  @@unique([agencyId, id], map: "payment_instructions_agency_id_id_key")
+  @@index([agencyId, payrollEmployeeId], map: "payment_instructions_payroll_employee_idx")
+  @@map("payment_instructions")
+}
+
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
 model PayrollRuleSnapshot {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
