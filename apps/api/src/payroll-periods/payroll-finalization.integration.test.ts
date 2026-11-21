@@ -686,13 +686,16 @@ describe.skipIf(!enabled)('Payroll finalization in PostgreSQL', () => {
     expect(outcomes.find((outcome) => outcome.status === 'rejected')).toMatchObject({
       reason: { statusCode: 409, code: 'PAYROLL_PERIOD_NOT_APPROVED' },
     });
+    // The approver already holds APPROVAL from approving; the second approver
+    // claims it only by winning, and the loser's transaction claims nothing.
+    const secondApproverWon = outcomes[1].status === 'fulfilled';
     await expect(finalizedState(setup)).resolves.toMatchObject({
       period: { status: 'FINALIZED', rowVersion: period.rowVersion + 1 },
       results: ['FINALIZED'],
       input: { status: 'CONSUMED', consumedByPayrollPeriodId: period.id },
       audit: 1,
       outbox: 1,
-      approvers: 1,
+      approvers: secondApproverWon ? 2 : 1,
     });
   });
 
