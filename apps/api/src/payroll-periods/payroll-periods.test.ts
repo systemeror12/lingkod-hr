@@ -5,6 +5,7 @@ import { calculationHash, payrollCalculationHash } from '../payroll-calculation/
 import { PayrollApprovalService } from './payroll-approval.service';
 import { PayrollCertificationService } from './payroll-certification.service';
 import { PayrollCheckpointReviewService } from './payroll-checkpoint-review.service';
+import { PayrollFinalizationService } from './payroll-finalization.service';
 import { payrollCheckpointReviewSchema } from './payroll-periods.schemas';
 import { ruleVersionsInEffectDuring } from './payroll-rule-snapshots';
 import { PayrollPeriodsController } from './payroll-periods.controller';
@@ -161,6 +162,7 @@ describe('the Payroll Period controller', () => {
     expect(required('recordAccountingReview')).toEqual(['payroll.periods.review_accounting']);
     expect(required('approve')).toEqual(['payroll.periods.approve']);
     expect(required('returnBeforeFinalization')).toEqual(['payroll.periods.return_approved']);
+    expect(required('finalize')).toEqual(['payroll.periods.finalize']);
   });
 
   it('refuses each checkpoint review without its own permission held Agency-wide', async () => {
@@ -292,6 +294,24 @@ describe('the Payroll Period controller', () => {
     ).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_INPUT' });
   });
 
+  it('refuses finalization without payroll.periods.finalize held Agency-wide, or without a row version', async () => {
+    const service = new PayrollFinalizationService();
+    const holding = (code: string, scopePolicy: 'AGENCY' | 'OWN' = 'AGENCY'): RequestContext => ({
+      ...context,
+      permissions: [{ code, scopePolicy }],
+    });
+    const forbidden = { statusCode: 403, code: 'PAYROLL_PERIOD_REVIEW_FORBIDDEN' };
+    await expect(
+      service.finalize(holding('payroll.periods.approve'), periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/finalize/) });
+    await expect(
+      service.finalize(holding('payroll.periods.finalize', 'OWN'), periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      service.finalize(holding('payroll.periods.finalize'), periodId, {}),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_INPUT' });
+  });
+
   it('refuses to start a calculation without payroll.periods.calculate', async () => {
     await expect(
       new PayrollPeriodsService().startCalculation(context, periodId, { rowVersion: 1 }),
@@ -302,6 +322,7 @@ describe('the Payroll Period controller', () => {
     const service = { create: vi.fn(), moveCutoff: vi.fn(), cancelDraft: vi.fn() };
     const controller = new PayrollPeriodsController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -331,6 +352,7 @@ describe('the Payroll Period controller', () => {
     };
     const controller = new PayrollPeriodsController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

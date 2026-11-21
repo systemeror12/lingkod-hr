@@ -28,7 +28,8 @@ export type DatabaseCapability =
   | 'leave-transition'
   | 'leave-policy-transition'
   | 'leave-posting-transition'
-  | 'attendance-transition';
+  | 'attendance-transition'
+  | 'payroll-transition';
 
 export interface DatabaseContext {
   agencyId?: string;
@@ -193,6 +194,11 @@ export async function setDatabaseContext(
       set_config(
         'app.attendance_transition',
         ${hasCapability(context, 'attendance-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.payroll_transition',
+        ${hasCapability(context, 'payroll-transition') ? 'on' : ''},
         true
       )
   `;

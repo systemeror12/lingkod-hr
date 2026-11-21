@@ -401,7 +401,8 @@ acceptance a trigger allows
 only the status change, `consumed_by_payroll_period_id`, which the
 finalization transaction sets, and `source_correction_key`, which a withdrawal
 sets. Consumed inputs are immutable, apart from the
-return to `PENDING` when their payroll is voided. The migration that creates
+return to `PENDING` when their payroll is voided. Migration 0184 admits
+`CONSUMED` only in the transaction that finalizes the period it names. The migration that creates
 `payroll_periods` adds the foreign key on `consumed_by_payroll_period_id`, which
 until then has only its CHECK (#338).
 
@@ -731,6 +732,30 @@ permissions and grants them to the Payroll Approver, Agency-wide. The
 Accounting Reviewer's configurable grant of `payroll.periods.approve` is not
 seeded.
 
+Finalization (`APPROVED → FINALIZED`, #335) needs `payroll.periods.finalize`,
+takes the `row_version` the approver read, claims `APPROVAL`, and runs section
+11 in one transaction. It sets `finalized_at`, which a trigger requires on
+that move and keeps fixed on every other update. Every refusal rolls the
+transaction back, so the period stays `APPROVED` with nothing finalized:
+
+| Code                                | Refused when                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `PAYROLL_PERIOD_NOT_APPROVED`       | The period is not `APPROVED`                                                                     |
+| `PAYROLL_PERIOD_STALE`              | The `row_version` is not the period's                                                            |
+| `PAYROLL_PERIOD_BLOCKING_EXCEPTION` | The version has an open blocking exception                                                       |
+| `PAYROLL_CALCULATION_HASH_CHANGED`  | The version's results no longer hash to the certification in force                               |
+| `PAYROLL_TOTALS_UNRECONCILED`       | A result's totals differ from its line sums                                                      |
+| `PAYROLL_FUNCTION_CONFLICT`         | The person holds another payroll function on the period                                          |
+| `PAYROLL_SOURCE_CONSUMED`           | A Payroll Input a line rests on is no longer `PENDING`, or another payroll consumed a fact first |
+
+A retry by the person who finalized, at the `row_version` they sent, returns
+the finalized period and writes nothing. Anyone else then finds the period
+`FINALIZED` and is refused, so of two concurrent finalizations one is refused.
+The `PAYROLL_PERIOD_FINALIZED` Audit Event names the certification, version,
+hash, result count, and the consumed inputs and facts, under the idempotency
+key `finalized`. Migration 0184 adds the permission and grants it to the
+Payroll Approver, Agency-wide.
+
 ---
 
 ## 6. Rule Snapshots
@@ -877,6 +902,13 @@ calculation decided: the Employee, the period dates, the compensation basis,
 the lines, the exceptions, and the totals. Row ids, times, and the version are
 left out, so the same snapshot and inputs reproduce it.
 
+Finalization marks every result of the approved version `FINALIZED` (#335).
+Migration 0184 grants `hris_app` `UPDATE ("status")` under an Agency policy.
+Its trigger admits one status change, to `FINALIZED`, and only in the
+transaction that finalizes the result's period at the result's version, so a
+`FINALIZED` or `VOIDED` result never changes. The void command admits
+`FINALIZED → VOIDED` when it arrives.
+
 A hold is placed or lifted only while the period is `DRAFT`, and only against
 an Employee-level blocking exception. A held Employee has no result in that
 period. When the period is finalized, the finalization transaction opens a
@@ -964,8 +996,11 @@ non-taxable compensation (section 9).
 Migration 0164 creates `payroll_line_sources` and
 `payroll_consumed_attendance_facts` (#341). A source joins its line only in the
 transaction that wrote the line, and every `UPDATE` and `DELETE` is rejected.
-`hris_app` holds `SELECT` on `payroll_consumed_attendance_facts`; finalization,
-its only writer, grants itself `INSERT` and `UPDATE` when it arrives.
+`hris_app` holds `SELECT` on `payroll_consumed_attendance_facts`. Migration
+0184 grants `INSERT` under an Agency policy to finalization, its only writer:
+a trigger admits a row only in the transaction that finalizes the period it
+names, and rejects every `UPDATE` and `DELETE`. The void command grants the
+`UPDATE` that sets `released_at` when it arrives.
 
 The `BASIC_SALARY` component, which 0162 adds to the catalogue, pays a full
 month on the monthly full-time or proportional part-time basis as one
@@ -1758,6 +1793,35 @@ The database transaction must:
     Employee under an active Payroll Hold;
 11. append audit/outbox records;
 12. commit before generating documents or emails.
+
+Migration 0184 and `PayrollFinalizationService` build every step but 10,
+which arrives with the Payroll Adjustment tables (#356). The service refuses
+each check with the codes of section 5.
+
+- Step 5 compares each result of the version with its lines: `gross_amount`
+  the `EARNING` lines, `total_deductions` the `DEDUCTION` lines, and
+  `net_amount` their difference, as the calculation stores them.
+- Steps 6 and 9 take the sources from `payroll_line_sources` of the version's
+  lines (_reading_: what the approved version used is what its lines rest on,
+  so a held Employee's sources stay unconsumed). Inputs are marked `CONSUMED`
+  only while `PENDING`, and facts are inserted with the live UNIQUE index
+  skipping one already consumed, so each write waits for a concurrent
+  finalization of another period and then finds the source taken. A
+  shortfall refuses with `PAYROLL_SOURCE_CONSUMED` and stores nothing
+  (_reading_: the refusal is the blocking exception; the period cannot
+  finalize until it is returned and recalculated, so no exception row is
+  written).
+- No calculator pays a `ONCE` Authorized Payroll Component Input yet, so
+  finalization consumes none; the calculator that pays one adds it here.
+- Step 11 appends one `PAYROLL_PERIOD_FINALIZED` Outbox Event per period,
+  aggregate `PayrollPeriod`, idempotency key `payroll-period-finalized:<id>`,
+  with the period, version, hash, certification, and `finalizedAt`. Work after
+  the commit, such as Payslips (#336), reads it. The transaction runs with the
+  `payroll-transition` capability, which migration 0184 adds to the owners
+  `guard_outbox_event_insert` admits.
+
+Lines, line sources, tax, contribution, and loan lines, and rule snapshots and
+their items already reject every `UPDATE` and `DELETE` at any status.
 
 ---
 
