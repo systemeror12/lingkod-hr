@@ -20,6 +20,7 @@ import { DeductionObligationsModule } from './deduction-obligations/deduction-ob
 import { ContributionBillingsModule } from './contribution-billings/contribution-billings.module';
 import { PayrollPeriodsModule } from './payroll-periods/payroll-periods.module';
 import { PayrollCalculationModule } from './payroll-calculation/payroll-calculation.module';
+import { PayslipsModule } from './payslips/payslips.module';
 import { PayrollExceptionsModule } from './payroll-exceptions/payroll-exceptions.module';
 import { PayrollResultsModule } from './payroll-results/payroll-results.module';
 import { AuthorizedPayrollComponentInputsModule } from './authorized-payroll-component-inputs/authorized-payroll-component-inputs.module';
@@ -76,6 +77,7 @@ import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/att
     PayrollCalculationModule,
     PayrollExceptionsModule,
     PayrollResultsModule,
+    PayslipsModule,
     AuthorizedPayrollComponentInputsModule,
     AgencyPayrollApplicabilitiesModule,
     CompensationBasisModule,

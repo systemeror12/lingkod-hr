@@ -1877,6 +1877,51 @@ result, with no version number (#330). The Payroll Approver releases every
 transaction supersedes a payroll's Payslips from any status, and nothing else
 does. An Employee reads only their own `RELEASED` Payslips.
 
+Migration 0185 creates the table with forced RLS, a foreign key from
+`(agency_id, document_id)` to `documents`, and a check that only a
+`GENERATING` or `SUPERSEDED` Payslip lacks a Document (#336). A trigger admits
+a Payslip only for a `FINALIZED` result, inserted `GENERATING` with nothing
+released or withheld, rejects every `DELETE`, and admits one change:
+`GENERATING → READY`, naming its Document once. `hris_app` holds `SELECT`,
+`INSERT`, and `UPDATE ("status", "document_id")`, so nothing writes the
+release and withholding columns until #640 adds their commands and grant.
+
+`PayslipGenerationJob` in the API process consumes the
+`PAYROLL_PERIOD_FINALIZED` Outbox Event (section 11). On start and a minute
+after each pass, `payslips_due()`, a `SECURITY DEFINER` function like
+`payroll_calculations_due()`, returns each finalized period with a
+`FINALIZED` result whose Payslip is missing or still `GENERATING`. For each,
+in the Agency's context:
+
+1. one transaction inserts a `GENERATING` Payslip for every `FINALIZED`
+   result, skipping those that have one, so a held Employee, who has no
+   result, gets none;
+2. each `GENERATING` Payslip's PDF is rendered from the finalized result and
+   its lines and stored through the shared document service under
+   `payslips/<agency>/<payslip>/<sha256>.pdf`, before any transaction;
+3. one transaction locks the Payslip and, only while it is still
+   `GENERATING`, records an `APPROVED`, issued, `CONFIDENTIAL` Document of
+   type `PAYSLIP` for that object, created by the Payroll Approver who
+   finalized the period, marks the Payslip `READY`, and appends a
+   `PAYSLIP_READY` Audit Event with actor `SYSTEM`.
+
+A failed store or transaction leaves the Payslip `GENERATING`, and the next
+pass retries it under the same row. Of two runs at once, one records the
+Document and the other finds the Payslip `READY`. The job only reads
+finalized payroll rows.
+
+The PDF is LingkodHR's own Printable System View (#617): it carries no form
+number, form title, or conformance claim, and says it states one finalized
+result and is not proof of payment. It names the Agency, the Employee, the
+period, its payment date and finalization time, and the result's version and
+calculation hash. It lists each Payroll Line by line type with its amount and
+how it was reached: quantity and unit, rate, the `formula` and `authority`
+the calculation recorded in `source_snapshot`, and its National Payroll Rule
+Version. Then come gross, total deductions, and net. The same result always
+renders the same bytes (_reading_: no format is prescribed, and the payroll
+ERD records the Payslip as a rendered PDF, so it is plain text in Helvetica
+on A4).
+
 ```sql
 CREATE TABLE payroll_export_contract_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
