@@ -90,6 +90,14 @@ export const payrollPeriodApproveSchema = z.object({ rowVersion }).strict();
 export type PayrollPeriodApproveInput = z.input<typeof payrollPeriodApproveSchema>;
 
 /**
+ * Finalize the APPROVED period at the row version the Payroll Approver read.
+ * The certification in force binds the version and hash being finalized.
+ */
+export const payrollPeriodFinalizeSchema = z.object({ rowVersion }).strict();
+
+export type PayrollPeriodFinalizeInput = z.input<typeof payrollPeriodFinalizeSchema>;
+
+/**
  * Revoke a certification, return a period for correction, or return an
  * approved period before finalization, with a reason.
  */

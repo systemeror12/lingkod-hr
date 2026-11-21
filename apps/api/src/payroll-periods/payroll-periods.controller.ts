@@ -16,6 +16,7 @@ import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import { PayrollApprovalService } from './payroll-approval.service';
 import { PayrollCertificationService } from './payroll-certification.service';
+import { PayrollFinalizationService } from './payroll-finalization.service';
 import {
   PayrollCheckpointReviewService,
   type PayrollCheckpointReviewResult,
@@ -45,6 +46,8 @@ export class PayrollPeriodsController {
     @Inject(PayrollCheckpointReviewService)
     private readonly checkpointReview: PayrollCheckpointReviewService,
     @Inject(PayrollApprovalService) private readonly approval: PayrollApprovalService,
+    @Inject(PayrollFinalizationService)
+    private readonly finalization: PayrollFinalizationService,
   ) {}
 
   @Get(':agencyId/payroll-periods/:periodId')
@@ -187,6 +190,22 @@ export class PayrollPeriodsController {
       period: await translate(context, () =>
         this.approval.returnBeforeFinalization(context, id, body),
       ),
+    };
+  }
+
+  /** Finalize an APPROVED period; a retry by its finalizer returns the finalized period. */
+  @Post(':agencyId/payroll-periods/:periodId/finalize')
+  @RequirePermission('payroll.periods.finalize')
+  async finalize(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return {
+      period: await translate(context, () => this.finalization.finalize(context, id, body)),
     };
   }
 

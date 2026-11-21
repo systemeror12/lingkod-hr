@@ -456,6 +456,9 @@ it.skipIf(!enabled)(
       });
       const consuming = admin.$transaction(
         async (transaction) => {
+          // Standing in for finalization, whose guard requires its period
+          // finalized in the same transaction; the row lock is the same.
+          await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
           await transaction.payrollInput.update({
             where: { id: consumedLater },
             data: { status: 'CONSUMED', consumedByPayrollPeriodId: period.id },

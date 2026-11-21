@@ -31,6 +31,8 @@ export interface PayrollPeriodSummary {
   carriesAdjustments: boolean;
   calculationVersion: number;
   payComponentIds: string[];
+  /** When the period became FINALIZED; kept once it is voided. */
+  finalizedAt: string | null;
   voidReason: string | null;
   voidedAt: string | null;
   rowVersion: number;
@@ -119,6 +121,7 @@ export const summarySelect = {
   status: true,
   carriesAdjustments: true,
   calculationVersion: true,
+  finalizedAt: true,
   voidReason: true,
   voidedAt: true,
   rowVersion: true,
@@ -709,6 +712,7 @@ export function toSummary(row: PeriodRow): PayrollPeriodSummary {
     carriesAdjustments: row.carriesAdjustments,
     calculationVersion: row.calculationVersion,
     payComponentIds: row.components.map((component) => component.payComponentId),
+    finalizedAt: row.finalizedAt?.toISOString() ?? null,
     voidReason: row.voidReason,
     voidedAt: row.voidedAt?.toISOString() ?? null,
     rowVersion: row.rowVersion,

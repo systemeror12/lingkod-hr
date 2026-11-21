@@ -340,7 +340,7 @@ describe.skipIf(!enabled)('Payroll recalculation in PostgreSQL', () => {
           data: { status: 'REVIEWED' },
         }),
       ),
-    ).rejects.toThrow(/permission denied/);
+    ).rejects.toThrow(/changes status only as it is finalized/);
     await expect(
       admin.payrollEmployee.update({
         where: { id: earlier.id },
