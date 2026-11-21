@@ -1834,6 +1834,11 @@ the issuer's Contribution Billing of a `DRAFT` regular Payroll Period
 (payroll-schema.md §9, #349). There is no `payroll.payslips.supersede`:
 the system supersedes a Payslip when its payroll is voided (§5.21).
 
+`payroll.payment_exports.generate`, held Agency-wide, generates the
+Payment Export of a `FINALIZED` period and downloads its CSV, which carries
+full account numbers, and its masked reconciliation summary; each download is
+an Audit Event (payroll-schema.md §12, #337).
+
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,
 Accounting review, approval, or disbursement. A second function is refused
