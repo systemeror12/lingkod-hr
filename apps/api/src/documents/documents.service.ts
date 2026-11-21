@@ -709,19 +709,49 @@ export class DocumentsService {
   }
 
   /**
+   * Internal contract: the system stores a file it rendered, under the
+   * caller's stable key, before the caller's transaction records it with
+   * `createIssuedVersionInTransaction`. Storing the same key again overwrites
+   * the same object, so a retry leaves no second file.
+   */
+  async storeRendering(storageKey: string, content: Buffer, mimeType: string): Promise<void> {
+    const contentHash = createHash('sha256').update(content).digest('hex');
+    try {
+      await this.storage.putObject({
+        key: storageKey,
+        body: content,
+        contentType: mimeType,
+        contentHash,
+      });
+    } catch {
+      throw new DocumentsServiceError(
+        'Document storage is unavailable.',
+        503,
+        'DOCUMENT_STORAGE_FAILED',
+      );
+    }
+  }
+
+  /**
    * Internal contract: an owning domain records the exact rendering it
    * produced as an issued Document Version inside its own authoritative
-   * transaction. The bytes are retained by the caller's immutable source, so
-   * no object is uploaded here; the Version records the rendering identity.
+   * transaction. Without a `storageKey`, the bytes are retained by the
+   * caller's immutable source, so no object is uploaded here; the Version
+   * records the rendering identity. With one, the caller stored the bytes
+   * there first with `storeRendering`. A context with no user is the system
+   * acting on the membership's behalf.
    */
   async createIssuedVersionInTransaction(
     transaction: Prisma.TransactionClient,
-    context: RequestContext,
+    context: Pick<RequestContext, 'agencyId' | 'membershipId' | 'requestId'> & {
+      userId: string | null;
+    },
     input: {
       documentType: string;
       classification: DocumentClassification;
       content: Buffer;
       mimeType: string;
+      storageKey?: string;
     },
   ): Promise<{ documentId: string; versionId: string }> {
     const contentHash = createHash('sha256').update(input.content).digest('hex');
@@ -741,7 +771,7 @@ export class DocumentsService {
         agencyId: context.agencyId,
         documentId: document.id,
         versionNo: 1,
-        storageKey: `rendered/${randomUUID()}`,
+        storageKey: input.storageKey ?? `rendered/${randomUUID()}`,
         contentHash,
         mimeType: input.mimeType,
         sizeBytes: BigInt(input.content.byteLength),
@@ -758,7 +788,7 @@ export class DocumentsService {
       agencyId: context.agencyId,
       actorUserId: context.userId,
       actorMembershipId: context.membershipId,
-      actorType: 'USER',
+      actorType: context.userId ? 'USER' : 'SYSTEM',
       action: 'DOCUMENT_VERSION_CREATED',
       entityType: 'DocumentVersion',
       entityId: version.id,

@@ -5840,6 +5840,24 @@ model PayrollEmployee {
   @@map("payroll_employees")
 }
 
+/// A Payslip: the statement of one finalized Payroll Employee Result, one per
+/// result and never reissued (#336). It is not proof of payment. Migration
+/// 0185 holds its foreign keys, guard, and RLS.
+model Payslip {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  payrollEmployeeId      String    @unique(map: "payslips_payroll_employee_id_key") @map("payroll_employee_id") @db.Uuid
+  documentId             String?   @map("document_id") @db.Uuid
+  status                 String
+  releasedAt             DateTime? @map("released_at") @db.Timestamptz(6)
+  releasedByMembershipId String?   @map("released_by_membership_id") @db.Uuid
+  withheldAt             DateTime? @map("withheld_at") @db.Timestamptz(6)
+  withheldByMembershipId String?   @map("withheld_by_membership_id") @db.Uuid
+  withholdReason         String?   @map("withhold_reason")
+
+  @@map("payslips")
+}
+
 /// A Payroll Line: one calculated amount of a result, with its source. Immutable.
 model PayrollLine {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
