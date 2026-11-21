@@ -2,6 +2,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { describe, expect, it, vi } from 'vitest';
 import { REQUIRED_PERMISSIONS } from '../auth/auth.decorators';
 import { calculationHash, payrollCalculationHash } from '../payroll-calculation/calculation-hash';
+import { PayrollApprovalService } from './payroll-approval.service';
 import { PayrollCertificationService } from './payroll-certification.service';
 import { PayrollCheckpointReviewService } from './payroll-checkpoint-review.service';
 import { payrollCheckpointReviewSchema } from './payroll-periods.schemas';
@@ -158,6 +159,8 @@ describe('the Payroll Period controller', () => {
     expect(required('returnForCorrection')).toEqual(['payroll.periods.return']);
     expect(required('recordBudgetReview')).toEqual(['payroll.periods.review_funding']);
     expect(required('recordAccountingReview')).toEqual(['payroll.periods.review_accounting']);
+    expect(required('approve')).toEqual(['payroll.periods.approve']);
+    expect(required('returnBeforeFinalization')).toEqual(['payroll.periods.return_approved']);
   });
 
   it('refuses each checkpoint review without its own permission held Agency-wide', async () => {
@@ -260,6 +263,35 @@ describe('the Payroll Period controller', () => {
     ).rejects.toMatchObject(forbidden);
   });
 
+  it('refuses approval and return before finalization without their permission held Agency-wide', async () => {
+    const service = new PayrollApprovalService();
+    const holding = (code: string, scopePolicy: 'AGENCY' | 'OWN' = 'AGENCY'): RequestContext => ({
+      ...context,
+      permissions: [{ code, scopePolicy }],
+    });
+    const forbidden = { statusCode: 403, code: 'PAYROLL_PERIOD_REVIEW_FORBIDDEN' };
+    // Each permission allows only its own command, and an OWN grant allows neither.
+    await expect(
+      service.approve(holding('payroll.periods.return_approved'), periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/approve/) });
+    await expect(
+      service.approve(holding('payroll.periods.approve', 'OWN'), periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      service.returnBeforeFinalization(holding('payroll.periods.approve'), periodId, {
+        reason: 'x',
+        rowVersion: 1,
+      }),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/return_approved/) });
+    // A return needs its reason before anything is read.
+    await expect(
+      service.returnBeforeFinalization(holding('payroll.periods.return_approved'), periodId, {
+        reason: '  ',
+        rowVersion: 1,
+      }),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_INPUT' });
+  });
+
   it('refuses to start a calculation without payroll.periods.calculate', async () => {
     await expect(
       new PayrollPeriodsService().startCalculation(context, periodId, { rowVersion: 1 }),
@@ -270,6 +302,7 @@ describe('the Payroll Period controller', () => {
     const service = { create: vi.fn(), moveCutoff: vi.fn(), cancelDraft: vi.fn() };
     const controller = new PayrollPeriodsController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -298,6 +331,7 @@ describe('the Payroll Period controller', () => {
     };
     const controller = new PayrollPeriodsController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

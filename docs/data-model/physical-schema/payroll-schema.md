@@ -710,6 +710,27 @@ only the revocation columns from empty, and rejects every `DELETE`. Migration
 certification in force, and revoking it supersedes that export and revokes its
 checkpoint reviews.
 
+The Payroll Approver approves a `CERTIFIED` period (#638) with
+`payroll.periods.approve`, at the `row_version` they read. Approval is refused
+unless the Budget and Accounting checkpoint reviews are both confirmed on the
+current export (section 12), with `PAYROLL_CHECKPOINT_REVIEWS_UNCONFIRMED`,
+and while the version has an open blocking exception. It writes no row of its
+own. The certification in force already binds the approved version and hash,
+and an `APPROVED` period cannot be certified, reviewed, or recalculated, so
+the version stays locked until finalization or a return. The
+`PAYROLL_PERIOD_APPROVED` Audit Event names the certification, version, hash,
+export and its checksum, and the two reviews.
+
+Return before finalization (`APPROVED → FOR_REVIEW`) needs
+`payroll.periods.return_approved` and a reason. In one transaction it revokes
+the certification in force with the approver as the revoker and that reason,
+supersedes the export, and so revokes its reviews. The
+`PAYROLL_PERIOD_RETURNED_BEFORE_FINALIZATION` Audit Event names what it
+revoked. Both commands claim `APPROVAL`. Migration 0183 adds the two
+permissions and grants them to the Payroll Approver, Agency-wide. The
+Accounting Reviewer's configurable grant of `payroll.periods.approve` is not
+seeded.
+
 ---
 
 ## 6. Rule Snapshots

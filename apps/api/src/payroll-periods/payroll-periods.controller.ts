@@ -14,6 +14,7 @@ import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
+import { PayrollApprovalService } from './payroll-approval.service';
 import { PayrollCertificationService } from './payroll-certification.service';
 import {
   PayrollCheckpointReviewService,
@@ -43,6 +44,7 @@ export class PayrollPeriodsController {
     private readonly reviewExport: PayrollReviewExportService,
     @Inject(PayrollCheckpointReviewService)
     private readonly checkpointReview: PayrollCheckpointReviewService,
+    @Inject(PayrollApprovalService) private readonly approval: PayrollApprovalService,
   ) {}
 
   @Get(':agencyId/payroll-periods/:periodId')
@@ -154,6 +156,36 @@ export class PayrollPeriodsController {
     return {
       period: await translate(context, () =>
         this.certification.returnForCorrection(context, id, body),
+      ),
+    };
+  }
+
+  @Post(':agencyId/payroll-periods/:periodId/approve')
+  @RequirePermission('payroll.periods.approve')
+  async approve(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return { period: await translate(context, () => this.approval.approve(context, id, body)) };
+  }
+
+  @Post(':agencyId/payroll-periods/:periodId/return-approved')
+  @RequirePermission('payroll.periods.return_approved')
+  async returnBeforeFinalization(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return {
+      period: await translate(context, () =>
+        this.approval.returnBeforeFinalization(context, id, body),
       ),
     };
   }

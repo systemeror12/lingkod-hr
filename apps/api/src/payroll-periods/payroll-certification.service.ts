@@ -66,24 +66,13 @@ export class PayrollCertificationService {
           'PAYROLL_CALCULATION_VERSION_CHANGED',
         );
       }
-      const blocking = await transaction.payrollException.count({
-        where: {
-          agencyId: context.agencyId,
-          payrollPeriodId: periodId,
-          calculationVersion: period.calculationVersion,
-          severity: 'BLOCKING',
-          status: 'OPEN',
-        },
-      });
-      if (blocking > 0) {
-        throw new PayrollPeriodsServiceError(
-          `Calculation version ${period.calculationVersion} has ${blocking} open blocking ${
-            blocking === 1 ? 'exception' : 'exceptions'
-          }. Return the period for correction; a blocking exception is never waived.`,
-          409,
-          'PAYROLL_PERIOD_BLOCKING_EXCEPTION',
-        );
-      }
+      await refuseOpenBlockingExceptions(
+        transaction,
+        context,
+        periodId,
+        period.calculationVersion,
+        'Return the period for correction',
+      );
       const calculationHash = await readCalculationHash(
         transaction,
         context,
@@ -260,6 +249,38 @@ export function requireStatus(period: LockedPeriod, status: PayrollPeriodStatus)
   }
 }
 
+/**
+ * Refuse a command while the calculation version has an open blocking
+ * exception, which is never waived; `remedy` tells the actor how the period
+ * gets recalculated.
+ */
+export async function refuseOpenBlockingExceptions(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  periodId: string,
+  calculationVersion: number,
+  remedy: string,
+): Promise<void> {
+  const blocking = await transaction.payrollException.count({
+    where: {
+      agencyId: context.agencyId,
+      payrollPeriodId: periodId,
+      calculationVersion,
+      severity: 'BLOCKING',
+      status: 'OPEN',
+    },
+  });
+  if (blocking > 0) {
+    throw new PayrollPeriodsServiceError(
+      `Calculation version ${calculationVersion} has ${blocking} open blocking ${
+        blocking === 1 ? 'exception' : 'exceptions'
+      }. ${remedy}; a blocking exception is never waived.`,
+      409,
+      'PAYROLL_PERIOD_BLOCKING_EXCEPTION',
+    );
+  }
+}
+
 export async function claimFunction(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
@@ -297,7 +318,7 @@ export async function moveStatus(
 }
 
 /**
- * Revoke the certification in force on a CERTIFIED period, with the reason,
+ * Revoke the certification in force on a CERTIFIED or APPROVED period, with the reason,
  * as the acting member, and supersede its Certified Payroll Review Export. A
  * checkpoint review is in force only while its export is current, so this
  * revokes the export's reviews too (#330). Returns what it revoked, for the

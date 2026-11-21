@@ -80,7 +80,19 @@ export const payrollPeriodCertifySchema = z
 
 export type PayrollPeriodCertifyInput = z.input<typeof payrollPeriodCertifySchema>;
 
-/** Revoke a certification, or return a period for correction, with a reason. */
+/**
+ * Approve the period at the row version the Payroll Approver read. Every
+ * change to the certification moves the row version, so it binds the
+ * certified version, hash, and export the approver saw.
+ */
+export const payrollPeriodApproveSchema = z.object({ rowVersion }).strict();
+
+export type PayrollPeriodApproveInput = z.input<typeof payrollPeriodApproveSchema>;
+
+/**
+ * Revoke a certification, return a period for correction, or return an
+ * approved period before finalization, with a reason.
+ */
 export const payrollPeriodReasonedCommandSchema = z.object({ reason, rowVersion }).strict();
 
 export type PayrollPeriodReasonedCommandInput = z.input<typeof payrollPeriodReasonedCommandSchema>;
