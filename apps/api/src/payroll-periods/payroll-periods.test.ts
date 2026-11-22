@@ -15,6 +15,7 @@ import {
   PayrollPeriodsService,
   PayrollPeriodsServiceError,
 } from './payroll-periods.service';
+import { PayrollVoidService } from './payroll-void.service';
 
 const version = (
   id: string,
@@ -163,6 +164,41 @@ describe('the Payroll Period controller', () => {
     expect(required('approve')).toEqual(['payroll.periods.approve']);
     expect(required('returnBeforeFinalization')).toEqual(['payroll.periods.return_approved']);
     expect(required('finalize')).toEqual(['payroll.periods.finalize']);
+    expect(required('requestVoid')).toEqual(['payroll.periods.void']);
+    expect(required('approveVoid')).toEqual(['payroll.periods.approve_void']);
+    expect(required('declineVoid')).toEqual(['payroll.periods.approve_void']);
+  });
+
+  it('refuses each void command without its permission held Agency-wide, or without its input', async () => {
+    const service = new PayrollVoidService({} as never);
+    const holding = (code: string, scopePolicy: 'AGENCY' | 'OWN' = 'AGENCY'): RequestContext => ({
+      ...context,
+      permissions: [{ code, scopePolicy }],
+    });
+    const forbidden = { statusCode: 403, code: 'PAYROLL_PERIOD_REVIEW_FORBIDDEN' };
+    const requested = {
+      reason: 'Wrong schedule.',
+      documentVersionId: '00000000-0000-4000-8000-000000000005',
+      rowVersion: 1,
+    };
+    await expect(
+      service.request(holding('payroll.periods.approve_void'), periodId, requested),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/periods\.void /) });
+    await expect(
+      service.request(holding('payroll.periods.void', 'OWN'), periodId, requested),
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      service.approve(holding('payroll.periods.void'), periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject({ ...forbidden, message: expect.stringMatching(/approve_void/) });
+    await expect(
+      service.decline(holding('payroll.periods.void'), periodId, { reason: 'x', rowVersion: 1 }),
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      service.request(holding('payroll.periods.void'), periodId, { reason: 'x', rowVersion: 1 }),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_INPUT' });
+    await expect(
+      service.decline(holding('payroll.periods.approve_void'), periodId, { rowVersion: 1 }),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_INPUT' });
   });
 
   it('refuses each checkpoint review without its own permission held Agency-wide', async () => {
@@ -328,6 +364,7 @@ describe('the Payroll Period controller', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const other = '00000000-0000-4000-8000-000000000009';
 
@@ -353,6 +390,7 @@ describe('the Payroll Period controller', () => {
     };
     const controller = new PayrollPeriodsController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

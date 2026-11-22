@@ -9,6 +9,7 @@ import { PayrollFinalizationService } from './payroll-finalization.service';
 import { PayrollPeriodsController } from './payroll-periods.controller';
 import { PayrollPeriodsService } from './payroll-periods.service';
 import { PayrollReviewExportService } from './payroll-review-export.service';
+import { PayrollVoidService } from './payroll-void.service';
 
 @Module({
   imports: [AuthModule, DocumentsModule],
@@ -21,6 +22,7 @@ import { PayrollReviewExportService } from './payroll-review-export.service';
     PayrollApprovalService,
     PayrollFinalizationService,
     PayrollAdjustmentsService,
+    PayrollVoidService,
   ],
   exports: [PayrollPeriodsService],
 })
