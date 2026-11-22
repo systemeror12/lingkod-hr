@@ -3147,6 +3147,9 @@ async function seedPayrollReviewFixture(agencyId: string, preparerMembershipId: 
         classification: 'INTERNAL',
         status: 'APPROVED',
         createdByMembershipId: preparerMembershipId,
+        // Document lists sort newest first, and other specs pick the first evidence option, so
+        // this fixture is dated before theirs rather than written last on every run.
+        createdAt: new Date('2026-01-01'),
       },
     });
     await transaction.documentVersion.create({
@@ -3161,6 +3164,7 @@ async function seedPayrollReviewFixture(agencyId: string, preparerMembershipId: 
         sizeBytes: 1,
         createdByMembershipId: preparerMembershipId,
         issuedAt: new Date('2026-01-01'),
+        createdAt: new Date('2026-01-01'),
       },
     });
     await transaction.document.update({
