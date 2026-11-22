@@ -1844,6 +1844,11 @@ Register of a `FINALIZED` period, or returns the one already generated; the
 generation is an Audit Event (payroll-schema.md §12, #353). Like generating
 the Payment Export, it claims no payroll function.
 
+The same permission generates and reads the Contribution Summary and the
+GSIS, PhilHealth, Pag-IBIG, and Employees' Compensation Remittance Schedules
+of a `FINALIZED` period: Structured Exports for review that file and remit
+nothing (payroll-schema.md §12, #354).
+
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,
 Accounting review, approval, or disbursement. A second function is refused
