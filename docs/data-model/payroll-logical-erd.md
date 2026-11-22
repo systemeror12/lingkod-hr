@@ -47,6 +47,7 @@ Payment, and a JO/COS Worker never has a `payroll_employees` or
 | Payroll Hold                       | `payroll_holds`                                                                          |
 | Payroll Adjustment                 | `payroll_adjustments`, with `payroll_adjustment_causes`                                  |
 | Payslip                            | `payslips`                                                                               |
+| Payroll Register                   | `payroll_registers`                                                                      |
 
 National Payroll Rule Versions and the pay component catalogue are
 platform-wide (#328,
@@ -121,6 +122,7 @@ erDiagram
     PAYROLL_EMPLOYEES ||--o| TAX_LINES : contains
     PAYROLL_EMPLOYEES ||--o{ LOAN_DEDUCTION_LINES : contains
     PAYROLL_EMPLOYEES ||--o| PAYSLIPS : produces
+    PAYROLL_PERIODS ||--o| PAYROLL_REGISTERS : produces
     PAYROLL_PERIODS ||--o{ PAYROLL_CONSUMED_ATTENDANCE_FACTS : consumes
     PAYROLL_PERIODS ||--o{ PAYROLL_EXCEPTIONS : flags
     PAYROLL_PERIODS ||--o{ REMITTANCE_SCHEDULES : produces
@@ -932,6 +934,37 @@ Payslip: the Employee's statement of one finalized Payroll Employee Result
 - It is a Printable System View and not proof of payment (#617).
 
 **Deletion behavior:** Retain; supersede on void.
+
+## `payroll_registers`
+
+Payroll Register: the Printable System View of one finalized Payroll Period,
+listing its finalized Payroll Employee Results and their totals (#353, #617)
+
+| Column                     | Logical type | Null? | Key / rule            | Description                                  |
+| -------------------------- | ------------ | ----- | --------------------- | -------------------------------------------- |
+| id                         | uuid         | No    | PK                    | Payroll Register                             |
+| agency_id                  | uuid         | No    | FK agencies           | Tenant                                       |
+| payroll_period_id          | uuid         | No    | FK payroll_periods    | Finalized Payroll Period                     |
+| calculation_version        | integer      | No    |                       | The finalized version it states              |
+| document_id                | uuid         | No    | FK documents          | Rendered PDF                                 |
+| result_count               | integer      | No    |                       | Finalized results listed                     |
+| gross_amount               | decimal      | No    |                       | Sum of the results' gross, and of earnings   |
+| total_deductions           | decimal      | No    |                       | Sum of the results' deductions, and of lines |
+| net_amount                 | decimal      | No    |                       | Gross less deductions                        |
+| generated_by_membership_id | uuid         | No    | FK agency_memberships | Who generated it                             |
+| generated_at               | datetime     | No    |                       | Generation                                   |
+
+**Constraints and indexes**
+
+- Unique `(payroll_period_id)`: one register per finalized period, so
+  generating again returns it.
+- Its totals equal the period's `FINALIZED` results at the finalized version,
+  and those results' `EARNING` and `DEDUCTION` lines. A mismatch refuses
+  generation.
+- It is a Printable System View with no form number, form title, or
+  conformance claim, and not proof of payment (#617).
+
+**Deletion behavior:** Retain. Immutable.
 
 ## `payroll_adjustments`
 

@@ -1839,6 +1839,11 @@ Payment Export of a `FINALIZED` period and downloads its CSV, which carries
 full account numbers, and its masked reconciliation summary; each download is
 an Audit Event (payroll-schema.md §12, #337).
 
+`payroll.registers.generate`, held Agency-wide, generates the Payroll
+Register of a `FINALIZED` period, or returns the one already generated; the
+generation is an Audit Event (payroll-schema.md §12, #353). Like generating
+the Payment Export, it claims no payroll function.
+
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,
 Accounting review, approval, or disbursement. A second function is refused
