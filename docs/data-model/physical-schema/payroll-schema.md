@@ -1983,7 +1983,7 @@ released or withheld, rejects every `DELETE`, and admits one change:
 `GENERATING → READY`, naming its Document once. `hris_app` holds `SELECT`,
 `INSERT`, and `UPDATE ("status", "document_id")`.
 
-Migration 0187 (#640) adds release, withholding, and the Employee's read.
+Migration 0191 (#640) adds release, withholding, and the Employee's read.
 `hris_app` may also `UPDATE` the release and withholding columns, and the
 trigger admits three more changes, each writing only its own columns, once:
 `READY → RELEASED` and `WITHHELD → RELEASED` set `released_at` and
@@ -2019,7 +2019,7 @@ is a `PAYSLIP_WITHHELD` Audit Event with its reason (key `withheld`).
 the caller's Agency Membership, whatever the scope, so another Employee's
 Payslip, or one not `RELEASED`, is `PAYSLIP_NOT_FOUND`. The list states each
 Payslip's period and totals; the single read adds a signed link to its PDF
-through the shared document service. Migration 0187 grants release and
+through the shared document service. Migration 0191 grants release and
 withhold Agency-wide to the Payroll Approver and the read `OWN` to the
 Employee. The matrix's Agency-wide read for the payroll officers has no read
 built yet, so it is not seeded.
