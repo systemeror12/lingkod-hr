@@ -21,6 +21,7 @@ import {
   PayslipReadService,
   type OwnPayslipDetail,
   type OwnPayslipView,
+  type PeriodPayslipEntry,
 } from './payslip-read.service';
 import { PayslipReleaseService, type PeriodPayslipRelease } from './payslip-release.service';
 import { PayslipWithholdService } from './payslip-withhold.service';
@@ -48,6 +49,23 @@ export class PayslipsController {
     assertAgency(agencyId, context);
     const id = parseId(periodId, context, 'PAYROLL_PERIOD_NOT_FOUND', 'The Payroll Period');
     return { release: await translate(context, () => this.release.releasePeriod(context, id)) };
+  }
+
+  /** Every Payslip of one period in each status; needs the read held Agency-wide. */
+  @Get(':agencyId/payroll-periods/:periodId/payslips')
+  @RequirePermission('payroll.payslips.read')
+  @Header('Cache-Control', 'no-store')
+  async listPeriod(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ payrollPeriodId: string; payslips: PeriodPayslipEntry[] }> {
+    assertAgency(agencyId, context);
+    const id = parseId(periodId, context, 'PAYROLL_PERIOD_NOT_FOUND', 'The Payroll Period');
+    return {
+      payrollPeriodId: id,
+      payslips: await translate(context, () => this.reading.listPeriod(context, id)),
+    };
   }
 
   /** Release one WITHHELD Payslip, with a reason. */

@@ -22,6 +22,7 @@ import { PayrollPeriodsModule } from './payroll-periods/payroll-periods.module';
 import { PayrollCalculationModule } from './payroll-calculation/payroll-calculation.module';
 import { PayslipsModule } from './payslips/payslips.module';
 import { PayrollRegistersModule } from './payroll-registers/payroll-registers.module';
+import { LegacyRegisterComparisonsModule } from './legacy-register-comparisons/legacy-register-comparisons.module';
 import { PayrollExceptionsModule } from './payroll-exceptions/payroll-exceptions.module';
 import { PayrollResultsModule } from './payroll-results/payroll-results.module';
 import { PaymentExportsModule } from './payment-exports/payment-exports.module';
@@ -83,6 +84,7 @@ import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/att
     PayrollResultsModule,
     PayslipsModule,
     PayrollRegistersModule,
+    LegacyRegisterComparisonsModule,
     PaymentExportsModule,
     AccountingSupportExportsModule,
     ContributionRemittancesModule,

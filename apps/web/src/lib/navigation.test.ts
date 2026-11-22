@@ -153,6 +153,23 @@ it('shows Employee Payslips to readers of Payroll Periods', () => {
   expect(payroll(['payroll.periods.create'])).toEqual([]);
 });
 
+it('shows My Payslips to an Employee who reads their own payslips', () => {
+  const employee: ActiveSession = {
+    ...session('employee', []),
+    permissions: [{ code: 'payroll.payslips.read', scopePolicy: 'OWN' }],
+  };
+  expect(
+    authorizedDestinations(employee)
+      .filter(({ stage }) => stage === 'Payroll')
+      .map(({ href }) => href),
+  ).toEqual(['/my-payslips']);
+  expect(
+    authorizedDestinations(session('payroll_approver', ['payroll.payslips.release'])).some(
+      ({ href }) => href === '/my-payslips',
+    ),
+  ).toBe(false);
+});
+
 it('shows Deduction Obligations to deductions managers only', () => {
   const payroll = (permissions: readonly string[]) =>
     authorizedDestinations(session('payroll_preparer', permissions))

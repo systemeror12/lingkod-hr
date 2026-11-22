@@ -6040,6 +6040,41 @@ model PayrollRegister {
   @@map("payroll_registers")
 }
 
+/// A Legacy Register Comparison: one imported legacy payroll register compared
+/// with a FINALIZED Payroll Period's lines (#359). Immutable; the same file and
+/// period give one comparison. Migration 0195 holds its foreign keys, guard,
+/// and RLS.
+model LegacyRegisterComparison {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String   @map("agency_id") @db.Uuid
+  payrollPeriodId        String   @map("payroll_period_id") @db.Uuid
+  calculationVersion     Int      @map("calculation_version")
+  contentHash            String   @map("content_hash")
+  rowCount               Int      @map("row_count")
+  comparedByMembershipId String   @map("compared_by_membership_id") @db.Uuid
+  comparedAt             DateTime @default(now()) @map("compared_at") @db.Timestamptz(6)
+
+  @@unique([payrollPeriodId, contentHash], map: "legacy_register_comparisons_period_content_key")
+  @@unique([agencyId, id], map: "legacy_register_comparisons_agency_id_id_key")
+  @@map("legacy_register_comparisons")
+}
+
+/// One Employee and pay component whose legacy and payroll amounts differ.
+/// A NULL amount means that side has none. Written only with its comparison.
+model LegacyRegisterDifference {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  legacyRegisterComparisonId String   @map("legacy_register_comparison_id") @db.Uuid
+  employeeId                 String   @map("employee_id") @db.Uuid
+  payComponentId             String   @map("pay_component_id") @db.Uuid
+  legacyAmount               Decimal? @map("legacy_amount") @db.Decimal(19, 4)
+  payrollAmount              Decimal? @map("payroll_amount") @db.Decimal(19, 4)
+
+  @@unique([legacyRegisterComparisonId, employeeId, payComponentId], map: "legacy_register_differences_comparison_employee_component_key")
+  @@unique([agencyId, id], map: "legacy_register_differences_agency_id_id_key")
+  @@map("legacy_register_differences")
+}
+
 /// A Payroll Line: one calculated amount of a result, with its source. Immutable.
 model PayrollLine {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

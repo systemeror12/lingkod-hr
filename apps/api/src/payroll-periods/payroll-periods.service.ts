@@ -33,7 +33,13 @@ export interface PayrollPeriodSummary {
   payComponentIds: string[];
   /** When the period became FINALIZED; kept once it is voided. */
   finalizedAt: string | null;
+  /** The open or approved void request of a finalized period (#358); all null when none. */
+  voidRequestedByMembershipId: string | null;
+  voidRequestedAt: string | null;
+  voidDocumentVersionId: string | null;
+  /** The request's reason, or a cancelled draft's. */
   voidReason: string | null;
+  voidedByMembershipId: string | null;
   voidedAt: string | null;
   rowVersion: number;
 }
@@ -109,6 +115,13 @@ export interface PayrollPeriodDetail extends PayrollPeriodSummary {
   certification: PayrollCertificationSummary | null;
   finalizedByMembershipId: string | null;
   finalizedByName: string | null;
+  /**
+   * A regular period's replacement link (#358): a finalized period that was
+   * voided names the same month's regular period that is not VOIDED, and that
+   * period names the voided ones it replaces. Both are empty otherwise.
+   */
+  replacedByPeriodId: string | null;
+  replacesPeriodIds: string[];
 }
 
 export class PayrollPeriodsServiceError extends Error {
@@ -134,7 +147,11 @@ export const summarySelect = {
   carriesAdjustments: true,
   calculationVersion: true,
   finalizedAt: true,
+  voidRequestedByMembershipId: true,
+  voidRequestedAt: true,
+  voidDocumentVersionId: true,
   voidReason: true,
+  voidedByMembershipId: true,
   voidedAt: true,
   rowVersion: true,
   components: { select: { payComponentId: true }, orderBy: { payComponentId: 'asc' } },
@@ -222,6 +239,21 @@ export class PayrollPeriodsService {
       });
       const names = new Map(memberships.map((row) => [row.id, row.user.displayName]));
       const nameOf = (id: string | null) => (id ? (names.get(id) ?? null) : null);
+      const sameMonth =
+        period.runType === 'REGULAR'
+          ? await transaction.payrollPeriod.findMany({
+              where: {
+                agencyId: context.agencyId,
+                runType: 'REGULAR',
+                periodFrom: period.periodFrom,
+                id: { not: periodId },
+              },
+              orderBy: { finalizedAt: 'asc' },
+              select: { id: true, status: true, finalizedAt: true },
+            })
+          : [];
+      const voidedAfterFinalization = (row: { status: string; finalizedAt: Date | null }) =>
+        row.status === 'VOIDED' && row.finalizedAt !== null;
       const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
       return {
         ...toSummary(period),
@@ -242,6 +274,13 @@ export class PayrollPeriodsService {
         },
         finalizedByMembershipId: period.finalizedByMembershipId,
         finalizedByName: nameOf(period.finalizedByMembershipId),
+        replacedByPeriodId: voidedAfterFinalization(period)
+          ? (sameMonth.find((row) => row.status !== 'VOIDED')?.id ?? null)
+          : null,
+        replacesPeriodIds:
+          period.status === 'VOIDED'
+            ? []
+            : sameMonth.filter(voidedAfterFinalization).map((row) => row.id),
       };
     });
   }
@@ -283,6 +322,10 @@ export class PayrollPeriodsService {
     };
     try {
       return await withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+        // A void's check for a later regular period waits for this one, or it for the void.
+        if (input.runType === 'REGULAR') {
+          await lockRegularPeriodSequence(transaction, context.agencyId);
+        }
         if (input.payComponentIds.length > 0) {
           const found = await transaction.payComponent.count({
             where: { id: { in: input.payComponentIds } },
@@ -501,6 +544,21 @@ export class PayrollPeriodsService {
       return after;
     });
   }
+}
+
+/**
+ * The Agency's lock on its sequence of regular Payroll Periods, held until
+ * the transaction commits. Creating a regular period and a void request or
+ * approval take it before any period row, so a void's check that no later
+ * regular period exists and the creation of one commit one after the other
+ * (#358). Taken after it, a READ COMMITTED read sees whichever committed first.
+ */
+export async function lockRegularPeriodSequence(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+): Promise<void> {
+  const key = `payroll_regular_periods:${agencyId}`;
+  await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
 }
 
 function requireCreatePermission(context: RequestContext): void {
@@ -756,7 +814,11 @@ export function toSummary(row: PeriodRow): PayrollPeriodSummary {
     calculationVersion: row.calculationVersion,
     payComponentIds: row.components.map((component) => component.payComponentId),
     finalizedAt: row.finalizedAt?.toISOString() ?? null,
+    voidRequestedByMembershipId: row.voidRequestedByMembershipId,
+    voidRequestedAt: row.voidRequestedAt?.toISOString() ?? null,
+    voidDocumentVersionId: row.voidDocumentVersionId,
     voidReason: row.voidReason,
+    voidedByMembershipId: row.voidedByMembershipId,
     voidedAt: row.voidedAt?.toISOString() ?? null,
     rowVersion: row.rowVersion,
   };

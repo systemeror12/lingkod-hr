@@ -401,8 +401,11 @@ acceptance a trigger allows
 only the status change, `consumed_by_payroll_period_id`, which the
 finalization transaction sets, and `source_correction_key`, which a withdrawal
 sets. Consumed inputs are immutable, apart from the
-return to `PENDING` when their payroll is voided. Migration 0184 admits
-`CONSUMED` only in the transaction that finalizes the period it names. The migration that creates
+return to `PENDING` when their payroll is voided, or `CANCELLED` when a source
+correction was waiting on one (section 5). Migration 0184 admits
+`CONSUMED` only in the transaction that finalizes the period it names, and
+migration 0194 admits leaving it only in the transaction that voids that
+period. The migration that creates
 `payroll_periods` adds the foreign key on `consumed_by_payroll_period_id`, which
 until then has only its CHECK (#338).
 
@@ -645,6 +648,55 @@ Payroll Inputs to `PENDING`, sets `released_at` on its
 Component Inputs, supersedes its Payslips and exports, cancels every open
 Payroll Adjustment against it, and reopens every adjustment it carried
 ([ADR 0016](../../adr/0016-payroll-corrections-are-recalculated-differences.md)).
+
+The commands are `PayrollVoidService`'s (#358). Each locks the period row
+and refuses unless the period is `FINALIZED` at the row version the actor
+read. The request and the approval first take the Agency's regular period
+sequence lock, a transaction-scoped advisory lock that creating a regular
+period also takes, so a later regular period is either committed before the
+void checks for one or created after the void commits. The approval does not
+take the payroll input acceptance lock: that lock keeps an input's
+`accepted_at` and its commit on one side of a cutoff (section 4), and the
+void stamps nothing; the inputs it returns were accepted long before, and
+all of its writes become visible together when it commits.
+
+- `POST .../payroll-periods/:periodId/request-void` needs
+  `payroll.periods.void` held Agency-wide, a reason, and an exact finalized
+  Document Version of the Agency. It claims no payroll function, and is
+  refused while a request is open (`PAYROLL_VOID_ALREADY_REQUESTED`).
+- `POST .../payroll-periods/:periodId/decline-void` needs
+  `payroll.periods.approve_void` and a reason, clears the request columns, and
+  records the cleared request on its Audit Event.
+- `POST .../payroll-periods/:periodId/approve-void` needs
+  `payroll.periods.approve_void` and voids the period. A retry by its
+  approver at the row version they sent returns the voided period and writes
+  nothing.
+
+Decline and approval claim `APPROVAL` and refuse the requester with
+`PAYROLL_VOID_REQUESTER_DECIDES`. The request and the approval refuse a failed
+void condition with `PAYROLL_VOID_LATER_PERIOD` or
+`PAYROLL_VOID_PAYMENT_HANDED_OFF`. Every change to the request moves the row
+version, so an approver approves the reason and Document Version they read.
+An input a source correction was waiting on, through a `SOURCE_CORRECTION`
+cause of an open adjustment against the period, becomes `CANCELLED` under
+that cause's correction key, so the source's retry finds it withdrawn. The
+Audit Event `PAYROLL_PERIOD_VOIDED` names every row the void changed and the
+Payment Export, Payroll Register, and Accounting Support Export it
+superseded. Those exports have no status of their own: the period's `VOIDED`
+status supersedes them, they stay readable, and none is generated again,
+because each is generated only for a `FINALIZED` period.
+
+The replacement is linked by its month. A regular period's detail names, for
+a voided finalized period, the same month's regular period that is not
+`VOIDED` (`replacedByPeriodId`), and for that period, the voided ones it
+replaces (`replacesPeriodIds`); the one-month index allows only one such
+period at a time.
+
+Migration 0194 adds the two permissions, seeded Agency-wide to the Payroll
+Approver (the Accounting Reviewer's `C` on `payroll.periods.void` is not
+seeded), and a trigger that keeps the request columns to these commands: a
+request sets all four while the period stays `FINALIZED`, a decline clears
+all four, an approval keeps them, and a `DRAFT` is cancelled with none.
 
 ```sql
 CREATE TABLE payroll_period_actors (
@@ -953,8 +1005,8 @@ Finalization marks every result of the approved version `FINALIZED` (#335).
 Migration 0184 grants `hris_app` `UPDATE ("status")` under an Agency policy.
 Its trigger admits one status change, to `FINALIZED`, and only in the
 transaction that finalizes the result's period at the result's version, so a
-`FINALIZED` or `VOIDED` result never changes. The void command admits
-`FINALIZED → VOIDED` when it arrives.
+`FINALIZED` or `VOIDED` result never changes. Migration 0194 admits
+`FINALIZED → VOIDED` in the transaction that voids the result's period.
 
 A hold is placed or lifted only while the period is `DRAFT`, and only against
 an Employee-level blocking exception. A held Employee has no result in that
@@ -1050,8 +1102,9 @@ transaction that wrote the line, and every `UPDATE` and `DELETE` is rejected.
 `hris_app` holds `SELECT` on `payroll_consumed_attendance_facts`. Migration
 0184 grants `INSERT` under an Agency policy to finalization, its only writer:
 a trigger admits a row only in the transaction that finalizes the period it
-names, and rejects every `UPDATE` and `DELETE`. The void command grants the
-`UPDATE` that sets `released_at` when it arrives.
+names, and rejects every `DELETE`. Migration 0194 grants `UPDATE
+("released_at")` under an Agency policy, and its trigger admits setting it
+once, changing nothing else, in the transaction that voids the period.
 
 The `BASIC_SALARY` component, which 0162 adds to the catalogue, pays a full
 month on the monthly full-time or proportional part-time basis as one
@@ -1828,8 +1881,12 @@ policy. `hris_app` may insert both and update only an adjustment's `status`,
 `posted_by_payroll_period_id`, and `posted_at`. A trigger admits an
 adjustment only `OPEN` and against a `FINALIZED` period, lets it change only
 from `OPEN` to `POSTED`, in the transaction that finalizes a different period
-carrying it, and rejects every `DELETE`; cancelling arrives with the void
-(#358). A cause joins only an `OPEN` adjustment, which it locks `FOR SHARE`,
+carrying it, and rejects every `DELETE`. Migration 0194 (#358) adds
+`UPDATE ("cancelled_at")` and the void's changes, each only in the
+transaction that voids the period: `OPEN → CANCELLED` for an adjustment
+against it, and `POSTED → OPEN` for one it posted, or `POSTED → CANCELLED`
+when the Employee already has another `OPEN` adjustment against the same
+original, whose recalculation counts the whole difference. A cause joins only an `OPEN` adjustment, which it locks `FOR SHARE`,
 so a posting waits for it or it for the posting, and a `PAYROLL_HOLD` cause
 only in the finalization of the held period, naming that period's active hold
 of the Employee. Causes are immutable. `SOURCE_CORRECTION` arrives with #650.
@@ -2016,7 +2073,9 @@ trigger admits three more changes, each writing only its own columns, once:
 `withheld_by_membership_id`, and `withhold_reason`. Each needs the result's
 period `FINALIZED` and the named person to hold `APPROVAL` on it in
 `payroll_period_actors`. A released Payslip keeps its withholding on record.
-Supersession is left to the void command.
+Migration 0194 (#358) admits the last change, from any other status to
+`SUPERSEDED`, changing nothing else, in the transaction that voids the
+result's period.
 
 Every command locks the period first, then claims `APPROVAL` in its own
 transaction (hris-controls.md §5.20), so a person who holds another function
@@ -2046,8 +2105,17 @@ Payslip, or one not `RELEASED`, is `PAYSLIP_NOT_FOUND`. The list states each
 Payslip's period and totals; the single read adds a signed link to its PDF
 through the shared document service. Migration 0191 grants release and
 withhold Agency-wide to the Payroll Approver and the read `OWN` to the
-Employee. The matrix's Agency-wide read for the payroll officers has no read
-built yet, so it is not seeded.
+Employee.
+
+`GET .../payroll-periods/:periodId/payslips` (#641) needs
+`payroll.payslips.read` held Agency-wide; the `OWN` grant is refused with
+`PAYSLIP_FORBIDDEN`. It lists, by Employee number, each result of the period
+that has a Payslip or is `FINALIZED`, with its Employee and its Payslip in
+whatever status, without the file. The Payslip is null while generation has
+not created it yet. Migration 0197 grants the read Agency-wide to the roles
+hris-controls.md §6.10 marks A or R: the Payroll Preparer, Accounting
+Reviewer, Payroll Approver, Cashier, and Internal Auditor. The HR Certifier
+and HR Admin are C there and are not seeded.
 
 `PayslipGenerationJob` in the API process consumes the
 `PAYROLL_PERIOD_FINALIZED` Outbox Event (section 11). On start and a minute
@@ -2153,8 +2221,8 @@ line count, by line type; then gross, total deductions, net, employer
 shares, and informational totals (_reading_: no register layout is
 prescribed, so it carries what the finalized results and lines hold, in the
 Payslip's plain-text PDF). The same finalized period always renders the
-same bytes. A voided payroll's supersession of its register arrives with the
-void command (#643).
+same bytes. A voided payroll's register is superseded by its period's
+`VOIDED` status (#358): it stays readable, and none is generated again.
 
 ```sql
 CREATE TABLE payroll_export_contract_versions (
@@ -2478,8 +2546,9 @@ with a prior attempt only in a superseding export, retrying an instruction of
 the superseded export whose latest outcome is `REJECTED` or `RETURNED`, with
 the same result, payee, amount, and payment reference, to a different
 account. `instructionsBlockingVoid` reads retried instructions like any
-other. A voided payroll's supersession of its exports belongs to the void
-command (#358). Migration 0198 adds the columns and replaces the UNIQUE
+other. A voided payroll's Payment Exports are superseded by its period's
+`VOIDED` status (#358): they stay readable, and a voided payroll generates
+and retries none. Migration 0198 adds the columns and replaces the UNIQUE
 `payroll_period_id` with the partial index above.
 
 ```sql
@@ -2648,7 +2717,8 @@ Both need `payroll.registers.generate` held Agency-wide, which migration
   they are stored as `content` and not through the document service; the
   logical ERD's `document_id` and `status` are not used, and reading them is
   not separately audited, as with the Certified Payroll Review Export. A
-  voided payroll's supersession of them arrives with the void transaction.
+  voided payroll's artifacts are superseded by its period's `VOIDED` status
+  (#358) and stay readable.
 
 ```sql
 CREATE TABLE finalized_payroll_accounting_support_exports (
@@ -2764,9 +2834,90 @@ Triggers keep the export immutable, even for the database owner, admitting
 it only for a `FINALIZED` period at its calculation version, and reject every
 `UPDATE` and `DELETE` of an outcome. `hris_app` holds `SELECT` and `INSERT`
 on both. Migration 0189 grants the three permissions Agency-wide to the
-Accounting Reviewer only. A voided payroll's supersession of its export
-(#643) is not built yet, so the table has no `superseded_at` and
+Accounting Reviewer only. A voided payroll's export is superseded by its
+period's `VOIDED` status (#358), so the table has no `superseded_at`, and
 `payroll_period_id` is UNIQUE.
+
+```sql
+CREATE TABLE legacy_register_comparisons (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  calculation_version integer NOT NULL,
+  content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+  row_count integer NOT NULL CHECK (row_count > 0),
+  compared_by_membership_id uuid NOT NULL,
+  compared_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, compared_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (payroll_period_id, content_hash),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE legacy_register_differences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  legacy_register_comparison_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  pay_component_id uuid NOT NULL REFERENCES pay_components (id),
+  legacy_amount numeric(19,4),
+  payroll_amount numeric(19,4),
+  CHECK (legacy_amount IS DISTINCT FROM payroll_amount),
+  FOREIGN KEY (agency_id, legacy_register_comparison_id)
+    REFERENCES legacy_register_comparisons (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  UNIQUE (legacy_register_comparison_id, employee_id, pay_component_id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Legacy Register Comparison (#12 story 12, #359) compares a legacy payroll
+register with a `FINALIZED` Payroll Period by Employee and pay component. It
+only reports differences and decides neither value is right. No document
+defines a legacy register's format or which states may be compared, so
+(_reading_) the file is LingkodHR's own, and only a `FINALIZED` payroll is
+compared, because its lines no longer change.
+
+`POST .../payroll-periods/:periodId/legacy-register-comparisons` takes the file
+as the multipart field `file`, at most 5 MiB, and needs
+`payroll.legacy_registers.compare` held Agency-wide. It claims no payroll
+function. The file is UTF-8 CSV with the header
+`employee_number,component_code,amount`, then one row per Employee and
+component: the Agency's employee number, a `pay_components` code, both matched
+case-insensitively, and a peso amount with up to two decimal places, signed as
+the legacy register states it. The import refuses the whole file with
+`LEGACY_REGISTER_INVALID` and every reason by line when the file isn't UTF-8,
+the header is wrong, there are no rows, a row has the wrong field count, a
+value is missing, an amount is malformed, an Employee and component appear
+twice, or an employee number or component code is unknown. A refused file
+writes nothing. A period that is not `FINALIZED` is refused with
+`LEGACY_REGISTER_PAYROLL_NOT_FINALIZED`.
+
+The payroll side of an Employee and component is the sum of its Payroll
+Lines in the period's `FINALIZED` results at the finalized calculation
+version, adjustment lines included. In one transaction, which holds the
+period `FOR SHARE`, the import writes the comparison, one difference for
+every Employee and component whose two amounts differ, and a
+`LEGACY_REGISTER_COMPARED` Audit Event. A difference stores both values. An
+amount is `NULL` where its side has none: the register has no row, or the
+payroll no line, for that Employee and component. Matching amounts aren't
+stored. The import writes no other table. The file itself is not stored: the
+comparison keeps its SHA-256 as `content_hash` and its `row_count`. The same
+file compared with the same period gives the same differences, so importing it
+again returns the stored comparison and writes nothing.
+`GET .../legacy-register-comparisons` lists a period's comparisons with their
+difference counts, and `GET .../legacy-register-comparisons/:comparisonId`
+reads one with its differences. Both need the same permission.
+
+Migration 0195 creates both tables with forced RLS. Triggers admit a
+comparison only for a `FINALIZED` period at its calculation version, admit a
+difference only in the transaction that writes its comparison, and reject
+every `UPDATE` and `DELETE` of either. `hris_app` holds `SELECT` and `INSERT`
+on both. The migration grants the permission Agency-wide to the Payroll
+Preparer only.
 
 Files are stored through the shared document service.
 
@@ -2796,7 +2947,8 @@ Application permissions separately control:
 - the Finalized Payroll Accounting Support Export, its Employee Detail
   Companion, which holds employee-level pay, and its Payroll Export External
   Outcomes, each under its own permission;
-- Disbursement Outcomes.
+- Disbursement Outcomes;
+- Legacy Register Comparisons, which hold employee-level pay.
 
 A permission is not enough on its own: `payroll_period_actors` keeps each
 person to one payroll function on a Payroll Period (section 5).

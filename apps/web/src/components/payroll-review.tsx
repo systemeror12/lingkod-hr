@@ -7,7 +7,9 @@ import {
   approvalEntries,
   checkpointLabel,
   instantLabel,
+  releaseNotice,
   type PayrollPeriodReview,
+  type PeriodPayslipRelease,
   type ReviewAction,
 } from '../lib/payroll-periods';
 import { Button } from './ui/button';
@@ -31,6 +33,8 @@ export function actionLabel(action: ReviewAction): string {
       return 'Return before finalization';
     case 'finalize':
       return 'Finalize payroll';
+    case 'release':
+      return 'Release payslips';
   }
 }
 
@@ -67,6 +71,8 @@ function command(
       return { path: `${base}/approve`, body: { rowVersion } };
     case 'finalize':
       return { path: `${base}/finalize`, body: { rowVersion } };
+    case 'release':
+      return { path: `${base}/payslips/release`, body: {} };
     case 'checkpoint': {
       const route = action.checkpoint === 'BUDGET' ? 'budget-review' : 'accounting-review';
       const exportId = review.certification?.reviewExportId ?? '';
@@ -85,8 +91,8 @@ function command(
   }
 }
 
-/** What a completed command did, for the status line. */
-function doneNotice(code: string, action: ReviewAction, fields: Fields): string {
+/** What a completed command did, for the status line; a release reads the API's counts. */
+function doneNotice(code: string, action: ReviewAction, fields: Fields, answer: unknown): string {
   switch (action.kind) {
     case 'certify':
       return `${code} certified. It waits for the Budget and Accounting reviews.`;
@@ -104,6 +110,8 @@ function doneNotice(code: string, action: ReviewAction, fields: Fields): string 
       return `${code} returned before finalization. It is back in For review.`;
     case 'finalize':
       return `${code} finalized.`;
+    case 'release':
+      return releaseNotice(code, (answer as { release: PeriodPayslipRelease }).release);
   }
 }
 
@@ -166,9 +174,9 @@ export function PayrollReview({
     setRefusal('');
     try {
       const { path, body } = command(review, acting, fields);
-      await request(path, { method: 'POST', body: JSON.stringify(body) });
+      const answer = await request(path, { method: 'POST', body: JSON.stringify(body) });
       onAct(null);
-      await onDone(doneNotice(code, acting, fields));
+      await onDone(doneNotice(code, acting, fields, answer));
     } catch (caught: unknown) {
       setRefusal(caught instanceof Error ? caught.message : 'The command was refused.');
     } finally {
@@ -259,6 +267,12 @@ export function PayrollReview({
                 <p className="m-0 text-small text-ink-muted">
                   Finalizing consumes the period’s inputs and makes its results immutable. It marks
                   no one paid.
+                </p>
+              ) : null}
+              {acting.kind === 'release' ? (
+                <p className="m-0 text-small text-ink-muted">
+                  Releases each Ready payslip of {code} to its Employee. A payslip still generating
+                  stays unreleased until you release again.
                 </p>
               ) : null}
               {acting.kind === 'checkpoint' ? (
