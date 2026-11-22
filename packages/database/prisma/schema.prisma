@@ -5868,6 +5868,39 @@ model RemittanceSchedule {
   @@map("remittance_schedules")
 }
 
+/// The Tax Summary, Loan Remittance Summary, and Deduction Register of one
+/// FINALIZED payroll (#646): Structured Exports for review, each canonical
+/// JSON with its checksum. None is a BIR form or a filing, and each total
+/// equals its source lines. Migration 0200 holds its guard and RLS. Immutable.
+model DeductionSummary {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "deduction_summaries_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  taxSummaryContent              String   @map("tax_summary_content")
+  taxSummaryChecksum             String   @map("tax_summary_checksum")
+  taxLineCount                   Int      @map("tax_line_count")
+  taxableCompensationTotal       Decimal  @map("taxable_compensation_total") @db.Decimal(19, 4)
+  nonTaxableCompensationTotal    Decimal  @map("non_taxable_compensation_total") @db.Decimal(19, 4)
+  withholdingTaxTotal            Decimal  @map("withholding_tax_total") @db.Decimal(19, 4)
+  loanRemittanceContent          String   @map("loan_remittance_content")
+  loanRemittanceChecksum         String   @map("loan_remittance_checksum")
+  loanLineCount                  Int      @map("loan_line_count")
+  loanAmountDueTotal             Decimal  @map("loan_amount_due_total") @db.Decimal(19, 4)
+  loanDeductedTotal              Decimal  @map("loan_deducted_total") @db.Decimal(19, 4)
+  loanNotDeductedTotal           Decimal  @map("loan_not_deducted_total") @db.Decimal(19, 4)
+  deductionRegisterContent       String   @map("deduction_register_content")
+  deductionRegisterChecksum      String   @map("deduction_register_checksum")
+  deductionLineCount             Int      @map("deduction_line_count")
+  deductionTotal                 Decimal  @map("deduction_total") @db.Decimal(19, 4)
+
+  @@unique([agencyId, id], map: "deduction_summaries_agency_id_id_key")
+  @@map("deduction_summaries")
+}
+
 /// The immutable, checksummed Finalized Payroll Accounting Support Export of
 /// one FINALIZED payroll, with its Employee Detail Companion (#29, #355).
 /// The foreign keys are in SQL.

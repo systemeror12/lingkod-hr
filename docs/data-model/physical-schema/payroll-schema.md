@@ -1955,6 +1955,7 @@ Create metadata tables for:
 - payslips;
 - payroll registers;
 - remittance schedules;
+- the tax summary, loan remittance summary, and deduction register (#646);
 - Payment Exports, their Payment Instructions, and Disbursement Outcomes (#28);
 - the Certified Payroll Review Export and the Finalized Payroll Accounting
   Support Export (#29).
@@ -2598,6 +2599,104 @@ Both need `payroll.registers.generate` held Agency-wide, which migration
   logical ERD's `document_id` and `status` are not used, and reading them is
   not separately audited, as with the Certified Payroll Review Export. A
   voided payroll's supersession of them arrives with the void transaction.
+
+```sql
+CREATE TABLE deduction_summaries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL,
+  tax_summary_content text NOT NULL,
+  tax_summary_checksum text NOT NULL,
+  tax_line_count integer NOT NULL,
+  taxable_compensation_total numeric(19,4) NOT NULL,
+  non_taxable_compensation_total numeric(19,4) NOT NULL,
+  withholding_tax_total numeric(19,4) NOT NULL,
+  loan_remittance_content text NOT NULL,
+  loan_remittance_checksum text NOT NULL,
+  loan_line_count integer NOT NULL,
+  loan_amount_due_total numeric(19,4) NOT NULL,
+  loan_deducted_total numeric(19,4) NOT NULL,
+  loan_not_deducted_total numeric(19,4) NOT NULL,
+  deduction_register_content text NOT NULL,
+  deduction_register_checksum text NOT NULL,
+  deduction_line_count integer NOT NULL,
+  deduction_total numeric(19,4) NOT NULL,
+  -- each *_checksum = encode(sha256(convert_to(its content, 'UTF8')), 'hex')
+  CHECK (tax_line_count >= 0 AND loan_line_count >= 0 AND deduction_line_count >= 0),
+  CHECK (loan_amount_due_total = loan_deducted_total + loan_not_deducted_total),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Tax Summary, a Loan Remittance Summary, and a Deduction Register are
+Structured Exports for review of one `FINALIZED` payroll's withholding tax,
+loan and authorized deductions, and deductions (PAY-009, #646). None is a BIR
+form, return, certificate, or filing, and none is a remittance to any payee
+(PAY-010); they carry no form number, form title, issuer's layout, or
+government identifier such as a TIN (#617).
+`POST .../payroll-periods/:periodId/deduction-summaries` generates all three;
+it needs `payroll.registers.generate` held Agency-wide and claims no payroll
+function. It locks the period, reads the Tax Lines, Loan Deduction Lines, and
+`DEDUCTION` Payroll Lines (sections 8 and 9) of the period's `FINALIZED`
+results at the finalized calculation version, and writes one row and a
+`DEDUCTION_SUMMARIES_GENERATED` Audit Event (idempotency key `generated`),
+naming each artifact's checksum and totals, in one transaction. A period has
+one row: generating again, by anyone permitted, returns the stored artifacts
+unchanged and writes nothing. `GET .../deduction-summaries/:summaryId` reads
+them with the same permission. A period that is not `FINALIZED` is refused
+with `DEDUCTION_SUMMARIES_PAYROLL_NOT_FINALIZED`. Migration 0200 adds
+`DEDUCTION_SUMMARIES` version 1 to the contract versions; its definition
+names every field, the line order, and the control rules.
+
+Each artifact is canonical JSON, like the Contribution Summary, carrying the
+contract, its statement, the Agency, the row's id, the generation time, and
+the period with its finalized version and finalization time.
+
+- The Tax Summary lists each Tax Line by agency employee number: the
+  Employee's name, the taxable and non-taxable compensation, the withholding
+  tax, `YEAR_END` or `SEPARATION` for a year-end adjustment (section 9), and
+  the National Payroll Rule Version. Its totals are the line count and the
+  three sums; a year-end refund counts as its negative tax.
+- The Loan Remittance Summary groups the Loan Deduction Lines by the payee of
+  their Deduction Obligation: its payee category and payee name, the name
+  compared without case, as the obligation's `citext` stores it. No category
+  is special, so a recovery recorded as an obligation under
+  `NATIONAL_GOVERNMENT_COA_DECISION` is one more payee. Each line names the
+  obligation, its issuer reference, and the Employee, with the amount due,
+  deducted, and not deducted; each payee's totals and the summary's are the
+  count and sums of their lines.
+- The Deduction Register lists each Employee's `DEDUCTION` Payroll Lines,
+  with each line's pay component and any Payroll Adjustment it carries, and
+  each Employee's totals; then each pay component's line count and total;
+  then the totals over every line.
+
+A payroll with no line of a kind still has that artifact, with zero totals.
+A trigger keeps the table immutable, even for the database owner, and admits
+a row only for a `FINALIZED` period at its calculation version and only when
+each artifact's line count and totals equal the count and sums of its source
+lines in that version's `FINALIZED` results, so every total equals its tax
+or deduction lines. `hris_app` holds `SELECT` and `INSERT` only, and RLS is
+forced.
+
+- _Reading_: hris-controls.md §6.10 names no permission for these outputs,
+  and they are the register's and the remittance schedules' companions under
+  PAY-009, so they share `payroll.registers.generate`.
+- _Reading_: "loan-remittance summaries" in PAY-009 is one summary grouped by
+  payee, because a Deduction Obligation's payee is what a remittance would go
+  to; what was deducted is the amount to remit, and what was not deducted
+  stays owed (section 9).
+- _Reading_: the three artifacts are generated together and stored in one
+  row, as the accounting support export stores its companion: they read the
+  same finalized results, and nothing in PAY-009 has them generated apart.
 
 ```sql
 CREATE TABLE finalized_payroll_accounting_support_exports (
