@@ -3,6 +3,8 @@ import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { PAYROLL_ADJUSTMENT_NEGATIVE } from '../payroll-calculation/payroll-adjustment-difference';
+import { openPayrollAdjustment } from './payroll-adjustments';
 import {
   claimFunction,
   lockPeriod,
@@ -49,6 +51,12 @@ export interface PayrollPeriodFinalizedEvent {
  * rest on, and appends the Audit Event and the Outbox Event. A source that is
  * no longer unconsumed refuses the whole transaction, so a refusal leaves the
  * period APPROVED with nothing finalized.
+ *
+ * It also posts the Payroll Adjustments the version carried (#356): each
+ * whose Employee has a result in it, unless its difference was negative. One
+ * another payroll posted first refuses like a consumed source. And it opens
+ * an adjustment, against this period, for each Employee under an active
+ * Payroll Hold, which is how the held month is paid later.
  *
  * A retry by the person who finalized, at the row version they sent, returns
  * the finalized period and writes nothing. Anyone else then finds the period
@@ -125,6 +133,17 @@ export class PayrollFinalizationService {
           data: { status: 'FINALIZED' },
         });
         const consumed = await consumeSources(transaction, context, periodId, calculationVersion);
+        const postedPayrollAdjustmentIds = await postAdjustments(
+          transaction,
+          context,
+          periodId,
+          calculationVersion,
+        );
+        const openedPayrollAdjustmentIds = await openHeldAdjustments(
+          transaction,
+          context,
+          periodId,
+        );
 
         await transaction.auditEvent.create({
           data: {
@@ -141,6 +160,8 @@ export class PayrollFinalizationService {
                 finalizedResultCount: results.count,
                 consumedPayrollInputIds: consumed.payrollInputIds,
                 consumedAttendancePayrollFactIds: consumed.attendancePayrollFactIds,
+                postedPayrollAdjustmentIds,
+                openedPayrollAdjustmentIds,
               },
             }),
             // One finalization per period: a second one is refused.
@@ -292,6 +313,89 @@ async function consumeSources(
     );
   }
   return { payrollInputIds, attendancePayrollFactIds };
+}
+
+/**
+ * Post every Payroll Adjustment the version's snapshot carried whose Employee
+ * has a result in the version, unless the calculation found its difference
+ * negative, which stays OPEN (#648). An Employee held out of this period has
+ * no result, so their carried adjustments stay OPEN too. Each must still be
+ * OPEN: one another payroll posted first refuses the finalization.
+ */
+async function postAdjustments(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  periodId: string,
+  calculationVersion: number,
+): Promise<string[]> {
+  const carried = await transaction.$queryRaw<{ id: string }[]>`
+    SELECT i."payroll_adjustment_id"::text AS "id"
+    FROM "payroll_rule_snapshot_items" i
+    JOIN "payroll_rule_snapshots" s
+      ON s."agency_id" = i."agency_id" AND s."id" = i."payroll_rule_snapshot_id"
+    JOIN "payroll_adjustments" a
+      ON a."agency_id" = i."agency_id" AND a."id" = i."payroll_adjustment_id"
+    WHERE s."agency_id" = CAST(${context.agencyId} AS uuid)
+      AND s."payroll_period_id" = CAST(${periodId} AS uuid)
+      AND s."calculation_version" = ${calculationVersion}
+      AND EXISTS (
+        SELECT 1 FROM "payroll_employees" e
+        WHERE e."agency_id" = s."agency_id"
+          AND e."payroll_period_id" = s."payroll_period_id"
+          AND e."calculation_version" = s."calculation_version"
+          AND e."employee_id" = a."employee_id"
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "payroll_exceptions" x
+        WHERE x."agency_id" = s."agency_id"
+          AND x."payroll_period_id" = s."payroll_period_id"
+          AND x."calculation_version" = s."calculation_version"
+          AND x."exception_type" = ${PAYROLL_ADJUSTMENT_NEGATIVE}
+          AND x."details" ->> 'payrollAdjustmentId' = a."id"::text
+      )
+    ORDER BY 1
+  `;
+  const ids = carried.map((row) => row.id);
+  const posted = await transaction.payrollAdjustment.updateMany({
+    where: { agencyId: context.agencyId, id: { in: ids }, status: 'OPEN' },
+    data: { status: 'POSTED', postedByPayrollPeriodId: periodId, postedAt: new Date() },
+  });
+  if (posted.count !== ids.length) {
+    throw sourceTaken(
+      `${ids.length - posted.count} of the Payroll Adjustments it carries ${
+        ids.length - posted.count === 1 ? 'was' : 'were'
+      } posted or cancelled by another payroll`,
+    );
+  }
+  return ids;
+}
+
+/**
+ * Open a Payroll Adjustment against this period for each Employee under an
+ * active Payroll Hold, against the empty result the hold left (#330). A hold
+ * does not carry over: the next period calculates the Employee as usual.
+ */
+async function openHeldAdjustments(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  periodId: string,
+): Promise<string[]> {
+  const holds = await transaction.payrollHold.findMany({
+    where: { agencyId: context.agencyId, payrollPeriodId: periodId, liftedAt: null },
+    orderBy: { employeeId: 'asc' },
+    select: { id: true, employeeId: true },
+  });
+  const opened: string[] = [];
+  for (const hold of holds) {
+    const { payrollAdjustmentId } = await openPayrollAdjustment(transaction, {
+      agencyId: context.agencyId,
+      originalPayrollPeriodId: periodId,
+      employeeId: hold.employeeId,
+      cause: { origin: 'PAYROLL_HOLD', payrollHoldId: hold.id },
+    });
+    opened.push(payrollAdjustmentId);
+  }
+  return opened;
 }
 
 const distinct = (ids: (string | null)[]) =>

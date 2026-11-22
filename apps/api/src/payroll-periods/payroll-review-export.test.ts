@@ -223,6 +223,7 @@ describe('the Certified Payroll Review Export commands', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     await expect(
       controller.readReviewExport(context.agencyId, periodId, 'nope', context),

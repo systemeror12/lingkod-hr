@@ -327,6 +327,7 @@ describe('the Payroll Period controller', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const other = '00000000-0000-4000-8000-000000000009';
 
@@ -352,6 +353,7 @@ describe('the Payroll Period controller', () => {
     };
     const controller = new PayrollPeriodsController(
       service as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

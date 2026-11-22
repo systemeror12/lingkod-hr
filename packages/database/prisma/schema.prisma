@@ -5831,6 +5831,82 @@ model PaymentInstruction {
   @@map("payment_instructions")
 }
 
+/// The Contribution Summary of one FINALIZED payroll (#354): a Structured
+/// Export for review, stored as canonical JSON with its checksum. It files
+/// and remits nothing. Immutable.
+model ContributionSummary {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "contribution_summaries_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  content                        String
+  checksum                       String
+
+  @@unique([agencyId, id], map: "contribution_summaries_agency_id_id_key")
+  @@map("contribution_summaries")
+}
+
+/// One contribution type's Remittance Schedule in a Contribution Summary
+/// (#354). Its totals equal its Contribution Lines. Immutable.
+model RemittanceSchedule {
+  id                    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String  @map("agency_id") @db.Uuid
+  contributionSummaryId String  @map("contribution_summary_id") @db.Uuid
+  contributionType      String  @map("contribution_type")
+  lineCount             Int     @map("line_count")
+  employeeShareTotal    Decimal @map("employee_share_total") @db.Decimal(19, 4)
+  employerShareTotal    Decimal @map("employer_share_total") @db.Decimal(19, 4)
+  totalAmount           Decimal @map("total_amount") @db.Decimal(19, 4)
+  content               String
+  checksum              String
+
+  @@unique([contributionSummaryId, contributionType], map: "remittance_schedules_summary_type_key")
+  @@unique([agencyId, id], map: "remittance_schedules_agency_id_id_key")
+  @@map("remittance_schedules")
+}
+
+/// The immutable, checksummed Finalized Payroll Accounting Support Export of
+/// one FINALIZED payroll, with its Employee Detail Companion (#29, #355).
+/// The foreign keys are in SQL.
+model FinalizedPayrollAccountingSupportExport {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "finalized_payroll_accounting_support_exports_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  calculationHash                String   @map("calculation_hash")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  content                        String
+  checksum                       String
+  employeeDetailContent          String   @map("employee_detail_content")
+  employeeDetailChecksum         String   @map("employee_detail_checksum")
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "finalized_payroll_accounting_support_exports_agency_id_id_key")
+  @@map("finalized_payroll_accounting_support_exports")
+}
+
+/// An append-only Payroll Export External Outcome recorded by hand against a
+/// Finalized Payroll Accounting Support Export (#29, #355). The foreign keys
+/// are in SQL.
+model PayrollExportExternalOutcome {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  accountingSupportExportId String   @map("accounting_support_export_id") @db.Uuid
+  outcome                   String
+  externalReference         String?  @map("external_reference")
+  evidenceDocumentVersionId String?  @map("evidence_document_version_id") @db.Uuid
+  reason                    String?
+  recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@index([agencyId, accountingSupportExportId, recordedAt], map: "payroll_export_external_outcomes_export_idx")
+  @@map("payroll_export_external_outcomes")
+}
+
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
 model PayrollRuleSnapshot {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -5858,12 +5934,15 @@ model PayrollRuleSnapshotItem {
   agencyPayrollApplicabilityId      String? @map("agency_payroll_applicability_id") @db.Uuid
   /// #346: its foreign key to authorized_payroll_component_inputs is in migration 0157.
   authorizedPayrollComponentInputId String? @map("authorized_payroll_component_input_id") @db.Uuid
+  /// #356: an OPEN Payroll Adjustment the version carries; its foreign key is in migration 0190.
+  payrollAdjustmentId               String? @map("payroll_adjustment_id") @db.Uuid
 
   snapshot PayrollRuleSnapshot @relation(fields: [agencyId, payrollRuleSnapshotId], references: [agencyId, id], onDelete: Restrict, map: "payroll_rule_snapshot_items_snapshot_fkey")
 
   @@unique([payrollRuleSnapshotId, nationalPayrollRuleVersionId], map: "payroll_rule_snapshot_items_rule_version_key")
   @@unique([payrollRuleSnapshotId, agencyPayrollApplicabilityId], map: "payroll_rule_snapshot_items_applicability_key")
   @@unique([payrollRuleSnapshotId, authorizedPayrollComponentInputId], map: "payroll_rule_snapshot_items_authorized_input_key")
+  @@unique([payrollRuleSnapshotId, payrollAdjustmentId], map: "payroll_rule_snapshot_items_adjustment_key")
   @@map("payroll_rule_snapshot_items")
 }
 
@@ -5913,6 +5992,27 @@ model Payslip {
   @@map("payslips")
 }
 
+/// A Payroll Register: the Printable System View of one FINALIZED Payroll
+/// Period, one per period and immutable (#353). Its totals equal the
+/// finalized results and their lines. Migration 0187 holds its foreign keys,
+/// guard, and RLS.
+model PayrollRegister {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  payrollPeriodId         String   @unique(map: "payroll_registers_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion      Int      @map("calculation_version")
+  documentId              String   @map("document_id") @db.Uuid
+  resultCount             Int      @map("result_count")
+  grossAmount             Decimal  @map("gross_amount") @db.Decimal(19, 4)
+  totalDeductions         Decimal  @map("total_deductions") @db.Decimal(19, 4)
+  netAmount               Decimal  @map("net_amount") @db.Decimal(19, 4)
+  generatedByMembershipId String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt             DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "payroll_registers_agency_id_id_key")
+  @@map("payroll_registers")
+}
+
 /// A Payroll Line: one calculated amount of a result, with its source. Immutable.
 model PayrollLine {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -5925,6 +6025,8 @@ model PayrollLine {
   rate              Decimal? @db.Decimal(19, 8)
   amount            Decimal  @db.Decimal(19, 4)
   sourceSnapshot    Json     @map("source_snapshot")
+  /// #356: its foreign key to payroll_adjustments is in migration 0190.
+  payrollAdjustmentId String? @map("payroll_adjustment_id") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   payrollEmployee PayrollEmployee @relation(fields: [agencyId, payrollEmployeeId], references: [agencyId, id], onDelete: Restrict, map: "payroll_lines_payroll_employee_fkey")
@@ -6046,6 +6148,66 @@ model PayrollException {
   @@unique([agencyId, id])
   @@index([agencyId, payrollPeriodId, calculationVersion], map: "payroll_exceptions_period_version_idx")
   @@map("payroll_exceptions")
+}
+
+// #356 Payroll Holds and Payroll Adjustments (ADR 0016). Foreign keys, the
+// one-open and one-active indexes, guards, and RLS live in migration 0190;
+// the models keep scalars only.
+
+/// One Employee left out of a DRAFT Payroll Period over a blocking exception (§7).
+model PayrollHold {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String    @map("agency_id") @db.Uuid
+  payrollPeriodId      String    @map("payroll_period_id") @db.Uuid
+  employeeId           String    @map("employee_id") @db.Uuid
+  payrollExceptionId   String    @map("payroll_exception_id") @db.Uuid
+  reason               String
+  placedByMembershipId String    @map("placed_by_membership_id") @db.Uuid
+  placedAt             DateTime  @default(now()) @map("placed_at") @db.Timestamptz(6)
+  liftedByMembershipId String?   @map("lifted_by_membership_id") @db.Uuid
+  liftedAt             DateTime? @map("lifted_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id])
+  @@map("payroll_holds")
+}
+
+/// Payroll's recalculation of one Employee's result for one FINALIZED period (§10).
+model PayrollAdjustment {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  originalPayrollPeriodId String    @map("original_payroll_period_id") @db.Uuid
+  employeeId              String    @map("employee_id") @db.Uuid
+  status                  String
+  openedAt                DateTime  @default(now()) @map("opened_at") @db.Timestamptz(6)
+  postedByPayrollPeriodId String?   @map("posted_by_payroll_period_id") @db.Uuid
+  postedAt                DateTime? @map("posted_at") @db.Timestamptz(6)
+  cancelledAt             DateTime? @map("cancelled_at") @db.Timestamptz(6)
+
+  causes PayrollAdjustmentCause[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, status], map: "payroll_adjustments_open_idx")
+  @@map("payroll_adjustments")
+}
+
+/// Why a Payroll Adjustment opened, or a later cause that joined it (§10).
+model PayrollAdjustmentCause {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String   @map("agency_id") @db.Uuid
+  payrollAdjustmentId  String   @map("payroll_adjustment_id") @db.Uuid
+  origin               String
+  payrollInputId       String?  @map("payroll_input_id") @db.Uuid
+  sourceCorrectionKey  String?  @map("source_correction_key") @db.Citext
+  payrollHoldId        String?  @map("payroll_hold_id") @db.Uuid
+  reason               String?
+  openedByMembershipId String?  @map("opened_by_membership_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  adjustment PayrollAdjustment @relation(fields: [agencyId, payrollAdjustmentId], references: [agencyId, id], onDelete: Restrict, map: "payroll_adjustment_causes_adjustment_fkey")
+
+  @@unique([agencyId, sourceCorrectionKey], map: "payroll_adjustment_causes_correction_key")
+  @@index([agencyId, payrollAdjustmentId], map: "payroll_adjustment_causes_adjustment_idx")
+  @@map("payroll_adjustment_causes")
 }
 
 // #340 Attendance Deficit Charges. Foreign keys, the successor and immutable

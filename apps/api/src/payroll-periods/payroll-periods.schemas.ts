@@ -28,7 +28,10 @@ const rowVersion = z.number().int().positive();
 
 /**
  * A new Payroll Period. A regular period covers one calendar month and names
- * no component; a special period names the components it pays.
+ * no component; a special period names the components it pays. A special
+ * period with `carriesAdjustments` is the supplemental payroll: it carries the
+ * OPEN Payroll Adjustments whose difference is positive, and may name no
+ * component (#356).
  */
 export const payrollPeriodCreateSchema = z
   .object({
@@ -39,6 +42,7 @@ export const payrollPeriodCreateSchema = z
     cutoffAt,
     paymentDate: isoDate,
     payComponentIds: z.array(z.string().uuid()).max(100).default([]),
+    carriesAdjustments: z.boolean().default(false),
   })
   .strict()
   .refine((value) => value.periodTo >= value.periodFrom, {
@@ -96,6 +100,19 @@ export type PayrollPeriodApproveInput = z.input<typeof payrollPeriodApproveSchem
 export const payrollPeriodFinalizeSchema = z.object({ rowVersion }).strict();
 
 export type PayrollPeriodFinalizeInput = z.input<typeof payrollPeriodFinalizeSchema>;
+
+/**
+ * Ask Payroll to recalculate a FINALIZED period, with a reason, for one
+ * Employee or, with no `employeeId`, for all of its Employees (#356). No
+ * amount is entered.
+ */
+export const payrollAdjustmentRecalculationSchema = z
+  .object({ employeeId: z.string().uuid().optional(), reason })
+  .strict();
+
+export type PayrollAdjustmentRecalculationInput = z.input<
+  typeof payrollAdjustmentRecalculationSchema
+>;
 
 /**
  * Revoke a certification, return a period for correction, or return an
