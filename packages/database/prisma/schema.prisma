@@ -5828,6 +5828,43 @@ model PaymentInstruction {
   @@map("payment_instructions")
 }
 
+/// The Contribution Summary of one FINALIZED payroll (#354): a Structured
+/// Export for review, stored as canonical JSON with its checksum. It files
+/// and remits nothing. Immutable.
+model ContributionSummary {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "contribution_summaries_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  content                        String
+  checksum                       String
+
+  @@unique([agencyId, id], map: "contribution_summaries_agency_id_id_key")
+  @@map("contribution_summaries")
+}
+
+/// One contribution type's Remittance Schedule in a Contribution Summary
+/// (#354). Its totals equal its Contribution Lines. Immutable.
+model RemittanceSchedule {
+  id                    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String  @map("agency_id") @db.Uuid
+  contributionSummaryId String  @map("contribution_summary_id") @db.Uuid
+  contributionType      String  @map("contribution_type")
+  lineCount             Int     @map("line_count")
+  employeeShareTotal    Decimal @map("employee_share_total") @db.Decimal(19, 4)
+  employerShareTotal    Decimal @map("employer_share_total") @db.Decimal(19, 4)
+  totalAmount           Decimal @map("total_amount") @db.Decimal(19, 4)
+  content               String
+  checksum              String
+
+  @@unique([contributionSummaryId, contributionType], map: "remittance_schedules_summary_type_key")
+  @@unique([agencyId, id], map: "remittance_schedules_agency_id_id_key")
+  @@map("remittance_schedules")
+}
+
 /// The immutable, checksummed Finalized Payroll Accounting Support Export of
 /// one FINALIZED payroll, with its Employee Detail Companion (#29, #355).
 /// The foreign keys are in SQL.
@@ -5947,6 +5984,27 @@ model Payslip {
   withholdReason         String?   @map("withhold_reason")
 
   @@map("payslips")
+}
+
+/// A Payroll Register: the Printable System View of one FINALIZED Payroll
+/// Period, one per period and immutable (#353). Its totals equal the
+/// finalized results and their lines. Migration 0187 holds its foreign keys,
+/// guard, and RLS.
+model PayrollRegister {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  payrollPeriodId         String   @unique(map: "payroll_registers_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion      Int      @map("calculation_version")
+  documentId              String   @map("document_id") @db.Uuid
+  resultCount             Int      @map("result_count")
+  grossAmount             Decimal  @map("gross_amount") @db.Decimal(19, 4)
+  totalDeductions         Decimal  @map("total_deductions") @db.Decimal(19, 4)
+  netAmount               Decimal  @map("net_amount") @db.Decimal(19, 4)
+  generatedByMembershipId String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt             DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "payroll_registers_agency_id_id_key")
+  @@map("payroll_registers")
 }
 
 /// A Payroll Line: one calculated amount of a result, with its source. Immutable.

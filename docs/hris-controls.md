@@ -1842,6 +1842,16 @@ Payment Export of a `FINALIZED` period and downloads its CSV, which carries
 full account numbers, and its masked reconciliation summary; each download is
 an Audit Event (payroll-schema.md §12, #337).
 
+`payroll.registers.generate`, held Agency-wide, generates the Payroll
+Register of a `FINALIZED` period, or returns the one already generated; the
+generation is an Audit Event (payroll-schema.md §12, #353). Like generating
+the Payment Export, it claims no payroll function.
+
+The same permission generates and reads the Contribution Summary and the
+GSIS, PhilHealth, Pag-IBIG, and Employees' Compensation Remittance Schedules
+of a `FINALIZED` period: Structured Exports for review that file and remit
+nothing (payroll-schema.md §12, #354).
+
 `payroll.accounting_exports.generate`, held Agency-wide, generates the
 Finalized Payroll Accounting Support Export of a `FINALIZED` period and
 downloads it. `payroll.export_detail.read` downloads its Employee Detail
