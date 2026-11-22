@@ -228,10 +228,16 @@ export class PayrollPeriodsService {
           'A regular Payroll Period pays every applicable component and names none.',
         );
       }
-    } else if (input.payComponentIds.length === 0) {
+      if (input.carriesAdjustments) {
+        throw invalid(
+          'PAYROLL_PERIOD_REGULAR_CARRIES_ADJUSTMENTS',
+          'A regular Payroll Period always carries the open Payroll Adjustments; only a special period is marked to carry them.',
+        );
+      }
+    } else if (input.payComponentIds.length === 0 && !input.carriesAdjustments) {
       throw invalid(
         'PAYROLL_PERIOD_COMPONENT_REQUIRED',
-        'A special Payroll Period names at least one component it pays.',
+        'A special Payroll Period names at least one component it pays, or carries Payroll Adjustments.',
       );
     }
 
@@ -267,6 +273,7 @@ export class PayrollPeriodsService {
             cutoffAt: new Date(input.cutoffAt),
             paymentDate: dateOf(input.paymentDate),
             status: 'DRAFT',
+            carriesAdjustments: input.carriesAdjustments,
             components: {
               createMany: {
                 data: input.payComponentIds.map((payComponentId) => ({ payComponentId })),
@@ -413,7 +420,7 @@ export class PayrollPeriodsService {
         const uncalculated = named
           .map((component) => component.code)
           .filter((code) => !SPECIAL_PERIOD_COMPONENT_CODES.includes(code));
-        if (named.length === 0 || uncalculated.length > 0) {
+        if ((named.length === 0 && !before.carriesAdjustments) || uncalculated.length > 0) {
           throw new PayrollPeriodsServiceError(
             `A special Payroll Period pays only the components it names, and ${
               named.length === 0
@@ -582,6 +589,7 @@ async function findDraftForCommand(
       rowVersion: true,
       cutoffAt: true,
       runType: true,
+      carriesAdjustments: true,
       components: { select: { payComponentId: true } },
     },
   });
@@ -696,6 +704,7 @@ function auditData(summary: PayrollPeriodSummary): Prisma.InputJsonObject {
     cutoffAt: summary.cutoffAt,
     paymentDate: summary.paymentDate,
     payComponentIds: summary.payComponentIds,
+    carriesAdjustments: summary.carriesAdjustments,
   };
 }
 
