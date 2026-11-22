@@ -2424,7 +2424,7 @@ also locks, so the answer holds until the void commits.
 A trigger rejects every `UPDATE` and `DELETE`, even for the database owner,
 and admits an outcome only on an instruction of a `FINALIZED` period, as the
 next `sequence` of its instruction. `hris_app` holds `SELECT` and `INSERT`
-only. Migration 0188 creates the table with forced RLS and grants
+only. Migration 0192 creates the table with forced RLS and grants
 `payroll.disbursement.update` Agency-wide to the Cashier; the Accounting
 Reviewer's and the Payroll Approver's `C` and the Auditor's `R` are not
 seeded.

@@ -345,7 +345,7 @@ Create:
 26. `remittance_schedules`
 27. `payment_exports`
 28. `payment_instructions`
-29. `disbursement_outcomes` (0188, #642)
+29. `disbursement_outcomes` (0192, #642)
 
 The first three are platform-wide: no `agency_id`, no Agency policy, `SELECT`
 only for `hris_app`, and rows loaded by the `hris_operator` command (#328, ADR
