@@ -248,6 +248,15 @@ const destinations: readonly (Destination & {
     permission: 'payroll.periods.read',
   },
   {
+    href: '/my-payslips',
+    label: 'My Payslips',
+    stage: 'Payroll',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) => code === 'payroll.payslips.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
     href: '/payroll-inputs',
     label: 'Payroll Inputs',
     stage: 'Payroll',

@@ -18,6 +18,11 @@
  *   `payroll.certifier@` (HR Certifier), `payroll.budget@` (Budget Officer),
  *   `payroll.accounting@` (Accounting Reviewer), and `payroll.approver@` (Payroll Approver).
  *   Evidence `E2E-PAYROLL-REVIEW-EVIDENCE` has a fixed Document Version ID.
+ * - `seedPayslipReleaseFixture()`: its own Agency `E2E-PAYSLIPS` and Payroll Period
+ *   `E2E-PAYSLIP-2849-CLOTHING`, Finalized by `payslip.approver@` (Payroll Approver), with two zero
+ *   payslips Ready at fixed Payslip IDs (payslip-release.spec.ts). Employee-role Users read their
+ *   own: `payslip.employee@` is linked to `E2E-PAYSLIP-0001` and `payslip.other@` to
+ *   `E2E-PAYSLIP-0002`.
  * - `seededUserEmails` and `seedLocalCredentials()`: each seeded User's local passphrase, TOTP
  *   factor, and Recovery Codes, as the README documents.
  */
@@ -86,6 +91,39 @@ const payrollReviewPeriodId = 'a9a00000-0000-4000-8000-000000000001';
 const payrollReviewEvidenceDocumentId = 'a9a00000-0000-4000-8000-000000000002';
 /** Repeated in apps/web/e2e/payroll-review.spec.ts, which types it as checkpoint evidence. */
 const payrollReviewEvidenceVersionId = 'a9a00000-0000-4000-8000-000000000003';
+/**
+ * The payslip release journey's own Agency (payslip-release.spec.ts), so no other spec counts its
+ * linked Employees or Documents. Its Payroll Approver finalized the period; each reader is an
+ * Employee-role User linked to their own Employee with one Ready Payslip at fixed ids, repeated in
+ * the spec. The spec releases the owner's and withholds the other's.
+ */
+const payslipFixture = {
+  agencyId: 'a9b00000-0000-4000-8000-0000000000a0',
+  periodId: 'a9b00000-0000-4000-8000-000000000001',
+  approver: { email: 'payslip.approver@example.test', name: 'E2E Payslip Approver' },
+  readers: [
+    {
+      email: 'payslip.employee@example.test',
+      name: 'E2E Payslip Owner',
+      employeeId: 'a9b00000-0000-4000-8000-0000000000e1',
+      employeeNumber: 'E2E-PAYSLIP-0001',
+      resultId: 'a9b00000-0000-4000-8000-000000000002',
+      payslipId: 'a9b00000-0000-4000-8000-000000000003',
+      documentId: 'a9b00000-0000-4000-8000-000000000004',
+      versionId: 'a9b00000-0000-4000-8000-000000000005',
+    },
+    {
+      email: 'payslip.other@example.test',
+      name: 'E2E Payslip Other',
+      employeeId: 'a9b00000-0000-4000-8000-0000000000e2',
+      employeeNumber: 'E2E-PAYSLIP-0002',
+      resultId: 'a9b00000-0000-4000-8000-000000000006',
+      payslipId: 'a9b00000-0000-4000-8000-000000000007',
+      documentId: 'a9b00000-0000-4000-8000-000000000008',
+      versionId: 'a9b00000-0000-4000-8000-000000000009',
+    },
+  ],
+} as const;
 
 /**
  * Local-only sign-in credentials, documented in the README. Every seeded User gets the passphrase;
@@ -119,6 +157,8 @@ const seededUserEmails = [
   factorResetCandidateEmail,
   userLockCandidateEmail,
   ...payrollReviewers.map(({ email }) => email),
+  payslipFixture.approver.email,
+  ...payslipFixture.readers.map(({ email }) => email),
 ];
 
 function manilaToday(): string {
@@ -1170,6 +1210,8 @@ async function seed(): Promise<void> {
     await transaction.leaveLedgerEntry.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leaveCreditCommitment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leaveAccountOpening.deleteMany({ where: { agencyId: agency.id } });
+    // Replica mode skips foreign keys, so an assessment left here would outlive its Employee.
+    await transaction.mandatoryLeaveAssessment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leaveAccount.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leavePolicyAuthority.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leavePolicyVersion.deleteMany({ where: { agencyId: agency.id } });
@@ -3068,6 +3110,7 @@ async function seed(): Promise<void> {
   await seedSyntheticRuleVersions();
   await seedPayrollReviewFixture(agency.id, membership.id);
   await seedDtrFixture();
+  await seedPayslipReleaseFixture();
 }
 
 /**
@@ -3209,6 +3252,230 @@ async function seedPayrollReviewFixture(agencyId: string, preparerMembershipId: 
           .digest('hex'),
       },
     });
+  });
+}
+
+/**
+ * The payslip release journey (payslip-release.spec.ts), in its own Agency like the DTR fixture:
+ * a Finalized Payroll Period with one Ready Payslip for each of two Employee-role Users linked to
+ * their Employees. Its Payroll Approver finalized it, so releasing claims a function they already
+ * hold. Each run clears the Agency's payroll rows and Employees and writes them again under
+ * `session_replication_role = 'replica'`, as generation leaves them: each Payslip names a Document
+ * whose stored file is not written, so its signed link opens nothing. Its Approvals before
+ * finalization are not seeded. The amounts are zero and establish no rule.
+ */
+async function seedPayslipReleaseFixture(): Promise<void> {
+  const agencyId = payslipFixture.agencyId;
+  const role = (code: string) =>
+    prisma.role.findFirstOrThrow({ where: { agencyId: null, code, status: 'ACTIVE' } });
+  const [approverRole, employeeRole, clothing] = await Promise.all([
+    role('payroll_approver'),
+    role('employee'),
+    prisma.payComponent.findUniqueOrThrow({
+      where: { code: 'CLOTHING_ALLOWANCE' },
+      select: { id: true },
+    }),
+  ]);
+  const people = [
+    { ...payslipFixture.approver, roleId: approverRole.id },
+    ...payslipFixture.readers.map((reader) => ({ ...reader, roleId: employeeRole.id })),
+  ];
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.agency.upsert({
+      where: { id: agencyId },
+      update: { status: 'ACTIVE' },
+      create: {
+        id: agencyId,
+        code: 'E2E-PAYSLIPS',
+        name: 'Payslip Release Journey Agency',
+        acronym: 'PSL',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const where = { agencyId };
+    // Release and withhold record idempotent Audit and Outbox Events keyed by the fixed payslip ids.
+    await transaction.auditEvent.deleteMany({ where });
+    await transaction.outboxEvent.deleteMany({ where });
+    await transaction.payslip.deleteMany({ where });
+    await transaction.payrollEmployee.deleteMany({ where });
+    await transaction.payrollPeriodActor.deleteMany({ where });
+    await transaction.payrollPeriodComponent.deleteMany({ where });
+    await transaction.payrollPeriod.deleteMany({ where });
+    // The fixture's Documents by id too: an earlier seed wrote them in the Work Queue Agency.
+    const documents = {
+      OR: [where, { id: { in: payslipFixture.readers.map((reader) => reader.documentId) } }],
+    };
+    await transaction.document.updateMany({ where: documents, data: { currentVersionId: null } });
+    await transaction.documentVersion.deleteMany({
+      where: {
+        OR: [
+          where,
+          { documentId: { in: payslipFixture.readers.map((reader) => reader.documentId) } },
+        ],
+      },
+    });
+    await transaction.document.deleteMany({ where: documents });
+    await transaction.agencyMembership.updateMany({ where, data: { employeeId: null } });
+    await transaction.employee.deleteMany({ where });
+  });
+
+  const memberships = new Map<string, string>();
+  for (const person of people) {
+    const user = await prisma.user.upsert({
+      where: { emailNormalized: person.email },
+      update: {
+        displayName: person.name,
+        globalStatus: 'ACTIVE',
+        lockedAt: null,
+        lockedByAgencyId: null,
+      },
+      create: {
+        emailNormalized: person.email,
+        displayName: person.name,
+        globalStatus: 'ACTIVE',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    // These Users act only here. An earlier seed held them in the Work Queue Agency.
+    await prisma.agencyMembership.updateMany({
+      where: { userId: user.id, agencyId: { not: agencyId }, status: { not: 'DEACTIVATED' } },
+      data: { status: 'DEACTIVATED', deactivatedAt: new Date(), employeeId: null },
+    });
+    const membership =
+      (await prisma.agencyMembership.findFirst({
+        where: { agencyId, userId: user.id, status: 'ACTIVE' },
+      })) ??
+      (await prisma.agencyMembership.create({
+        data: { agencyId, userId: user.id, status: 'ACTIVE', activatedAt: new Date() },
+      }));
+    if (
+      !(await prisma.membershipRole.findFirst({
+        where: { agencyId, membershipId: membership.id, roleId: person.roleId },
+      }))
+    ) {
+      await prisma.membershipRole.create({
+        data: {
+          agencyId,
+          membershipId: membership.id,
+          roleId: person.roleId,
+          effectiveFrom: new Date('2026-01-01'),
+          reason: 'Payslip release E2E fixture',
+        },
+      });
+    }
+    memberships.set(person.email, membership.id);
+  }
+  const approverId = memberships.get(payslipFixture.approver.email)!;
+
+  // Dated before the Work Queue fixtures' Documents, though no picker there lists these.
+  const generatedAt = new Date('2025-12-01T02:00:00Z');
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.payrollPeriod.create({
+      data: {
+        id: payslipFixture.periodId,
+        agencyId,
+        code: 'E2E-PAYSLIP-2849-CLOTHING',
+        runType: 'SPECIAL',
+        periodFrom: new Date('2849-01-01'),
+        periodTo: new Date('2849-12-31'),
+        cutoffAt: new Date('2849-01-01T00:00:00+08:00'),
+        paymentDate: new Date('2849-06-15'),
+        status: 'FINALIZED',
+        calculationVersion: 1,
+        rowVersion: 8,
+        finalizedAt: generatedAt,
+        finalizedByMembershipId: approverId,
+        components: { create: { payComponentId: clothing.id } },
+      },
+    });
+    await transaction.payrollPeriodActor.create({
+      data: {
+        agencyId,
+        payrollPeriodId: payslipFixture.periodId,
+        membershipId: approverId,
+        payrollFunction: 'APPROVAL',
+      },
+    });
+    for (const reader of payslipFixture.readers) {
+      await transaction.employee.create({
+        data: {
+          id: reader.employeeId,
+          agencyId,
+          employeeNumber: reader.employeeNumber,
+          legalName: reader.name,
+          birthDate: new Date('1990-01-01'),
+          sex: 'FEMALE',
+          civilStatus: 'SINGLE',
+          contactEmail: reader.email,
+          serviceStatus: 'ACTIVE',
+          firstGovernmentServiceDate: new Date('2020-01-01'),
+          agencyServiceStartDate: new Date('2020-01-01'),
+          createdByMembershipId: approverId,
+          updatedByMembershipId: approverId,
+        },
+      });
+      await transaction.agencyMembership.update({
+        where: { id: memberships.get(reader.email)! },
+        data: { employeeId: reader.employeeId },
+      });
+      await transaction.document.create({
+        data: {
+          id: reader.documentId,
+          agencyId,
+          documentType: 'PAYSLIP',
+          classification: 'CONFIDENTIAL',
+          status: 'APPROVED',
+          createdByMembershipId: approverId,
+          createdAt: generatedAt,
+        },
+      });
+      await transaction.documentVersion.create({
+        data: {
+          id: reader.versionId,
+          agencyId,
+          documentId: reader.documentId,
+          versionNo: 1,
+          storageKey: `e2e/E2E-PAYSLIP-2849-CLOTHING-${reader.employeeNumber}.pdf`,
+          contentHash: createHash('sha256').update(reader.payslipId).digest('hex'),
+          mimeType: 'application/pdf',
+          sizeBytes: 1,
+          createdByMembershipId: approverId,
+          issuedAt: generatedAt,
+          createdAt: generatedAt,
+        },
+      });
+      await transaction.document.update({
+        where: { id: reader.documentId },
+        data: { currentVersionId: reader.versionId },
+      });
+      await transaction.payrollEmployee.create({
+        data: {
+          id: reader.resultId,
+          agencyId,
+          payrollPeriodId: payslipFixture.periodId,
+          calculationVersion: 1,
+          employeeId: reader.employeeId,
+          compensationBasisSnapshot: { status: 'INDETERMINATE', reason: 'MISSING_PAY_BASIS' },
+          status: 'FINALIZED',
+          calculationHash: createHash('sha256')
+            .update(`e2e-payslip-release:${payslipFixture.periodId}:${reader.employeeId}`)
+            .digest('hex'),
+        },
+      });
+      await transaction.payslip.create({
+        data: {
+          id: reader.payslipId,
+          agencyId,
+          payrollEmployeeId: reader.resultId,
+          documentId: reader.documentId,
+          status: 'READY',
+        },
+      });
+    }
   });
 }
 

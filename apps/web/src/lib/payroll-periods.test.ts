@@ -7,10 +7,14 @@ import {
   stageCells,
   startsCollapsed,
   approvalEntries,
+  payslipActions,
+  payslipStatusDisplay,
+  releaseNotice,
   reviewActions,
   REVIEW_PERMISSIONS,
   type CheckpointReview,
   type PayrollPeriodReview,
+  type PeriodPayslipEntry,
   yearToDateFacts,
 } from './payroll-periods';
 
@@ -195,6 +199,53 @@ describe('reviewActions', () => {
     expect(reviewActions(review('FINALIZED', both, true), all)).toEqual([]);
   });
 
+  it('offers releasing payslips only while the server lists one Ready', () => {
+    const releaser = new Set(['payroll.payslips.release']);
+    const entry = (status: string | null): PeriodPayslipEntry => ({
+      payrollEmployeeId: `result-${status}`,
+      employee: { id: 'employee-1', employeeNumber: 'E-1', legalName: 'Ana Employee' },
+      payslip: status
+        ? {
+            id: `payslip-${status}`,
+            payrollPeriodId: 'period-1',
+            payrollEmployeeId: `result-${status}`,
+            status,
+            releasedAt: null,
+            releasedByMembershipId: null,
+            withheldAt: null,
+            withheldByMembershipId: null,
+            withholdReason: null,
+          }
+        : null,
+    });
+    const ready = [entry('RELEASED'), entry('READY')];
+    expect(kinds(payslipActions('FINALIZED', releaser, ready))).toEqual(['release']);
+    // Generating, Withheld, Released, or not yet generated: nothing to release.
+    expect(
+      payslipActions('FINALIZED', releaser, [
+        entry('GENERATING'),
+        entry('WITHHELD'),
+        entry('RELEASED'),
+        entry(null),
+      ]),
+    ).toEqual([]);
+    // Without the server's list, nothing is offered.
+    expect(payslipActions('FINALIZED', releaser, null)).toEqual([]);
+    expect(payslipActions('APPROVED', releaser, ready)).toEqual([]);
+    expect(payslipActions('FINALIZED', new Set(['payroll.periods.finalize']), ready)).toEqual([]);
+  });
+
+  it('never reads a generating or missing payslip as Ready, nor a Ready one as Released', () => {
+    expect(payslipStatusDisplay(null).label).toBe('Not generated yet');
+    expect(payslipStatusDisplay({ status: 'GENERATING' })).toEqual({
+      label: 'Generating…',
+      tone: 'warning',
+    });
+    expect(payslipStatusDisplay({ status: 'READY' }).label).toBe('Ready');
+    expect(payslipStatusDisplay({ status: 'WITHHELD' }).label).toBe('Withheld');
+    expect(payslipStatusDisplay({ status: 'RELEASED' }).tone).toBe('success');
+  });
+
   it('offers no checkpoint without an export, and no certification without a hash', () => {
     const certified = review('CERTIFIED');
     certified.certification!.reviewExportId = null;
@@ -265,5 +316,23 @@ describe('approvalEntries', () => {
       state: 'pending',
       by: null,
     });
+  });
+});
+
+describe('releaseNotice', () => {
+  const release = (released: number, generatingCount: number) => ({
+    payrollPeriodId: 'period-1',
+    releasedPayslipIds: Array.from({ length: released }, (_, index) => `payslip-${index}`),
+    generatingCount,
+  });
+
+  it('reads what the API released and never counts a generating payslip as released', () => {
+    expect(releaseNotice('P-1', release(1, 0))).toBe('Released 1 payslip of P-1 to its Employee.');
+    expect(releaseNotice('P-1', release(3, 2))).toBe(
+      'Released 3 payslips of P-1 to their Employees. 2 payslips are still generating; release again once they are Ready.',
+    );
+    expect(releaseNotice('P-1', release(0, 1))).toBe(
+      'No payslip of P-1 was Ready, so none was released. 1 payslip is still generating; release again once it is Ready.',
+    );
   });
 });
