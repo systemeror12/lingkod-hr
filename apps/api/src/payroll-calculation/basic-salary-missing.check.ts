@@ -13,6 +13,10 @@ import {
  * calculator that cannot settle a line blocks instead of writing none. So a
  * `CALCULATED` result of a regular period with no basic salary earning line is
  * missing its salary, and blocks rather than paying the rest without it.
+ *
+ * A result that carries Payroll Adjustments for an Employee with no service
+ * in the period holds only the adjustment lines (#356), so it is not checked,
+ * and an adjustment's basic salary difference is not the period's salary.
  */
 export class BasicSalaryMissingCheck implements PayrollCheck {
   async check(transaction: Prisma.TransactionClient, run: CheckedRun): Promise<CheckedException[]> {
@@ -21,11 +25,21 @@ export class BasicSalaryMissingCheck implements PayrollCheck {
       where: { code: BASIC_SALARY_COMPONENT_CODE },
       select: { id: true },
     });
+    const unserved = await transaction.$queryRaw<{ id: string }[]>`
+      SELECT "id"::text FROM "payroll_employees"
+      WHERE "agency_id" = CAST(${run.agencyId} AS uuid)
+        AND "payroll_period_id" = CAST(${run.payrollPeriodId} AS uuid)
+        AND "calculation_version" = ${run.calculationVersion}
+        AND NOT jsonb_path_exists("compensation_basis_snapshot", '$.stretches[*].personnel ? (@ != null)')
+    `;
     const missing = await transaction.payrollEmployee.findMany({
       where: {
         ...resultsOf(run),
         status: 'CALCULATED',
-        lines: { none: { payComponentId: component.id, lineType: 'EARNING' } },
+        id: { notIn: unserved.map((result) => result.id) },
+        lines: {
+          none: { payComponentId: component.id, lineType: 'EARNING', payrollAdjustmentId: null },
+        },
       },
       orderBy: { employeeId: 'asc' },
       select: { id: true, employeeId: true },

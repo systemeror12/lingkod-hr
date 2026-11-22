@@ -1232,7 +1232,10 @@ one of three ways:
 | A retroactive National Payroll Rule Version or Personnel fact | A user with `payroll.inputs.adjust`, with a reason, for one finalized period and one Employee or all of its Employees |
 
 Payroll never opens a recalculation on its own. An Employee and past period
-have at most one open adjustment, and a later cause joins it.
+have at most one open adjustment, and a later cause joins it. A recalculation
+request is refused while a period past `DRAFT` and not yet `FINALIZED`
+already carries the adjustment, since its difference is calculated; it is
+asked again once that period is finalized or returned to `DRAFT` (#356).
 
 - An open adjustment has no amount. Each calculation of the period that
   carries it computes the difference against the original result plus every
@@ -1818,6 +1821,9 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `payroll.registers.generate`           |                A |            A |              A |                   A |                A |       A |        C |       R |
 | `payroll.payment_exports.generate`     |                C |            — |              — |                   A |                A |       A |        — |       R |
 | `payroll.disbursement.update`          |                — |            — |              — |                   C |                C |       A |        — |       R |
+| `payroll.accounting_exports.generate`  |                — |            — |              — |                   A |                — |       — |        — |       — |
+| `payroll.export_detail.read`           |                — |            — |              — |                   A |                — |       — |        — |       — |
+| `payroll.export_outcomes.record`       |                — |            — |              — |                   A |                — |       — |        — |       — |
 | `payroll.audit.read`                   |                R |            R |              R |                   R |                R |       R |        R |       A |
 
 `payroll.periods.read`, held Agency-wide, reads a period's Payroll Exceptions
@@ -1838,6 +1844,24 @@ the system supersedes a Payslip when its payroll is voided (§5.21).
 Payment Export of a `FINALIZED` period and downloads its CSV, which carries
 full account numbers, and its masked reconciliation summary; each download is
 an Audit Event (payroll-schema.md §12, #337).
+
+`payroll.registers.generate`, held Agency-wide, generates the Payroll
+Register of a `FINALIZED` period, or returns the one already generated; the
+generation is an Audit Event (payroll-schema.md §12, #353). Like generating
+the Payment Export, it claims no payroll function.
+
+The same permission generates and reads the Contribution Summary and the
+GSIS, PhilHealth, Pag-IBIG, and Employees' Compensation Remittance Schedules
+of a `FINALIZED` period: Structured Exports for review that file and remit
+nothing (payroll-schema.md §12, #354).
+
+`payroll.accounting_exports.generate`, held Agency-wide, generates the
+Finalized Payroll Accounting Support Export of a `FINALIZED` period and
+downloads it. `payroll.export_detail.read` downloads its Employee Detail
+Companion, which holds employee-level pay, and
+`payroll.export_outcomes.record` records a Payroll Export External Outcome
+against it. Each download is an Audit Event and is not an outcome
+(payroll-schema.md §12, #355).
 
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,

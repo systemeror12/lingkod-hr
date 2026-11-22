@@ -616,8 +616,10 @@ period's code, run type, dates, and `carries_adjustments` fixed, creates it
 
 A special period carries Payroll Adjustments only with `carries_adjustments`.
 The trigger accepts that in place of a named component. A regular period
-always carries them (section 10). Until Payroll Adjustments exist, the create
-command does not set it, so a special period always names a component.
+always carries them (section 10). The create command sets it only on a special
+period, which may then name no component, and refuses it on a regular one
+with `PAYROLL_PERIOD_REGULAR_CARRIES_ADJUSTMENTS` (#356). Starting such a
+period's calculation needs no named component.
 
 A period becomes `VOIDED` in two ways (#330). The Payroll Preparer cancels a
 `DRAFT` period with a reason: `void_reason`, `voided_by_membership_id`, and
@@ -782,18 +784,23 @@ CREATE TABLE payroll_rule_snapshot_items (
     REFERENCES national_payroll_rule_versions (id),
   agency_payroll_applicability_id uuid,
   authorized_payroll_component_input_id uuid,
+  payroll_adjustment_id uuid,
   CHECK (num_nonnulls(national_payroll_rule_version_id,
                       agency_payroll_applicability_id,
-                      authorized_payroll_component_input_id) = 1),
+                      authorized_payroll_component_input_id,
+                      payroll_adjustment_id) = 1),
   FOREIGN KEY (agency_id, payroll_rule_snapshot_id)
     REFERENCES payroll_rule_snapshots (agency_id, id),
   FOREIGN KEY (agency_id, agency_payroll_applicability_id)
     REFERENCES agency_payroll_applicabilities (agency_id, id),
   FOREIGN KEY (agency_id, authorized_payroll_component_input_id)
     REFERENCES authorized_payroll_component_inputs (agency_id, id),
+  FOREIGN KEY (agency_id, payroll_adjustment_id)
+    REFERENCES payroll_adjustments (agency_id, id),
   UNIQUE (payroll_rule_snapshot_id, national_payroll_rule_version_id),
   UNIQUE (payroll_rule_snapshot_id, agency_payroll_applicability_id),
-  UNIQUE (payroll_rule_snapshot_id, authorized_payroll_component_input_id)
+  UNIQUE (payroll_rule_snapshot_id, authorized_payroll_component_input_id),
+  UNIQUE (payroll_rule_snapshot_id, payroll_adjustment_id)
 );
 ```
 
@@ -824,6 +831,16 @@ with one that counts it beside `national_payroll_rule_version_id` (#346).
 Migration 0159 adds `agency_payroll_applicability_id` with its foreign key and
 UNIQUE, and replaces the CHECK again (#618). The snapshot references every
 applicability record of the Agency whose effective period overlaps the period.
+
+Migration 0190 adds `payroll_adjustment_id` with its foreign key and UNIQUE,
+and replaces the CHECK again (#356). The snapshot of a regular period, and of
+a special period with `carries_adjustments`, names every `OPEN` Payroll
+Adjustment of the Agency, which that calculation version carries, and
+references the rule versions, Authorized Payroll Component Inputs, and
+applicability records in effect on each original period's dates. None of
+them is required, since the original period was calculated with them, and
+the carrying period's own dates keep the required-kind check. An adjustment
+opened after the snapshot is carried by the next calculation.
 
 ---
 
@@ -890,8 +907,13 @@ certification and the Certified Payroll Review Export bind one exact version
 continuous segment: Service Segment, salary grade, step, pay basis, employment
 fraction, salary rate, and their sources.
 
-Migration 0162 creates `payroll_employees` (#621); `payroll_holds` arrives
-with the hold command. The calculation writes one result for each Employee
+Migration 0162 creates `payroll_employees` (#621). Migration 0190 creates
+`payroll_holds` (#356), because a `PAYROLL_HOLD` adjustment cause references
+it. Its trigger admits a hold only while its period is `DRAFT`, resting on a
+`BLOCKING` exception of that period naming its Employee, lets an `UPDATE`
+only lift it, once, in `DRAFT`, and rejects every `DELETE`. The place and
+lift command is not built yet, so `hris_app` holds only `SELECT`. The
+calculation writes no result for an Employee under an active hold. The calculation writes one result for each Employee
 with a Service Segment on any date of the period: `CALCULATED` with its lines,
 or `EXCEPTION` with a blocking exception, the frozen basis, zero totals, and no
 line. A check's blocking exception (§10) names the Employee and leaves the
@@ -988,7 +1010,11 @@ Lines are inserted with their result. A trigger rejects every `UPDATE` and
 Migration 0162 creates `payroll_lines` (#621). A line joins its result only in
 the transaction that wrote the result, and every `UPDATE` and `DELETE` is
 rejected. Each column arrives with the calculator that needs it:
-`payroll_adjustment_id` with Payroll Adjustments (#330). There is no
+`payroll_adjustment_id` with Payroll Adjustments (#330), in migration 0190
+(#356). Its insert guard then also requires the adjustment to be `OPEN`, of
+the result's Employee, and named by the result's version's snapshot. An
+adjustment line rests on no `payroll_line_sources` row: the original period
+consumed its sources. There is no
 `taxable_amount`: each line records its tax treatment in
 `source_snapshot.taxTreatment`, and the Tax Line holds the result's taxable and
 non-taxable compensation (section 9).
@@ -1772,6 +1798,69 @@ decision, an approved monthly amount, or an adjustment settled across more
 than one period. #648 adds them. Voiding the original period cancels its open
 adjustments, and voiding a period that carried one returns it to `OPEN`.
 
+Migration 0190 creates both tables (#356) with forced RLS under the Agency
+policy. `hris_app` may insert both and update only an adjustment's `status`,
+`posted_by_payroll_period_id`, and `posted_at`. A trigger admits an
+adjustment only `OPEN` and against a `FINALIZED` period, lets it change only
+from `OPEN` to `POSTED`, in the transaction that finalizes a different period
+carrying it, and rejects every `DELETE`; cancelling arrives with the void
+(#358). A cause joins only an `OPEN` adjustment, which it locks `FOR SHARE`,
+so a posting waits for it or it for the posting, and a `PAYROLL_HOLD` cause
+only in the finalization of the held period, naming that period's active hold
+of the Employee. Causes are immutable. `SOURCE_CORRECTION` arrives with #650.
+
+`RECALCULATION` is the command
+`POST /agencies/:agencyId/payroll-periods/:periodId/adjustments`, with a
+`reason` and an optional `employeeId`. It needs `payroll.inputs.adjust`
+Agency-wide, claims no payroll function, and writes one
+`PAYROLL_ADJUSTMENT_RECALCULATION_OPENED` Audit Event on the original period.
+It refuses a period that is not `FINALIZED` with
+`PAYROLL_PERIOD_NOT_FINALIZED`, and an Employee or period of another Agency
+as not found. "All of its Employees" are those with a result in its final
+version and those an adjustment against it already names, such as a held
+Employee (_reading_). An Employee of the Agency with no result in it may be
+named, so a late Personnel record can be paid against an empty original.
+
+How the carrying calculation computes a difference, where the sources are
+silent (_readings_, #356):
+
+- The recalculation runs the calculators before the withholding tax for the
+  original period's run type and dates, on the compensation basis Personnel
+  now records for them, the carrying snapshot's rules for those dates, and
+  the Payroll Inputs and Attendance Payroll Facts the original version's own
+  lines rest on, whatever their status. It reads no deficit charge, which the
+  original's finalization settled. An Employee with no service in those dates
+  recalculates to nothing.
+- The difference is taken per component and line type, against the original
+  version's own lines plus the lines of every `POSTED` adjustment for the same
+  Employee and period. `WITHHOLDING_TAX` and `LOAN_DEDUCTION` are left out on
+  both sides: the carrying period's own withholding tax and Deduction
+  Obligations apply to what it pays. A difference of zero writes no line.
+- Each line has no quantity or rate, the recalculated lines' rule version
+  when they share one, and in `source_snapshot` the adjustment and original
+  period, the recalculated and previous amounts, the recalculated lines, and
+  their `taxTreatment`. The lines are written before the carrying period's
+  withholding tax, so it taxes them as compensation paid in that period, by
+  that treatment. The contributions never read them.
+- The contribution calculators run for the original month, so a contribution
+  difference is a Payroll Line. No Contribution Line is written for it: the
+  carrying result's Contribution Lines hold its own month.
+- The direction is the net difference, earnings less deductions. A negative
+  one writes no line and a `PAYROLL_ADJUSTMENT_NEGATIVE` warning naming the
+  adjustment, so certification and approval are not blocked.
+- A recalculation that blocks writes no line and blocks the Employee, its
+  exceptions naming the adjustment and original period.
+- An Employee with no service in the carrying period gets a result of the
+  adjustment lines and their withholding tax only. A special period that
+  names no component pays only adjustments: an Employee it owes no positive
+  difference gets no result there, and the adjustment waits for the next
+  regular period.
+- A further cause is refused with `PAYROLL_ADJUSTMENT_IN_PAYROLL` while a
+  period's current version past `DRAFT`, and not yet `FINALIZED`, carries the
+  adjustment, because that version's difference is already calculated and the
+  cause would not be counted. Once that period is finalized, a new cause opens
+  a new adjustment against what is then posted.
+
 ---
 
 ## 11. Finalization Transaction
@@ -1795,8 +1884,8 @@ The database transaction must:
 12. commit before generating documents or emails.
 
 Migration 0184 and `PayrollFinalizationService` build every step but 10,
-which arrives with the Payroll Adjustment tables (#356). The service refuses
-each check with the codes of section 5.
+which migration 0190 adds with the Payroll Adjustment tables (#356). The
+service refuses each check with the codes of section 5.
 
 - Step 5 compares each result of the version with its lines: `gross_amount`
   the `EARNING` lines, `total_deductions` the `DEDUCTION` lines, and
@@ -1813,6 +1902,15 @@ each check with the codes of section 5.
   written).
 - No calculator pays a `ONCE` Authorized Payroll Component Input yet, so
   finalization consumes none; the calculator that pays one adds it here.
+- Step 10 posts every adjustment the version's snapshot names whose Employee
+  has a result in the version and that has no `PAYROLL_ADJUSTMENT_NEGATIVE`
+  warning there, zero differences included (_reading_: it was recalculated
+  and nothing is owed). An Employee held out of the carrying period has no
+  result, so their carried adjustments stay `OPEN`. One another payroll
+  posted first refuses with `PAYROLL_SOURCE_CONSUMED`. It then opens an
+  adjustment, with a `PAYROLL_HOLD` cause, for each Employee under an active
+  hold of the period. The `PAYROLL_PERIOD_FINALIZED` Audit Event names both
+  lists.
 - Step 11 appends one `PAYROLL_PERIOD_FINALIZED` Outbox Event per period,
   aggregate `PayrollPeriod`, idempotency key `payroll-period-finalized:<id>`,
   with the period, version, hash, certification, and `finalizedAt`. Work after
@@ -1961,6 +2059,77 @@ Version. Then come gross, total deductions, and net. The same result always
 renders the same bytes (_reading_: no format is prescribed, and the payroll
 ERD records the Payslip as a rendered PDF, so it is plain text in Helvetica
 on A4).
+
+```sql
+CREATE TABLE payroll_registers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  document_id uuid NOT NULL,
+  result_count integer NOT NULL CHECK (result_count >= 0),
+  gross_amount numeric(19,4) NOT NULL,
+  total_deductions numeric(19,4) NOT NULL,
+  net_amount numeric(19,4) NOT NULL,
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (net_amount = gross_amount - total_deductions),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, document_id)
+    REFERENCES documents (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Payroll Register (PAY-009, #353) is generated from a `FINALIZED` Payroll
+Period by `POST .../payroll-periods/:periodId/register`, which needs
+`payroll.registers.generate` held Agency-wide and claims no payroll function.
+It reads the period's `FINALIZED` results at the finalized calculation
+version and their lines, and proves them with the Payroll Export
+Reconciliation the Certified Payroll Review Export uses: the results still
+hash to the certification in force, every line names a catalogued component
+of its line type, each result's earning and deduction lines sum to its gross
+and total deductions, and net is gross less deductions. A failure refuses
+with `PAYROLL_REGISTER_RECONCILIATION_FAILED`, naming each mismatch, and
+stores nothing; a period not `FINALIZED` refuses with
+`PAYROLL_REGISTER_PAYROLL_NOT_FINALIZED`.
+
+The PDF is rendered from those rows and stored through the shared document
+service under `payroll-registers/<agency>/<period>/<sha256>.pdf` before any
+write. One transaction then locks the period and, only while it has no
+register, records an `APPROVED`, issued, `CONFIDENTIAL` Document of type
+`PAYROLL_REGISTER` created by the generating person, the register with the
+reconciled totals, and a `PAYROLL_REGISTER_GENERATED` Audit Event
+(idempotency key `generated`) naming the Document Version, its content hash,
+the calculation hash, and the totals. A period has one register: generating
+again, by anyone permitted, returns the stored one and writes nothing, and of
+two at once one records it and the other returns it.
+
+Migration 0187 creates the table with forced RLS. Its trigger rejects every
+`UPDATE` and `DELETE`, admits a register only for a `FINALIZED` period at its
+calculation version, and only when its count and totals equal that version's
+`FINALIZED` results and the sums of their `EARNING` and `DEDUCTION` lines.
+`hris_app` holds `SELECT` and `INSERT` only. The migration grants
+`payroll.registers.generate` Agency-wide to the Payroll Preparer, the HR
+Certifier, the Budget Officer, the Accounting Reviewer, the Payroll Approver,
+and the Cashier; the HR Administrator's `C` and the Auditor's `R` are not
+seeded.
+
+The PDF is LingkodHR's own Printable System View (#617), with no form number,
+form title, or conformance claim. It says it lists the finalized results of
+one period and is not proof of payment, and names the Agency, the period,
+its payment date and finalization time, and the calculation version and
+hash. It lists each result by agency employee number with the Employee's
+name, gross, total deductions, and net; then each pay component's total and
+line count, by line type; then gross, total deductions, net, employer
+shares, and informational totals (_reading_: no register layout is
+prescribed, so it carries what the finalized results and lines hold, in the
+Payslip's plain-text PDF). The same finalized period always renders the
+same bytes. A voided payroll's supersession of its register arrives with the
+void command (#643).
 
 ```sql
 CREATE TABLE payroll_export_contract_versions (
@@ -2237,6 +2406,229 @@ A superseding export, its retry linkage, a voided payroll's supersession
 have no `supersedes_payment_export_id`, `prior_payment_instruction_id`, or
 `retry_reason`, and `payroll_period_id` is UNIQUE.
 
+```sql
+CREATE TABLE contribution_summaries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL,
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE remittance_schedules (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  contribution_summary_id uuid NOT NULL,
+  contribution_type text NOT NULL
+    CHECK (contribution_type IN ('GSIS','PHILHEALTH','PAGIBIG','EMPLOYEES_COMPENSATION')),
+  line_count integer NOT NULL CHECK (line_count >= 0),
+  employee_share_total numeric(19,4) NOT NULL,
+  employer_share_total numeric(19,4) NOT NULL,
+  total_amount numeric(19,4) NOT NULL,
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  CHECK (total_amount = employee_share_total + employer_share_total),
+  CHECK (contribution_type <> 'EMPLOYEES_COMPENSATION' OR employee_share_total = 0),
+  FOREIGN KEY (agency_id, contribution_summary_id)
+    REFERENCES contribution_summaries (agency_id, id),
+  UNIQUE (contribution_summary_id, contribution_type),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Contribution Summary and its four Remittance Schedules, one each for GSIS,
+PhilHealth, Pag-IBIG, and Employees' Compensation, are Structured Exports for
+review of one `FINALIZED` payroll's contributions (PAY-009, #354). They file
+and remit nothing (PAY-010), and carry no form number, form title, or
+issuer's layout (#617). `POST .../payroll-periods/:periodId/contribution-remittances`
+generates them; it needs `payroll.registers.generate` held Agency-wide and
+claims no payroll function. It locks the period, reads every Contribution
+Line (section 9) of the period's `FINALIZED` results at the finalized
+calculation version, and writes the summary, its schedules, and a
+`CONTRIBUTION_REMITTANCE_GENERATED` Audit Event (idempotency key
+`generated`) in one transaction. A period has one summary: generating again,
+by anyone permitted, returns the stored artifacts unchanged and writes
+nothing. `GET .../contribution-remittances/:summaryId` reads them with the
+same permission. A period that is not `FINALIZED` is refused with
+`CONTRIBUTION_REMITTANCE_PAYROLL_NOT_FINALIZED`. Migration 0188 adds
+`CONTRIBUTION_REMITTANCE` version 1 to the contract versions; its definition
+names every field, the line order, and the control rules.
+
+Each artifact is canonical JSON, like the Certified Payroll Review Export:
+keys sorted at every depth, amounts as four-place decimal strings, as the
+Contribution Lines store them. Every artifact carries the contract, its
+statement that it is not a filing or a remittance and follows no issuer's
+format, the Agency, the summary's id, the generation time, and the period
+with its finalized version and finalization time. A schedule lists each
+Contribution Line of its type by agency employee number: the Employee's
+name, the base, the Employee's share, the Agency's share as employer, their
+sum, and the National Payroll Rule Version's id and code. Its totals are the
+line count and the sums of those lines. A type with no line, such as every
+type of a special period (section 9), still has a schedule, with no lines
+and zero totals. The summary lists each schedule's id, checksum, line count,
+and totals, then the totals over every type, so the five artifacts are
+tied. `checksum` is the SHA-256 of `content`, and a CHECK keeps the two
+together.
+
+Triggers keep both tables immutable, even for the database owner. A summary
+is admitted only for a `FINALIZED` period at its calculation version, and a
+deferred trigger refuses to commit one without a schedule of each of the four
+types. A schedule is admitted only in the transaction that writes its
+summary, and only when its line count and Employee and employer share totals
+equal the count and sums of the Contribution Lines of its type in the
+summary's `FINALIZED` results, so a schedule's totals always equal its
+lines. `hris_app` holds `SELECT` and `INSERT` only, and RLS is forced.
+Both need `payroll.registers.generate` held Agency-wide, which migration
+0187 seeds for the Payroll Register (#353).
+
+- _Reading_: hris-controls.md §6.10 names no permission for remittance
+  schedules, and #12's story 10 has the Payroll Preparer produce "the
+  register, variance report and remittance schedules" together, so they share
+  `payroll.registers.generate`.
+- _Reading_: "the Agency and Employee contribution summary" is the summary of
+  the Employee's share and the Agency's share as employer of each type, the
+  two shares a Contribution Line holds; the per-Employee detail is on the
+  schedules.
+- _Reading_: the artifacts name Employees by agency employee number and legal
+  name and carry no government identifier, such as a GSIS, PhilHealth, or
+  Pag-IBIG number. No issuer format is claimed, so none is required, and the
+  identifiers stay behind their own access controls.
+- _Reading_: the artifacts are small JSON and hold no protected value, so
+  they are stored as `content` and not through the document service; the
+  logical ERD's `document_id` and `status` are not used, and reading them is
+  not separately audited, as with the Certified Payroll Review Export. A
+  voided payroll's supersession of them arrives with the void transaction.
+
+```sql
+CREATE TABLE finalized_payroll_accounting_support_exports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  calculation_hash text NOT NULL CHECK (calculation_hash ~ '^[0-9a-f]{64}$'),
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  employee_detail_content text NOT NULL,
+  employee_detail_checksum text NOT NULL
+    CHECK (employee_detail_checksum
+           = encode(sha256(convert_to(employee_detail_content, 'UTF8')), 'hex')),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE payroll_export_external_outcomes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  accounting_support_export_id uuid NOT NULL,
+  outcome text NOT NULL CHECK (outcome IN ('HANDED_OFF','RECEIVED','RETURNED','POSTED')),
+  external_reference text CHECK (external_reference IS NULL OR btrim(external_reference) <> ''),
+  evidence_document_version_id uuid,
+  reason text,
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (outcome = 'HANDED_OFF'
+         OR (external_reference IS NOT NULL AND evidence_document_version_id IS NOT NULL)),
+  CHECK ((outcome = 'RETURNED') = (reason IS NOT NULL)
+         AND (reason IS NULL OR btrim(reason) <> '')),
+  FOREIGN KEY (agency_id, accounting_support_export_id)
+    REFERENCES finalized_payroll_accounting_support_exports (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id)
+);
+```
+
+A Finalized Payroll Accounting Support Export (#29, #355) is generated from a
+`FINALIZED` Payroll Period by
+`POST .../payroll-periods/:periodId/accounting-support-exports`, which needs
+`payroll.accounting_exports.generate` held Agency-wide and claims no payroll
+function. It locks the period, reads every result and Payroll Line of the
+finalized calculation version, and writes the export and a
+`PAYROLL_ACCOUNTING_EXPORT_GENERATED` Audit Event (idempotency key
+`generated`) in one transaction. A period has one export: generating again,
+by anyone permitted, returns the stored one, its checksums unchanged, with
+the outcomes recorded against it, and writes nothing. Migration 0189 adds
+`FINALIZED_PAYROLL_ACCOUNTING_SUPPORT_EXPORT` version 1 to the contract
+versions.
+
+It reuses #636's Classified Payroll Export Lines and Payroll Export
+Reconciliation unchanged, bound to the calculation hash of the certification
+the payroll was finalized under (_reading_: finalization verified the results
+against that certification, section 11, so it is the hash of the finalized
+result). `content` is canonical JSON like the review export's. It carries
+the contract, a statement that it is not a journal entry, claims no debit,
+credit, or posting, and that neither generating nor downloading it records
+that a receiving system received, accepted, or posted it, the period, the
+finalization, the classified lines, the reconciliation, and the Employee
+Detail Companion's checksum, which ties the two artifacts. It holds no
+employee-level detail.
+
+The Employee Detail Companion is `employee_detail_content`: canonical JSON
+naming the export, with one entry per result, ordered by agency employee
+number, giving the Employee's number and legal name at generation, the
+result's gross, deductions, and net, and its own classified lines. Its
+`totals`, the employees' classified lines and reconciliations summed, must
+equal the export's classified lines and reconciliation, as part of the same
+reconciliation (_reading_: the glossary has the reconciliation prove
+"companion-detail totals agree before a payroll Structured Export is
+generated", so the companion is generated and reconciled with every export,
+and what is optional is obtaining it, under its own permission). A
+reconciliation failure refuses with `PAYROLL_EXPORT_RECONCILIATION_FAILED` and
+stores nothing; a period that is not `FINALIZED` is refused with
+`PAYROLL_ACCOUNTING_EXPORT_PAYROLL_NOT_FINALIZED`.
+
+`GET .../accounting-support-exports/:exportId/content` downloads the export
+and needs `payroll.accounting_exports.generate`.
+`GET .../accounting-support-exports/:exportId/employee-detail` downloads the
+companion and needs `payroll.export_detail.read`. Each
+download is a `PAYROLL_ACCOUNTING_EXPORT_DOWNLOADED` Audit Event naming the
+artifact and its checksum, and records no outcome.
+
+A Payroll Export External Outcome is append-only evidence recorded by hand by
+`POST .../accounting-support-exports/:exportId/external-outcomes`, which needs
+`payroll.export_outcomes.record` and claims no payroll function.
+`HANDED_OFF` records a handoff and may name an external reference and
+evidence. `RECEIVED`, `RETURNED`, and `POSTED` are externally evidenced, so
+each names the external reference, such as a JEV number, and the exact
+finalized Document Version of the Agency that evidences it, refused with
+`PAYROLL_EXPORT_OUTCOME_EVIDENCE_INVALID` otherwise. A return also gives its
+reason (_reading_: the glossary names a handoff and an externally evidenced
+receipt, return, or posting, and #29 lists the external reference, outcome,
+evidence, actor, and timestamp; the reason on a return follows the checkpoint
+review). Outcomes may come in any order and any number; each is a
+`PAYROLL_EXPORT_EXTERNAL_OUTCOME_RECORDED` Audit Event, and none changes the
+export. Outcomes are recorded against this export only; the Certified Payroll
+Review Export's outcomes are its checkpoint reviews.
+
+Triggers keep the export immutable, even for the database owner, admitting
+it only for a `FINALIZED` period at its calculation version, and reject every
+`UPDATE` and `DELETE` of an outcome. `hris_app` holds `SELECT` and `INSERT`
+on both. Migration 0189 grants the three permissions Agency-wide to the
+Accounting Reviewer only. A voided payroll's supersession of its export
+(#643) is not built yet, so the table has no `superseded_at` and
+`payroll_period_id` is UNIQUE.
+
 Files are stored through the shared document service.
 
 ---
@@ -2262,6 +2654,9 @@ Application permissions separately control:
 - Payment Exports, whose CSV carries full account numbers, so
   `payroll.payment_exports.generate` is its bank-detail control and each
   download is audited;
+- the Finalized Payroll Accounting Support Export, its Employee Detail
+  Companion, which holds employee-level pay, and its Payroll Export External
+  Outcomes, each under its own permission;
 - Disbursement Outcomes.
 
 A permission is not enough on its own: `payroll_period_actors` keeps each
