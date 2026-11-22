@@ -366,9 +366,10 @@ export type ReviewAction =
   | { kind: 'revoke'; primary: false }
   | { kind: 'approve'; primary: true }
   | { kind: 'return-approved'; primary: false }
-  | { kind: 'finalize'; primary: true };
+  | { kind: 'finalize'; primary: true }
+  | { kind: 'release'; primary: true };
 
-/** The permission each review command needs, Agency-wide (§6.10). */
+/** The permission each review command, and each payslip command, needs Agency-wide (§6.10). */
 export const REVIEW_PERMISSIONS = [
   'payroll.periods.certify',
   'payroll.periods.return',
@@ -378,6 +379,8 @@ export const REVIEW_PERMISSIONS = [
   'payroll.periods.approve',
   'payroll.periods.return_approved',
   'payroll.periods.finalize',
+  'payroll.payslips.release',
+  'payroll.payslips.withhold',
 ] as const;
 
 export type ReviewPermission = (typeof REVIEW_PERMISSIONS)[number];
@@ -438,6 +441,82 @@ export function reviewActions(
       break;
   }
   return actions;
+}
+
+/**
+ * Releasing a Finalized period's payslips, offered only while the server's list of them has one
+ * Ready. Without the list nothing is offered. The API says what it released and what is still
+ * generating.
+ */
+export function payslipActions(
+  status: PayrollPeriodStatus,
+  held: ReadonlySet<string>,
+  payslips: readonly PeriodPayslipEntry[] | null,
+): ReviewAction[] {
+  const ready = payslips?.some((entry) => entry.payslip?.status === 'READY') ?? false;
+  return status === 'FINALIZED' && held.has('payroll.payslips.release') && ready
+    ? [{ kind: 'release', primary: true }]
+    : [];
+}
+
+/** A Payslip as `GET /payroll-periods/:id/payslips` and the payslip commands return it. */
+export interface PayslipRecord {
+  id: string;
+  payrollPeriodId: string;
+  payrollEmployeeId: string;
+  status: string;
+  releasedAt: string | null;
+  releasedByMembershipId: string | null;
+  withheldAt: string | null;
+  withheldByMembershipId: string | null;
+  withholdReason: string | null;
+}
+
+/** One result of a period with its Payslip; null while generation has not created it yet. */
+export interface PeriodPayslipEntry {
+  payrollEmployeeId: string;
+  employee: { id: string; employeeNumber: string; legalName: string };
+  payslip: PayslipRecord | null;
+}
+
+/** A Payslip's status as the API names it: Generating never reads as Ready, nor Ready as Released. */
+export function payslipStatusDisplay(payslip: { status: string } | null): StatusDisplay {
+  if (!payslip) return { label: 'Not generated yet', tone: 'neutral' };
+  switch (payslip.status) {
+    case 'GENERATING':
+      return { label: 'Generating…', tone: 'warning' };
+    case 'READY':
+      return { label: 'Ready', tone: 'info' };
+    case 'WITHHELD':
+      return { label: 'Withheld', tone: 'warning' };
+    case 'RELEASED':
+      return { label: 'Released', tone: 'success' };
+    case 'SUPERSEDED':
+      return { label: 'Superseded', tone: 'neutral' };
+    default:
+      return { label: payslip.status, tone: 'neutral' };
+  }
+}
+
+/** What `POST /payroll-periods/:id/payslips/release` answers. */
+export interface PeriodPayslipRelease {
+  payrollPeriodId: string;
+  releasedPayslipIds: string[];
+  generatingCount: number;
+}
+
+const payslipCount = (count: number) => (count === 1 ? '1 payslip' : `${count} payslips`);
+
+/** What a release did, as the API counted it; payslips still generating never read as released. */
+export function releaseNotice(code: string, release: PeriodPayslipRelease): string {
+  const released = release.releasedPayslipIds.length;
+  const done =
+    released === 0
+      ? `No payslip of ${code} was Ready, so none was released.`
+      : `Released ${payslipCount(released)} of ${code} to ${released === 1 ? 'its Employee' : 'their Employees'}.`;
+  if (release.generatingCount === 0) return done;
+  const [verb, pronoun] = release.generatingCount === 1 ? ['is', 'it is'] : ['are', 'they are'];
+  return `${done} ${payslipCount(release.generatingCount)} ${verb} still generating; release again once ${pronoun} Ready.`;
 }
 
 /** One entry of a period's Approvals: a step, and who took it when, or that it is pending. */

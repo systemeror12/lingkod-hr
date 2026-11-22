@@ -83,6 +83,26 @@ export class PaymentExportsController {
     );
   }
 
+  /**
+   * Retry a REJECTED or RETURNED Payment Instruction to its Employee's corrected
+   * destination: a superseding Payment Export with one linked new instruction.
+   */
+  @Post(
+    ':agencyId/payroll-periods/:periodId/payment-exports/:exportId/instructions/:instructionId/retries',
+  )
+  @RequirePermission('payroll.payment_exports.generate')
+  async retry(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Param('exportId') exportId: string,
+    @Param('instructionId') instructionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ export: PaymentExportView }> {
+    const target = this.parseInstruction(agencyId, periodId, exportId, instructionId, context);
+    return { export: await translate(context, () => this.service.retry(context, target, body)) };
+  }
+
   /** Record a Payment Instruction's next Disbursement Outcome; claims DISBURSEMENT on the period. */
   @Post(
     ':agencyId/payroll-periods/:periodId/payment-exports/:exportId/instructions/:instructionId/disbursement-outcomes',
@@ -96,6 +116,19 @@ export class PaymentExportsController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<{ outcome: DisbursementOutcomeView }> {
+    const target = this.parseInstruction(agencyId, periodId, exportId, instructionId, context);
+    return {
+      outcome: await translate(context, () => this.outcomes.record(context, target, body)),
+    };
+  }
+
+  private parseInstruction(
+    agencyId: string,
+    periodId: string,
+    exportId: string,
+    instructionId: string,
+    context: RequestContext,
+  ) {
     const [period, paymentExport] = this.parse(agencyId, periodId, exportId, context);
     const instruction = parseId(
       instructionId,
@@ -103,10 +136,7 @@ export class PaymentExportsController {
       'PAYMENT_INSTRUCTION_NOT_FOUND',
       'The Payment Instruction',
     );
-    const target = { periodId: period, exportId: paymentExport, instructionId: instruction };
-    return {
-      outcome: await translate(context, () => this.outcomes.record(context, target, body)),
-    };
+    return { periodId: period, exportId: paymentExport, instructionId: instruction };
   }
 
   private parse(

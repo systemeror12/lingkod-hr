@@ -94,6 +94,34 @@ describe('PayrollReview', () => {
   });
 });
 
+describe('PayrollReview on a finalized period', () => {
+  it('offers the Payroll Approver to release its Ready payslips', () => {
+    const finalized: PayrollPeriodReview = {
+      ...review,
+      status: 'FINALIZED',
+      finalizedAt: '2026-11-21T03:00:00.000Z',
+      finalizedByMembershipId: 'member-4',
+      finalizedByName: 'Pat Approver',
+    };
+    const html = renderToStaticMarkup(
+      <PayrollReview
+        acting={{ kind: 'release', primary: true }}
+        actions={[{ kind: 'release', primary: true }]}
+        code="P-1"
+        evidenceOptions={[]}
+        evidenceReadable={false}
+        onAct={() => undefined}
+        onDone={async () => undefined}
+        request={async () => null}
+        review={finalized}
+      />,
+    );
+    expect(html).toContain('aria-label="Release payslips"');
+    expect(html).toContain('A payslip still generating stays unreleased');
+    expect(render(['payroll.periods.finalize'])).not.toContain('Release payslips');
+  });
+});
+
 describe('StageBar with checkpoint reviews', () => {
   it('reads Reviewed 1/2 after one confirmed review, not yet reached', () => {
     const html = renderToStaticMarkup(<StageBar period={period} review={review} />);

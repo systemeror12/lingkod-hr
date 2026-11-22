@@ -5781,11 +5781,14 @@ model CertifiedPayrollReviewExport {
 
 /// The immutable, checksummed Payment Export of one FINALIZED payroll (#28,
 /// #337). Its CSV is rendered from these rows and its instructions, and
-/// `checksum` is of the rendering's bytes; the summary is stored.
+/// `checksum` is of the rendering's bytes; the summary is stored. The partial
+/// unique index payment_exports_period_key on (payroll_period_id) WHERE
+/// supersedes_payment_export_id IS NULL lives in migration 0198; Prisma
+/// cannot express it.
 model PaymentExport {
   id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                       String   @map("agency_id") @db.Uuid
-  payrollPeriodId                String   @unique(map: "payment_exports_period_key") @map("payroll_period_id") @db.Uuid
+  payrollPeriodId                String   @map("payroll_period_id") @db.Uuid
   calculationVersion             Int      @map("calculation_version")
   paymentDate                    DateTime @map("payment_date") @db.Date
   payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
@@ -5801,6 +5804,8 @@ model PaymentExport {
   instructionTotal               Decimal  @map("instruction_total") @db.Decimal(19, 2)
   excludedResultCount            Int      @map("excluded_result_count")
   excludedResultTotal            Decimal  @map("excluded_result_total") @db.Decimal(19, 2)
+  /// The export a retry supersedes (#643); null for the period's original.
+  supersedesPaymentExportId      String?  @map("supersedes_payment_export_id") @db.Uuid
 
   @@unique([agencyId, id], map: "payment_exports_agency_id_id_key")
   @@map("payment_exports")
@@ -5824,6 +5829,9 @@ model PaymentInstruction {
   accountHolderName           String  @map("account_holder_name")
   amount                      Decimal @db.Decimal(19, 2)
   paymentReference            String  @map("payment_reference")
+  /// The REJECTED or RETURNED attempt this instruction retries (#643).
+  priorPaymentInstructionId   String? @unique(map: "payment_instructions_prior_key") @map("prior_payment_instruction_id") @db.Uuid
+  retryReason                 String? @map("retry_reason")
 
   @@unique([paymentExportId, payrollEmployeeId], map: "payment_instructions_export_result_key")
   @@unique([agencyId, id], map: "payment_instructions_agency_id_id_key")
@@ -5866,6 +5874,24 @@ model RemittanceSchedule {
   @@unique([contributionSummaryId, contributionType], map: "remittance_schedules_summary_type_key")
   @@unique([agencyId, id], map: "remittance_schedules_agency_id_id_key")
   @@map("remittance_schedules")
+}
+
+/// The Payroll Variance and Exception Report of one FINALIZED payroll
+/// (#645): a Structured Export for review, stored as canonical JSON with its
+/// checksum. Immutable; the foreign keys are in migration 0199.
+model PayrollVarianceReport {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "payroll_variance_reports_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  content                        String
+  checksum                       String
+
+  @@unique([agencyId, id], map: "payroll_variance_reports_agency_id_id_key")
+  @@map("payroll_variance_reports")
 }
 
 /// The Tax Summary, Loan Remittance Summary, and Deduction Register of one
@@ -6063,6 +6089,41 @@ model PayrollRegister {
 
   @@unique([agencyId, id], map: "payroll_registers_agency_id_id_key")
   @@map("payroll_registers")
+}
+
+/// A Legacy Register Comparison: one imported legacy payroll register compared
+/// with a FINALIZED Payroll Period's lines (#359). Immutable; the same file and
+/// period give one comparison. Migration 0195 holds its foreign keys, guard,
+/// and RLS.
+model LegacyRegisterComparison {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String   @map("agency_id") @db.Uuid
+  payrollPeriodId        String   @map("payroll_period_id") @db.Uuid
+  calculationVersion     Int      @map("calculation_version")
+  contentHash            String   @map("content_hash")
+  rowCount               Int      @map("row_count")
+  comparedByMembershipId String   @map("compared_by_membership_id") @db.Uuid
+  comparedAt             DateTime @default(now()) @map("compared_at") @db.Timestamptz(6)
+
+  @@unique([payrollPeriodId, contentHash], map: "legacy_register_comparisons_period_content_key")
+  @@unique([agencyId, id], map: "legacy_register_comparisons_agency_id_id_key")
+  @@map("legacy_register_comparisons")
+}
+
+/// One Employee and pay component whose legacy and payroll amounts differ.
+/// A NULL amount means that side has none. Written only with its comparison.
+model LegacyRegisterDifference {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  legacyRegisterComparisonId String   @map("legacy_register_comparison_id") @db.Uuid
+  employeeId                 String   @map("employee_id") @db.Uuid
+  payComponentId             String   @map("pay_component_id") @db.Uuid
+  legacyAmount               Decimal? @map("legacy_amount") @db.Decimal(19, 4)
+  payrollAmount              Decimal? @map("payroll_amount") @db.Decimal(19, 4)
+
+  @@unique([legacyRegisterComparisonId, employeeId, payComponentId], map: "legacy_register_differences_comparison_employee_component_key")
+  @@unique([agencyId, id], map: "legacy_register_differences_agency_id_id_key")
+  @@map("legacy_register_differences")
 }
 
 /// A Payroll Line: one calculated amount of a result, with its source. Immutable.

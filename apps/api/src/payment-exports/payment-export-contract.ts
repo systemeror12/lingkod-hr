@@ -88,7 +88,10 @@ export type DestinationProblem = 'MISSING' | 'INEFFECTIVE' | 'UNVERIFIED';
 export class PaymentExportBlockedError extends Error {
   constructor(
     message: string,
-    readonly code: 'PAYMENT_EXPORT_DESTINATION_BLOCKED' | 'PAYMENT_EXPORT_RECONCILIATION_FAILED',
+    readonly code:
+      | 'PAYMENT_EXPORT_DESTINATION_BLOCKED'
+      | 'PAYMENT_EXPORT_RECONCILIATION_FAILED'
+      | 'PAYMENT_RETRY_DESTINATION_UNCHANGED',
   ) {
     super(message);
     this.name = 'PaymentExportBlockedError';
@@ -138,16 +141,9 @@ export function planPaymentExport(input: {
     }
     instructions.push({
       payrollEmployeeId: result.payrollEmployeeId,
-      payrollBankAccountId: destination.id,
       agencyEmployeeNumber: result.agencyEmployeeNumber,
       payeeLegalName: result.payeeLegalName,
-      destinationType: DESTINATION_TYPE,
-      institutionIdentifierScheme: INSTITUTION_IDENTIFIER_SCHEME,
-      institutionIdentifier: destination.bankCode,
-      // The HRIS keeps no bank catalogue, so version 1 repeats the bank code.
-      institutionName: destination.bankCode,
-      maskedAccountIdentifier: destination.maskedAccountNumber,
-      accountHolderName: destination.accountName,
+      ...destinationFields(destination),
       amount: net.toFixed(2),
       paymentReference: `${input.period.code}-${result.agencyEmployeeNumber}`,
     });
@@ -176,6 +172,86 @@ export function planPaymentExport(input: {
     throw reconciliationFailed('the controls do not account for every result');
   }
   return { instructions, excluded, controls };
+}
+
+/** The prior attempt a retry resends: its payee, amount, and reference, and where it went. */
+export type PaymentRetryPrior = Pick<
+  PlannedPaymentInstruction,
+  | 'payrollEmployeeId'
+  | 'payrollBankAccountId'
+  | 'agencyEmployeeNumber'
+  | 'payeeLegalName'
+  | 'amount'
+  | 'paymentReference'
+>;
+
+/**
+ * Plan a superseding Payment Export that retries one REJECTED or RETURNED
+ * instruction (#28, #643): the prior attempt's payee, amount, and payment
+ * reference, to the Employee's designated destination on `onDate`, which must
+ * be a corrected one. Its controls cover the one result it resends. A payee
+ * or amount change is a Payroll Adjustment (ADR 0016), never a retry.
+ */
+export function planPaymentRetry(input: {
+  prior: PaymentRetryPrior;
+  employeeId: string;
+  destinations: PaymentExportDestinationCandidate[];
+  onDate: string;
+}): PaymentExportPlan {
+  const { prior } = input;
+  const destination = designatedDestination(
+    input.destinations.filter((account) => account.employeeId === input.employeeId),
+    input.onDate,
+  );
+  if (typeof destination === 'string') {
+    throw new PaymentExportBlockedError(
+      `The retry is blocked: ${describeProblems([
+        { employeeNumber: prior.agencyEmployeeNumber, problem: destination },
+      ])}. Nothing was generated.`,
+      'PAYMENT_EXPORT_DESTINATION_BLOCKED',
+    );
+  }
+  if (destination.id === prior.payrollBankAccountId) {
+    throw new PaymentExportBlockedError(
+      `The retry of ${prior.agencyEmployeeNumber} would resend to the Payroll Bank Account of its prior attempt. Correct the destination first; nothing was generated.`,
+      'PAYMENT_RETRY_DESTINATION_UNCHANGED',
+    );
+  }
+  const amount = new Prisma.Decimal(prior.amount).toFixed(2);
+  return {
+    instructions: [
+      {
+        payrollEmployeeId: prior.payrollEmployeeId,
+        agencyEmployeeNumber: prior.agencyEmployeeNumber,
+        payeeLegalName: prior.payeeLegalName,
+        ...destinationFields(destination),
+        amount,
+        paymentReference: prior.paymentReference,
+      },
+    ],
+    excluded: [],
+    controls: {
+      sourceResultCount: 1,
+      sourceNetTotal: amount,
+      instructionCount: 1,
+      instructionTotal: amount,
+      excludedResultCount: 0,
+      excludedResultTotal: '0.00',
+    },
+  };
+}
+
+function destinationFields(destination: PaymentExportDestinationCandidate) {
+  return {
+    payrollBankAccountId: destination.id,
+    destinationType: DESTINATION_TYPE,
+    institutionIdentifierScheme: INSTITUTION_IDENTIFIER_SCHEME,
+    institutionIdentifier: destination.bankCode,
+    // The HRIS keeps no bank catalogue, so version 1 repeats the bank code.
+    institutionName: destination.bankCode,
+    maskedAccountIdentifier: destination.maskedAccountNumber,
+    accountHolderName: destination.accountName,
+  };
 }
 
 /**
@@ -289,6 +365,12 @@ export interface PaymentExportSnapshot {
   currency: string;
   period: PaymentExportPeriod;
   controls: PaymentExportControls;
+  /** Set on a superseding export: what it retries and why (#643). The CSV does not carry it. */
+  retry?: {
+    supersedesPaymentExportId: string;
+    priorPaymentInstructionId: string;
+    reason: string;
+  };
   instructions: (Omit<PlannedPaymentInstruction, 'payrollBankAccountId'> & {
     id: string;
     /** The full account identifier: the CSV carries it, the summary never does. */
@@ -395,6 +477,13 @@ export function renderPaymentExportSummary(
     `Payment date: ${period.paymentDate}`,
     `Currency: ${snapshot.currency}`,
     `Generated at: ${snapshot.generatedAt}`,
+    ...(snapshot.retry
+      ? [
+          `Supersedes Payment Export: ${snapshot.retry.supersedesPaymentExportId}`,
+          `Retry of Payment Instruction: ${snapshot.retry.priorPaymentInstructionId}`,
+          `Retry reason: ${snapshot.retry.reason}`,
+        ]
+      : []),
     `CSV SHA-256: ${csvChecksum}`,
     '',
     'Controls',

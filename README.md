@@ -154,7 +154,11 @@ payroll review, Payroll Period `E2E-REVIEW-2850-CLOTHING` waits For review, and
 one User holds each review function: `payroll.certifier@example.test` (HR
 Certifier), `payroll.budget@example.test` (Budget Officer),
 `payroll.accounting@example.test` (Accounting Reviewer), and
-`payroll.approver@example.test` (Payroll Approver). The seed
+`payroll.approver@example.test` (Payroll Approver). For payslip release,
+the Agency `E2E-PAYSLIPS` holds Payroll Period `E2E-PAYSLIP-2849-CLOTHING`,
+Finalized with two Ready payslips. `payslip.approver@example.test` (Payroll
+Approver) releases and withholds them, and `payslip.employee@example.test` and
+`payslip.other@example.test` each read their own once released. The seed
 refuses to run in production.
 
 To sign in locally:

@@ -35,6 +35,7 @@ import {
   PayrollReviewExportService,
   type CertifiedPayrollReviewExportView,
 } from './payroll-review-export.service';
+import { PayrollVoidService } from './payroll-void.service';
 
 const periodIdSchema = z.string().uuid();
 
@@ -53,6 +54,7 @@ export class PayrollPeriodsController {
     @Inject(PayrollFinalizationService)
     private readonly finalization: PayrollFinalizationService,
     @Inject(PayrollAdjustmentsService) private readonly adjustments: PayrollAdjustmentsService,
+    @Inject(PayrollVoidService) private readonly voids: PayrollVoidService,
   ) {}
 
   @Get(':agencyId/payroll-periods/:periodId')
@@ -212,6 +214,48 @@ export class PayrollPeriodsController {
     return {
       period: await translate(context, () => this.finalization.finalize(context, id, body)),
     };
+  }
+
+  /** Request the void of a FINALIZED period, with a reason and a supporting Document Version. */
+  @Post(':agencyId/payroll-periods/:periodId/request-void')
+  @RequirePermission('payroll.periods.void')
+  async requestVoid(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return { period: await translate(context, () => this.voids.request(context, id, body)) };
+  }
+
+  /** Decline another person's open void request, with a reason. */
+  @Post(':agencyId/payroll-periods/:periodId/decline-void')
+  @RequirePermission('payroll.periods.approve_void')
+  async declineVoid(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return { period: await translate(context, () => this.voids.decline(context, id, body)) };
+  }
+
+  /** Approve another person's open void request; a retry by its approver returns the voided period. */
+  @Post(':agencyId/payroll-periods/:periodId/approve-void')
+  @RequirePermission('payroll.periods.approve_void')
+  async approveVoid(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ period: PayrollPeriodSummary }> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return { period: await translate(context, () => this.voids.approve(context, id, body)) };
   }
 
   /** Open a Payroll Adjustment to recalculate a FINALIZED period for one or all Employees. */

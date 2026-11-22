@@ -543,7 +543,7 @@ describe.skipIf(!enabled)('Payroll finalization in PostgreSQL', () => {
         'consumed fact delete',
         (transaction) =>
           transaction.$executeRaw`DELETE FROM payroll_consumed_attendance_facts WHERE payroll_period_id = CAST(${period.id} AS uuid)`,
-        /payroll_consumed_attendance_facts rows are immutable/,
+        /Consumed Attendance Payroll Facts are retained and cannot be deleted/,
       ],
     ];
     for (const [label, statement, message] of refusals) {

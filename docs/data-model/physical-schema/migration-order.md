@@ -321,7 +321,7 @@ Create:
 2. `salary_grade_rates`
 3. `pay_components`
 4. `agency_payroll_applicabilities` (0159, #618)
-5. `payroll_periods` (0153, #333), with the deferred `payroll_inputs.consumed_by_payroll_period_id` foreign key
+5. `payroll_periods` (0153, #333), with the deferred `payroll_inputs.consumed_by_payroll_period_id` foreign key; its void guards (0194, #358)
 6. `payroll_period_components` (0153, #333)
 7. `payroll_period_actors` (0153, #333)
 8. `payroll_certifications` (0168, #334), its approval columns, and `payroll_periods.finalized_by_membership_id` (0193, #639)
@@ -341,11 +341,13 @@ Create:
 22. `contribution_lines`
 23. `tax_lines`
 24. `loan_deduction_lines`
-25. `payslips` (0185, #336; release and withholding 0191, #640)
+25. `payslips` (0185, #336; release and withholding 0191, #640; Agency-wide read grant 0197, #641)
 26. `remittance_schedules`
 27. `payment_exports`
 28. `payment_instructions`
 29. `disbursement_outcomes` (0192, #642)
+30. `legacy_register_comparisons` (0195, #359)
+31. `legacy_register_differences` (0195, #359)
 
 The first three are platform-wide: no `agency_id`, no Agency policy, `SELECT`
 only for `hris_app`, and rows loaded by the `hris_operator` command (#328, ADR
