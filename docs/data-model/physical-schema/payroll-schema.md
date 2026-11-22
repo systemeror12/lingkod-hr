@@ -1883,8 +1883,48 @@ Migration 0185 creates the table with forced RLS, a foreign key from
 a Payslip only for a `FINALIZED` result, inserted `GENERATING` with nothing
 released or withheld, rejects every `DELETE`, and admits one change:
 `GENERATING → READY`, naming its Document once. `hris_app` holds `SELECT`,
-`INSERT`, and `UPDATE ("status", "document_id")`, so nothing writes the
-release and withholding columns until #640 adds their commands and grant.
+`INSERT`, and `UPDATE ("status", "document_id")`.
+
+Migration 0187 (#640) adds release, withholding, and the Employee's read.
+`hris_app` may also `UPDATE` the release and withholding columns, and the
+trigger admits three more changes, each writing only its own columns, once:
+`READY → RELEASED` and `WITHHELD → RELEASED` set `released_at` and
+`released_by_membership_id`, and `READY → WITHHELD` sets `withheld_at`,
+`withheld_by_membership_id`, and `withhold_reason`. Each needs the result's
+period `FINALIZED` and the named person to hold `APPROVAL` on it in
+`payroll_period_actors`. A released Payslip keeps its withholding on record.
+Supersession is left to the void command.
+
+Every command locks the period first, then claims `APPROVAL` in its own
+transaction (hris-controls.md §5.20), so a person who holds another function
+on the period is refused with `PAYROLL_FUNCTION_CONFLICT`:
+
+- `POST .../payroll-periods/:periodId/payslips/release` needs
+  `payroll.payslips.release` held Agency-wide and releases every `READY`
+  Payslip of a `FINALIZED` period. It leaves a `WITHHELD` one withheld and
+  counts those still `GENERATING`, so releasing again later takes them.
+  With nothing `READY` it writes only the claim.
+- `POST .../payslips/:payslipId/withhold` needs `payroll.payslips.withhold`
+  held Agency-wide and a reason, and applies only to a `READY` Payslip
+  (`PAYSLIP_NOT_READY` otherwise).
+- `POST .../payslips/:payslipId/release` needs `payroll.payslips.release`
+  held Agency-wide and a reason, and applies only to a `WITHHELD` Payslip
+  (`PAYSLIP_NOT_WITHHELD` otherwise).
+
+Each released Payslip gets a `PAYSLIP_RELEASED` Audit Event (idempotency key
+`released`) and a `PAYSLIP_RELEASED` Outbox Event naming the Payslip, period,
+result, and Employee, which notifies the Employee after commit. Withholding
+is a `PAYSLIP_WITHHELD` Audit Event with its reason (key `withheld`).
+
+`GET .../payslips` and `GET .../payslips/:payslipId` need
+`payroll.payslips.read` at any scope and reach only the Employee linked to
+the caller's Agency Membership, whatever the scope, so another Employee's
+Payslip, or one not `RELEASED`, is `PAYSLIP_NOT_FOUND`. The list states each
+Payslip's period and totals; the single read adds a signed link to its PDF
+through the shared document service. Migration 0187 grants release and
+withhold Agency-wide to the Payroll Approver and the read `OWN` to the
+Employee. The matrix's Agency-wide read for the payroll officers has no read
+built yet, so it is not seeded.
 
 `PayslipGenerationJob` in the API process consumes the
 `PAYROLL_PERIOD_FINALIZED` Outbox Event (section 11). On start and a minute
