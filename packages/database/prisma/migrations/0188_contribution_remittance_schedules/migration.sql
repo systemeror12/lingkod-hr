@@ -239,53 +239,10 @@ CREATE POLICY "remittance_schedules_select" ON "remittance_schedules"
 CREATE POLICY "remittance_schedules_insert" ON "remittance_schedules"
   FOR INSERT WITH CHECK ("agency_id" = app_agency_id());
 
--- hris-controls.md §6.10 lists `payroll.registers.generate` for the payroll
--- outputs; #12's story 10 has the Payroll Preparer produce the register and
--- the remittance schedules with it. Another output's migration may seed the
--- same permission, so both inserts skip what exists.
-INSERT INTO "permissions" ("code", "domain", "risk_level", "description")
-VALUES (
-  'payroll.registers.generate', 'payroll', 'MEDIUM',
-  'Generate and read the registers, remittance schedules, and summaries of a FINALIZED Payroll Period'
-)
-ON CONFLICT ("code") DO NOTHING;
-
--- §6.10 marks it A for the Payroll Preparer, the HR Certifier, the Budget
--- Officer, the Accounting Reviewer, the Payroll Approver, and the Cashier.
--- The HR Admin's C is agency-configurable and the Auditor's R has no
--- read-only form of this permission yet, so neither is seeded.
-ALTER TABLE "roles" DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "role_permissions" DISABLE ROW LEVEL SECURITY;
-
-INSERT INTO "role_permissions" ("role_id", "permission_id", "scope_policy")
-SELECT r."id", p."id", 'AGENCY'
-FROM "roles" r
-JOIN "permissions" p ON p."code" = 'payroll.registers.generate'
-WHERE r."code" IN ('payroll_preparer', 'hr_certifier', 'budget_officer',
-                   'accounting_reviewer', 'payroll_approver', 'cashier')
-  AND r."agency_id" IS NULL
-ON CONFLICT DO NOTHING;
-
--- Verified while the role tables are still readable without an Agency context.
-DO $$
-BEGIN
-  IF (
-    SELECT count(*) FROM "role_permissions" rp
-    JOIN "roles" r ON r."id" = rp."role_id" AND r."agency_id" IS NULL
-    JOIN "permissions" p ON p."id" = rp."permission_id"
-    WHERE r."code" IN ('payroll_preparer', 'hr_certifier', 'budget_officer',
-                       'accounting_reviewer', 'payroll_approver', 'cashier')
-      AND p."code" = 'payroll.registers.generate'
-  ) <> 6 THEN
-    RAISE EXCEPTION 'Payroll register permission grant verification failed';
-  END IF;
-END;
-$$;
-
-ALTER TABLE "role_permissions" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "role_permissions" FORCE ROW LEVEL SECURITY;
-ALTER TABLE "roles" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "roles" FORCE ROW LEVEL SECURITY;
+-- `payroll.registers.generate` generates and reads these artifacts. #12's
+-- story 10 has the Payroll Preparer produce the register and the remittance
+-- schedules with it, and migration 0187 seeds it for the roles
+-- hris-controls.md §6.10 marks A.
 
 DO $$
 BEGIN

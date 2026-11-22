@@ -1923,6 +1923,77 @@ ERD records the Payslip as a rendered PDF, so it is plain text in Helvetica
 on A4).
 
 ```sql
+CREATE TABLE payroll_registers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  document_id uuid NOT NULL,
+  result_count integer NOT NULL CHECK (result_count >= 0),
+  gross_amount numeric(19,4) NOT NULL,
+  total_deductions numeric(19,4) NOT NULL,
+  net_amount numeric(19,4) NOT NULL,
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (net_amount = gross_amount - total_deductions),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, document_id)
+    REFERENCES documents (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Payroll Register (PAY-009, #353) is generated from a `FINALIZED` Payroll
+Period by `POST .../payroll-periods/:periodId/register`, which needs
+`payroll.registers.generate` held Agency-wide and claims no payroll function.
+It reads the period's `FINALIZED` results at the finalized calculation
+version and their lines, and proves them with the Payroll Export
+Reconciliation the Certified Payroll Review Export uses: the results still
+hash to the certification in force, every line names a catalogued component
+of its line type, each result's earning and deduction lines sum to its gross
+and total deductions, and net is gross less deductions. A failure refuses
+with `PAYROLL_REGISTER_RECONCILIATION_FAILED`, naming each mismatch, and
+stores nothing; a period not `FINALIZED` refuses with
+`PAYROLL_REGISTER_PAYROLL_NOT_FINALIZED`.
+
+The PDF is rendered from those rows and stored through the shared document
+service under `payroll-registers/<agency>/<period>/<sha256>.pdf` before any
+write. One transaction then locks the period and, only while it has no
+register, records an `APPROVED`, issued, `CONFIDENTIAL` Document of type
+`PAYROLL_REGISTER` created by the generating person, the register with the
+reconciled totals, and a `PAYROLL_REGISTER_GENERATED` Audit Event
+(idempotency key `generated`) naming the Document Version, its content hash,
+the calculation hash, and the totals. A period has one register: generating
+again, by anyone permitted, returns the stored one and writes nothing, and of
+two at once one records it and the other returns it.
+
+Migration 0187 creates the table with forced RLS. Its trigger rejects every
+`UPDATE` and `DELETE`, admits a register only for a `FINALIZED` period at its
+calculation version, and only when its count and totals equal that version's
+`FINALIZED` results and the sums of their `EARNING` and `DEDUCTION` lines.
+`hris_app` holds `SELECT` and `INSERT` only. The migration grants
+`payroll.registers.generate` Agency-wide to the Payroll Preparer, the HR
+Certifier, the Budget Officer, the Accounting Reviewer, the Payroll Approver,
+and the Cashier; the HR Administrator's `C` and the Auditor's `R` are not
+seeded.
+
+The PDF is LingkodHR's own Printable System View (#617), with no form number,
+form title, or conformance claim. It says it lists the finalized results of
+one period and is not proof of payment, and names the Agency, the period,
+its payment date and finalization time, and the calculation version and
+hash. It lists each result by agency employee number with the Employee's
+name, gross, total deductions, and net; then each pay component's total and
+line count, by line type; then gross, total deductions, net, employer
+shares, and informational totals (_reading_: no register layout is
+prescribed, so it carries what the finalized results and lines hold, in the
+Payslip's plain-text PDF). The same finalized period always renders the
+same bytes. A voided payroll's supersession of its register arrives with the
+void command (#643).
+
+```sql
 CREATE TABLE payroll_export_contract_versions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   code text NOT NULL CHECK (btrim(code) <> ''),
@@ -2281,10 +2352,8 @@ summary, and only when its line count and Employee and employer share totals
 equal the count and sums of the Contribution Lines of its type in the
 summary's `FINALIZED` results, so a schedule's totals always equal its
 lines. `hris_app` holds `SELECT` and `INSERT` only, and RLS is forced.
-Migration 0188 grants `payroll.registers.generate` Agency-wide to the Payroll
-Preparer, the HR Certifier, the Budget Officer, the Accounting Reviewer, the
-Payroll Approver, and the Cashier; the HR Admin's `C` and the Auditor's `R`
-are not seeded.
+Both need `payroll.registers.generate` held Agency-wide, which migration
+0187 seeds for the Payroll Register (#353).
 
 - _Reading_: hris-controls.md §6.10 names no permission for remittance
   schedules, and #12's story 10 has the Payroll Preparer produce "the

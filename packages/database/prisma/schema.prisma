@@ -5947,6 +5947,27 @@ model Payslip {
   @@map("payslips")
 }
 
+/// A Payroll Register: the Printable System View of one FINALIZED Payroll
+/// Period, one per period and immutable (#353). Its totals equal the
+/// finalized results and their lines. Migration 0187 holds its foreign keys,
+/// guard, and RLS.
+model PayrollRegister {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  payrollPeriodId         String   @unique(map: "payroll_registers_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion      Int      @map("calculation_version")
+  documentId              String   @map("document_id") @db.Uuid
+  resultCount             Int      @map("result_count")
+  grossAmount             Decimal  @map("gross_amount") @db.Decimal(19, 4)
+  totalDeductions         Decimal  @map("total_deductions") @db.Decimal(19, 4)
+  netAmount               Decimal  @map("net_amount") @db.Decimal(19, 4)
+  generatedByMembershipId String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt             DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "payroll_registers_agency_id_id_key")
+  @@map("payroll_registers")
+}
+
 /// A Payroll Line: one calculated amount of a result, with its source. Immutable.
 model PayrollLine {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
