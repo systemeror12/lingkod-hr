@@ -102,6 +102,26 @@ export const payrollPeriodFinalizeSchema = z.object({ rowVersion }).strict();
 export type PayrollPeriodFinalizeInput = z.input<typeof payrollPeriodFinalizeSchema>;
 
 /**
+ * Request the void of a FINALIZED period at the row version the requester
+ * read, with a reason and the finalized Document Version that supports it
+ * (#358).
+ */
+export const payrollPeriodVoidRequestSchema = z
+  .object({ reason, documentVersionId: z.string().uuid(), rowVersion })
+  .strict();
+
+export type PayrollPeriodVoidRequestInput = z.input<typeof payrollPeriodVoidRequestSchema>;
+
+/**
+ * Approve the open void request at the row version the approver read. Every
+ * change to the request moves the row version, so it binds the reason and
+ * Document Version the approver saw.
+ */
+export const payrollPeriodApproveVoidSchema = z.object({ rowVersion }).strict();
+
+export type PayrollPeriodApproveVoidInput = z.input<typeof payrollPeriodApproveVoidSchema>;
+
+/**
  * Ask Payroll to recalculate a FINALIZED period, with a reason, for one
  * Employee or, with no `employeeId`, for all of its Employees (#356). No
  * amount is entered.
@@ -115,8 +135,9 @@ export type PayrollAdjustmentRecalculationInput = z.input<
 >;
 
 /**
- * Revoke a certification, return a period for correction, or return an
- * approved period before finalization, with a reason.
+ * Revoke a certification, return a period for correction, return an
+ * approved period before finalization, or decline a void request, with a
+ * reason.
  */
 export const payrollPeriodReasonedCommandSchema = z.object({ reason, rowVersion }).strict();
 

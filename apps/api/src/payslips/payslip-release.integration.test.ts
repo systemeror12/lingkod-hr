@@ -497,7 +497,7 @@ describe.skipIf(!enabled)('Payslip release, withholding, and the own read in Pos
         (transaction) =>
           transaction.$executeRaw`UPDATE payslips SET status = 'SUPERSEDED' WHERE id = CAST(${first!.id} AS uuid)`,
       ),
-    ).rejects.toThrow(/A Payslip changes only GENERATING → READY/);
+    ).rejects.toThrow(/superseded, changing nothing else, only by the void of its payroll/);
 
     await withholding.withhold(setup.approver, first!.id, { reason: 'Held for review' });
     await release.releasePeriod(setup.approver, setup.periodId);

@@ -321,7 +321,7 @@ Create:
 2. `salary_grade_rates`
 3. `pay_components`
 4. `agency_payroll_applicabilities` (0159, #618)
-5. `payroll_periods` (0153, #333), with the deferred `payroll_inputs.consumed_by_payroll_period_id` foreign key
+5. `payroll_periods` (0153, #333), with the deferred `payroll_inputs.consumed_by_payroll_period_id` foreign key; its void guards (0194, #358)
 6. `payroll_period_components` (0153, #333)
 7. `payroll_period_actors` (0153, #333)
 8. `payroll_certifications` (0168, #334), its approval columns, and `payroll_periods.finalized_by_membership_id` (0193, #639)
