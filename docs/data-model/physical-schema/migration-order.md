@@ -341,7 +341,7 @@ Create:
 22. `contribution_lines`
 23. `tax_lines`
 24. `loan_deduction_lines`
-25. `payslips`
+25. `payslips` (0185, #336; release and withholding 0191, #640)
 26. `remittance_schedules`
 27. `payment_exports`
 28. `payment_instructions`

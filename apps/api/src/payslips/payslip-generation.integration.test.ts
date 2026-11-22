@@ -336,7 +336,7 @@ describe.skipIf(!enabled)('Payslip generation in PostgreSQL', () => {
     ).toBe(1);
   });
 
-  it('admits a Payslip only for a FINALIZED result, only GENERATING → READY, and only in its Agency', async () => {
+  it('admits a Payslip only for a FINALIZED result, never moves it back, and only in its Agency', async () => {
     const setup = await finalizedPeriod('GUARD');
     const other = await finalizedPeriod('OTHER');
     await generation(new RecordedStorage()).generateForPeriod(setup.agencyId, setup.periodId);
@@ -366,14 +366,15 @@ describe.skipIf(!enabled)('Payslip generation in PostgreSQL', () => {
         (transaction) =>
           transaction.$executeRaw`UPDATE payslips SET status = 'GENERATING' WHERE id = CAST(${payslip!.id} AS uuid)`,
       ),
-    ).rejects.toThrow(/changes only from GENERATING to READY/);
+    ).rejects.toThrow(/A Payslip changes only GENERATING → READY/);
+    // Release and withholding columns change only with their transition (#640).
     await expect(
       inAgency(
         setup.agencyId,
         (transaction) =>
           transaction.$executeRaw`UPDATE payslips SET released_at = now() WHERE id = CAST(${payslip!.id} AS uuid)`,
       ),
-    ).rejects.toThrow(/permission denied/);
+    ).rejects.toThrow(/A Payslip changes only GENERATING → READY/);
     await expect(
       inAgency(
         setup.agencyId,
