@@ -8,6 +8,7 @@ import { PaymentExportsServiceError } from './payment-exports.service';
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const periodId = '00000000-0000-4000-8000-000000000002';
 const exportId = '00000000-0000-4000-8000-000000000003';
+const instructionId = '00000000-0000-4000-8000-000000000006';
 const context: RequestContext = {
   requestId: 'payment-export-api-test',
   userId: '00000000-0000-4000-8000-000000000004',
@@ -26,6 +27,29 @@ describe('PaymentExportsController', () => {
     }
   });
 
+  it('needs payroll.disbursement.update to record a Disbursement Outcome', () => {
+    expect(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS, PaymentExportsController.prototype.recordOutcome),
+    ).toEqual(['payroll.disbursement.update']);
+  });
+
+  it('passes the instruction named in the route and the body to the outcome service', async () => {
+    const outcomes = { record: vi.fn().mockResolvedValue({ id: 'outcome' }) };
+    const controller = new PaymentExportsController({} as never, outcomes as never);
+    const body = { outcome: 'SUBMITTED', sequence: 1 };
+    await expect(
+      controller.recordOutcome(agencyId, periodId, exportId, instructionId, body, context),
+    ).resolves.toEqual({ outcome: { id: 'outcome' } });
+    expect(outcomes.record).toHaveBeenCalledWith(
+      context,
+      { periodId, exportId, instructionId },
+      body,
+    );
+    await expect(
+      controller.recordOutcome(agencyId, periodId, exportId, 'not-a-uuid', body, context),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
   it('serves the CSV as an attachment', async () => {
     const service = {
       downloadCsv: vi.fn().mockResolvedValue({
@@ -35,7 +59,7 @@ describe('PaymentExportsController', () => {
         checksum: 'x',
       }),
     };
-    const controller = new PaymentExportsController(service as never);
+    const controller = new PaymentExportsController(service as never, {} as never);
     const file = await controller.downloadCsv(agencyId, periodId, exportId, context);
     expect(file.getHeaders()).toMatchObject({
       type: 'text/csv; charset=utf-8',
@@ -52,7 +76,7 @@ describe('PaymentExportsController', () => {
           new PaymentExportsServiceError('blocked', 409, 'PAYMENT_EXPORT_DESTINATION_BLOCKED'),
         ),
     };
-    const controller = new PaymentExportsController(service as never);
+    const controller = new PaymentExportsController(service as never, {} as never);
     const refused = await controller.generate(agencyId, periodId, context).catch((e) => e);
     expect(refused).toBeInstanceOf(HttpException);
     expect((refused as HttpException).getStatus()).toBe(409);
@@ -66,7 +90,7 @@ describe('PaymentExportsController', () => {
   });
 
   it('treats another Agency or a malformed id as not found', async () => {
-    const controller = new PaymentExportsController({} as never);
+    const controller = new PaymentExportsController({} as never, {} as never);
     await expect(
       controller.generate('00000000-0000-4000-8000-000000000009', periodId, context),
     ).rejects.toMatchObject({ status: 404 });

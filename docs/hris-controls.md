@@ -1839,6 +1839,11 @@ Payment Export of a `FINALIZED` period and downloads its CSV, which carries
 full account numbers, and its masked reconciliation summary; each download is
 an Audit Event (payroll-schema.md §12, #337).
 
+`payroll.disbursement.update`, held Agency-wide, records a Disbursement
+Outcome on a Payment Instruction of a `FINALIZED` period, and claims the
+Disbursement function. Outcomes are append-only, and `REJECTED` and
+`RETURNED` need a reason (payroll-schema.md §12, #642).
+
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,
 Accounting review, approval, or disbursement. A second function is refused
