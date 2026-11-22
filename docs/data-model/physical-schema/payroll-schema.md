@@ -2105,8 +2105,17 @@ Payslip, or one not `RELEASED`, is `PAYSLIP_NOT_FOUND`. The list states each
 Payslip's period and totals; the single read adds a signed link to its PDF
 through the shared document service. Migration 0191 grants release and
 withhold Agency-wide to the Payroll Approver and the read `OWN` to the
-Employee. The matrix's Agency-wide read for the payroll officers has no read
-built yet, so it is not seeded.
+Employee.
+
+`GET .../payroll-periods/:periodId/payslips` (#641) needs
+`payroll.payslips.read` held Agency-wide; the `OWN` grant is refused with
+`PAYSLIP_FORBIDDEN`. It lists, by Employee number, each result of the period
+that has a Payslip or is `FINALIZED`, with its Employee and its Payslip in
+whatever status, without the file. The Payslip is null while generation has
+not created it yet. Migration 0197 grants the read Agency-wide to the roles
+hris-controls.md §6.10 marks A or R: the Payroll Preparer, Accounting
+Reviewer, Payroll Approver, Cashier, and Internal Auditor. The HR Certifier
+and HR Admin are C there and are not seeded.
 
 `PayslipGenerationJob` in the API process consumes the
 `PAYROLL_PERIOD_FINALIZED` Outbox Event (section 11). On start and a minute

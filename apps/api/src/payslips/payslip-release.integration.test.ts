@@ -162,6 +162,7 @@ describe.skipIf(!enabled)('Payslip release, withholding, and the own read in Pos
       tenant,
       agencyId,
       periodId: setup.periodId,
+      results: setup.results,
       payslips: [await payslipOf(0), await payslipOf(1)],
       payslipOf,
       approver: as(tenant, 0, approverPermissions),
@@ -429,6 +430,78 @@ describe.skipIf(!enabled)('Payslip release, withholding, and the own read in Pos
     });
   });
 
+  it("reads every Payslip of a period in its status, Agency-wide only, and never another Agency's", async () => {
+    const setup = await releasablePeriod('PERIOD-READ');
+    const other = await releasablePeriod('PERIOD-READ-AWAY');
+    const [first, second] = setup.payslips;
+    const officer = as(setup.tenant, 0, ['payroll.payslips.read']);
+    // A FINALIZED result whose Payslip generation has not created yet. Test fixture only.
+    const pending = await seed(async (transaction) => {
+      const employee = await transaction.employee.create({
+        data: {
+          agencyId: setup.agencyId,
+          employeeNumber: `PAYSLIP-PERIOD-READ-THIRD-${suffix}`,
+          legalName: 'Payslip PERIOD-READ THIRD',
+          birthDate: new Date('1990-01-01'),
+          sex: 'FEMALE',
+          civilStatus: 'SINGLE',
+          contactEmail: `payslip-period-read-third-${suffix}@example.test`.toLowerCase(),
+          serviceStatus: 'ACTIVE',
+          createdByMembershipId: setup.approver.membershipId,
+          updatedByMembershipId: setup.approver.membershipId,
+        },
+      });
+      return transaction.payrollEmployee.create({
+        data: {
+          agencyId: setup.agencyId,
+          payrollPeriodId: setup.periodId,
+          calculationVersion: 1,
+          employeeId: employee.id,
+          compensationBasisSnapshot: {},
+          status: 'FINALIZED',
+          grossAmount: '0',
+          totalDeductions: '0',
+          netAmount: '0',
+          calculationHash: 'f'.repeat(64),
+        },
+      });
+    });
+
+    await withholding.withhold(setup.approver, first!.id, { reason: 'Held for review' });
+    await release.releasePeriod(setup.approver, setup.periodId);
+    const entries = await reading.listPeriod(officer, setup.periodId);
+    expect(
+      entries.map((entry) => [entry.employee.legalName, entry.payslip?.status ?? null]),
+    ).toEqual([
+      ['Payslip PERIOD-READ FIRST', 'WITHHELD'],
+      ['Payslip PERIOD-READ SECOND', 'RELEASED'],
+      ['Payslip PERIOD-READ THIRD', null],
+    ]);
+    expect(entries[0]).toMatchObject({
+      payrollEmployeeId: setup.results[0]!.id,
+      payslip: {
+        id: first!.id,
+        withholdReason: 'Held for review',
+        payrollPeriodId: setup.periodId,
+      },
+    });
+    expect(entries[1]!.payslip).toMatchObject({ id: second!.id });
+    expect(entries[2]!.payrollEmployeeId).toBe(pending.id);
+
+    // The own read, held at any scope short of Agency-wide, does not reach the period read.
+    await expect(reading.listPeriod(setup.first, setup.periodId)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'PAYSLIP_FORBIDDEN',
+    });
+    // Another Agency's officer does not find the period, and reads only their own.
+    await expect(
+      reading.listPeriod(as(other.tenant, 0, ['payroll.payslips.read']), setup.periodId),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'PAYROLL_PERIOD_NOT_FOUND' });
+    await expect(
+      reading.listPeriod(as(other.tenant, 0, ['payroll.payslips.read']), other.periodId),
+    ).resolves.toHaveLength(2);
+  });
+
   it('rejects another Agency, in the service and under row-level security', async () => {
     const setup = await releasablePeriod('HOME');
     const other = await releasablePeriod('AWAY');
@@ -515,7 +588,7 @@ describe.skipIf(!enabled)('Payslip release, withholding, and the own read in Pos
     ).rejects.toThrow(/A Payslip changes only GENERATING → READY/);
   });
 
-  it('seeds release and withhold to the Payroll Approver alone, and the own read to the Employee', async () => {
+  it('seeds release and withhold to the Payroll Approver alone, the own read to the Employee, and the Agency-wide read as §6.10 marks it A or R (0197)', async () => {
     const grants = await admin.rolePermission.findMany({
       where: {
         role: { agencyId: null },
@@ -532,7 +605,12 @@ describe.skipIf(!enabled)('Payslip release, withholding, and the own read in Pos
         .map((grant) => `${grant.permission.code} ${grant.role.code} ${grant.scopePolicy}`)
         .sort(),
     ).toEqual([
+      'payroll.payslips.read accounting_reviewer AGENCY',
+      'payroll.payslips.read cashier AGENCY',
       'payroll.payslips.read employee OWN',
+      'payroll.payslips.read internal_auditor AGENCY',
+      'payroll.payslips.read payroll_approver AGENCY',
+      'payroll.payslips.read payroll_preparer AGENCY',
       'payroll.payslips.release payroll_approver AGENCY',
       'payroll.payslips.withhold payroll_approver AGENCY',
     ]);

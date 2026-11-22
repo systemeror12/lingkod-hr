@@ -112,7 +112,13 @@ test('takes the seeded payroll from For review to Finalized, one User per review
   await expect(group.getByText('Finalized', { exact: true }).first()).toBeVisible();
   await expect(stageOf(group).locator('[aria-current="step"]')).toHaveText('Finalized');
   await expect(step(group, 'Finalized')).toContainText('Paolo Mendoza');
-  await expect(group.getByRole('region', { name: `${CODE} review actions` })).toHaveCount(0);
+  // No review command is left. Releasing payslips appears only once one is generated and Ready,
+  // which the background generation decides, so it is not asserted here.
+  await expect(
+    group.getByRole('button', {
+      name: /^(Certify|Return|Revoke|Record|Approve|Finalize) /,
+    }),
+  ).toHaveCount(0);
 
   // Each step stays its own, with who took it.
   for (const [name, by] of [

@@ -13,6 +13,8 @@ import {
   lineTypeLabel,
   moneyLabel,
   instantLabel,
+  payslipActions,
+  payslipStatusDisplay,
   periodStatusDisplay,
   resultStatusDisplay,
   reviewActions,
@@ -29,6 +31,7 @@ import {
   type PayrollResult,
   type PayrollResultDetail,
   type PayrollRunType,
+  type PeriodPayslipEntry,
   type ReviewAction,
 } from '../lib/payroll-periods';
 import { dateLabel } from '../lib/overtime-format';
@@ -39,6 +42,7 @@ import {
   type ContributionBillingInput,
 } from './contribution-billings';
 import { Facts } from './payroll-inputs-workspace';
+import { PayslipActions } from './payslip-actions';
 import { ContributionsTaxDeductions } from './payslip-deductions';
 import { actionLabel, PayrollReview } from './payroll-review';
 import { StateSurface } from './state-surface';
@@ -75,6 +79,12 @@ type PeriodDetail =
       /** Who acted and what certifying binds; null before the period is calculated. */
       review: PayrollPeriodReview | null;
     };
+
+/** A Finalized period's payslips as the server lists them, each in its status. */
+type PayslipList =
+  | { state: 'loading' }
+  | { state: 'error'; message: string }
+  | { state: 'ready'; entries: PeriodPayslipEntry[] };
 
 type Form =
   | { kind: 'create' }
@@ -118,8 +128,8 @@ function message(caught: unknown, fallback: string): string {
  * rule version and sources, then its contributions, tax, and deductions. A regular period also
  * lists its issuer contribution billing, which a deductions manager records while it is in Draft.
  * From For review to Finalized, each period shows its Approvals and the review commands the actor's
- * permissions and the period's state allow. The API decides every refusal; this screen shows its
- * reason.
+ * permissions and the period's state allow; once it is Finalized, the Payroll Approver releases
+ * its Ready payslips. The API decides every refusal; this screen shows its reason.
  */
 export function PayslipsWorkspace({
   agencyId,
@@ -130,6 +140,7 @@ export function PayslipsWorkspace({
   employees,
   evidenceReadable = false,
   initialList,
+  canReadPayslips = false,
   reviewPermissions = [],
 }: {
   agencyId: string;
@@ -141,6 +152,8 @@ export function PayslipsWorkspace({
   /** Whether the actor can list the Agency's Document Versions to cite as review evidence. */
   evidenceReadable?: boolean;
   initialList: PayrollPeriodList;
+  /** Whether the actor reads every payslip of a period (`payroll.payslips.read` Agency-wide). */
+  canReadPayslips?: boolean;
   /** The review permissions (`REVIEW_PERMISSIONS`) the actor holds Agency-wide. */
   reviewPermissions?: string[];
 }) {
@@ -148,6 +161,7 @@ export function PayslipsWorkspace({
   // Periods the actor opened or closed; any other starts open unless it is finished.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const [details, setDetails] = useState<Record<string, PeriodDetail>>({});
+  const [payslipLists, setPayslipLists] = useState<Record<string, PayslipList>>({});
   const [form, setForm] = useState<Form>(null);
   const [payslip, setPayslip] = useState<Payslip | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
@@ -157,7 +171,15 @@ export function PayslipsWorkspace({
   const [notice, setNotice] = useState('');
   const [acting, setActing] = useState<{ periodId: string; action: ReviewAction } | null>(null);
   const held = new Set(reviewPermissions);
-  const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+  // The payslip list names its Employees, for an actor who cannot read the Employee register.
+  const employeeById = new Map<string, EmployeeOption>([
+    ...Object.values(payslipLists).flatMap((payslips) =>
+      payslips.state === 'ready'
+        ? payslips.entries.map(({ employee }) => [employee.id, employee] as const)
+        : [],
+    ),
+    ...employees.map((employee) => [employee.id, employee] as const),
+  ]);
   const periodById = new Map(list.periods.map((period) => [period.id, period]));
   const isOpen = (period: PayrollPeriod) => toggled[period.id] ?? !startsCollapsed(period.status);
 
@@ -245,6 +267,43 @@ export function PayslipsWorkspace({
       if (open && details[period.id]?.key !== detailKey(period)) void loadDetail(period);
     }
   }, [list, toggled, details, loadDetail]);
+
+  const loadPayslips = useCallback(
+    async (periodId: string) => {
+      setPayslipLists((current) => ({ ...current, [periodId]: { state: 'loading' } }));
+      try {
+        const { payslips } = (await request(`/payroll-periods/${periodId}/payslips`)) as {
+          payslips: PeriodPayslipEntry[];
+        };
+        setPayslipLists((current) => ({
+          ...current,
+          [periodId]: { state: 'ready', entries: payslips },
+        }));
+      } catch (caught: unknown) {
+        setPayslipLists((current) => ({
+          ...current,
+          [periodId]: {
+            state: 'error',
+            message: message(caught, 'The payslips’ statuses could not be read.'),
+          },
+        }));
+      }
+    },
+    [request],
+  );
+
+  // A Finalized period's payslips are read once it is open, or at once for the Payroll Approver,
+  // whose group row offers release only while one is Ready.
+  const releaser = reviewPermissions.includes('payroll.payslips.release');
+  useEffect(() => {
+    if (!canReadPayslips) return;
+    for (const period of list.periods) {
+      const open = toggled[period.id] ?? !startsCollapsed(period.status);
+      if (period.status === 'FINALIZED' && (open || releaser) && !payslipLists[period.id]) {
+        void loadPayslips(period.id);
+      }
+    }
+  }, [canReadPayslips, list, toggled, releaser, payslipLists, loadPayslips]);
 
   // A calculation runs in the background; read the list again until none is computing.
   const computing = list.periods.some((period) => period.status === 'CALCULATING');
@@ -411,12 +470,21 @@ export function PayslipsWorkspace({
     return detail?.state === 'ready' ? detail.review : null;
   }
 
-  function actionsOf(period: PayrollPeriod): ReviewAction[] {
-    const review = reviewOf(period);
-    return review ? reviewActions(review, held) : [];
+  function payslipsOf(period: PayrollPeriod): PeriodPayslipEntry[] | null {
+    const payslips = payslipLists[period.id];
+    return payslips?.state === 'ready' ? payslips.entries : null;
   }
 
-  /** After a review command: read the list and the period again, and say what changed. */
+  function actionsOf(period: PayrollPeriod): ReviewAction[] {
+    const review = reviewOf(period);
+    // A finished period starts collapsed, so its review is not read yet; release needs none.
+    return [
+      ...(review ? reviewActions(review, held) : []),
+      ...payslipActions(period.status, held, payslipsOf(period)),
+    ];
+  }
+
+  /** After a review or payslip command: read the list and the period again, and say what changed. */
   async function reviewed(periodId: string, done: string): Promise<void> {
     setError('');
     setNotice(done);
@@ -424,6 +492,7 @@ export function PayslipsWorkspace({
       const next = await refreshList();
       const period = next.periods.find((item) => item.id === periodId);
       if (period) await loadDetail(period);
+      if (period?.status === 'FINALIZED' && canReadPayslips) await loadPayslips(periodId);
     } catch (caught: unknown) {
       setError(message(caught, 'The Payroll Periods could not be read again.'));
     }
@@ -615,9 +684,45 @@ export function PayslipsWorkspace({
     );
   }
 
+  /** The server's status of one result's Payslip, while the period's list is read or after. */
+  function payslipCell(period: PayrollPeriod, resultId: string): ReactNode {
+    const payslips = payslipLists[period.id];
+    if (!payslips || payslips.state === 'loading') {
+      return <span className="text-caption text-ink-muted">Reading…</span>;
+    }
+    if (payslips.state === 'error') return <span className="text-caption text-danger">Unread</span>;
+    const entry = payslips.entries.find((item) => item.payrollEmployeeId === resultId);
+    const display = payslipStatusDisplay(entry?.payslip ?? null);
+    return <StatusTag tone={display.tone}>{display.label}</StatusTag>;
+  }
+
+  /** On the payslip form: its status and the Payroll Approver's withhold and release. */
+  function payslipSection(period: PayrollPeriod, resultId: string): ReactNode {
+    if (!canReadPayslips || period.status !== 'FINALIZED') return null;
+    const payslips = payslipLists[period.id];
+    if (payslips?.state === 'error') return <FormError message={payslips.message} />;
+    const entry =
+      payslips?.state === 'ready'
+        ? payslips.entries.find((item) => item.payrollEmployeeId === resultId)
+        : undefined;
+    // A listed period with no entry for this result has no payslip to act on.
+    if (payslips?.state === 'ready' && !entry) return null;
+    return (
+      <PayslipActions
+        canRelease={held.has('payroll.payslips.release')}
+        canWithhold={held.has('payroll.payslips.withhold')}
+        entry={entry}
+        onDone={(done) => reviewed(period.id, done)}
+        request={request}
+      />
+    );
+  }
+
   function periodBody(period: PayrollPeriod): ReactNode {
     const detail = details[period.id];
     const totals = period.totals;
+    const showsPayslips = canReadPayslips && period.status === 'FINALIZED';
+    const payslips = payslipLists[period.id];
     return (
       <div className="grid gap-5">
         <div className="grid gap-5 p-4">
@@ -668,6 +773,11 @@ export function PayslipsWorkspace({
           <>
             <section aria-label={`${period.code} payslips`} className="grid gap-2">
               <h3 className="m-0 px-4 text-panel-title text-ink">Payslips</h3>
+              {showsPayslips && payslips?.state === 'error' ? (
+                <div className="px-4">
+                  <FormError message={payslips.message} />
+                </div>
+              ) : null}
               {detail.results.length === 0 ? (
                 <StateSurface compact label={`${period.code} has no payslips`}>
                   {period.calculationVersion === 0
@@ -680,6 +790,7 @@ export function PayslipsWorkspace({
                     <tr>
                       <Th>Employee</Th>
                       <Th>Status</Th>
+                      {showsPayslips ? <Th>Payslip</Th> : null}
                       <Th kind="numeric">Gross</Th>
                       <Th kind="numeric">Deductions</Th>
                       <Th kind="numeric">Net pay</Th>
@@ -710,6 +821,7 @@ export function PayslipsWorkspace({
                           <Td>
                             <StatusTag tone={display.tone}>{display.label}</StatusTag>
                           </Td>
+                          {showsPayslips ? <Td>{payslipCell(period, result.id)}</Td> : null}
                           <Td kind="numeric">{moneyLabel(result.grossAmount)}</Td>
                           <Td kind="numeric">{moneyLabel(result.totalDeductions)}</Td>
                           <Td kind="numeric">{moneyLabel(result.netAmount)}</Td>
@@ -1018,6 +1130,7 @@ export function PayslipsWorkspace({
                     {nextStep(openPeriod)}
                   </div>
                 ) : null}
+                {openPeriod && openResult ? payslipSection(openPeriod, openResult.id) : null}
                 {openPeriod ? reviewSection(openPeriod) : null}
                 <FormError message={error} />
                 {notice ? (

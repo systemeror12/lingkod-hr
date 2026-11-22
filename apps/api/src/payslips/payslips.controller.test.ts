@@ -3,6 +3,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { describe, expect, it, vi } from 'vitest';
 import { REQUIRED_PERMISSIONS } from '../auth/auth.decorators';
 import { PayrollPeriodsServiceError } from '../payroll-periods/payroll-periods.service';
+import { PayslipReadService } from './payslip-read.service';
 import { PayslipReleaseService } from './payslip-release.service';
 import { PayslipWithholdService } from './payslip-withhold.service';
 import { PayslipsController } from './payslips.controller';
@@ -28,6 +29,7 @@ describe('PayslipsController', () => {
     expect(required('withhold')).toEqual(['payroll.payslips.withhold']);
     expect(required('listOwn')).toEqual(['payroll.payslips.read']);
     expect(required('readOwn')).toEqual(['payroll.payslips.read']);
+    expect(required('listPeriod')).toEqual(['payroll.payslips.read']);
   });
 
   it('answers another Agency, or a malformed id, as not found', async () => {
@@ -78,6 +80,13 @@ describe('payslip commands before any database work', () => {
     });
     await expect(
       new PayslipWithholdService().withhold(own, payslipId, { reason: 'x' }),
+    ).rejects.toMatchObject({ statusCode: 403, code: 'PAYSLIP_FORBIDDEN' });
+  });
+
+  it('refuse the period read to a caller holding only the own read', async () => {
+    const own = context([{ code: 'payroll.payslips.read', scopePolicy: 'OWN' }]);
+    await expect(
+      new PayslipReadService({} as never).listPeriod(own, payslipId),
     ).rejects.toMatchObject({ statusCode: 403, code: 'PAYSLIP_FORBIDDEN' });
   });
 
