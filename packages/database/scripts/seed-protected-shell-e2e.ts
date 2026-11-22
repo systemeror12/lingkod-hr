@@ -3063,9 +3063,11 @@ async function seed(): Promise<void> {
       },
     });
   });
+  // Rule versions first: the review fixture's snapshot must postdate them, or a fresh database
+  // reports them loaded after the snapshot and certification is refused.
+  await seedSyntheticRuleVersions();
   await seedPayrollReviewFixture(agency.id, membership.id);
   await seedDtrFixture();
-  await seedSyntheticRuleVersions();
 }
 
 /**
