@@ -133,6 +133,9 @@ erDiagram
     PAYMENT_EXPORTS ||--o{ PAYMENT_INSTRUCTIONS : contains
     PAYROLL_EMPLOYEES ||--o{ PAYMENT_INSTRUCTIONS : paid_through
     PAYMENT_INSTRUCTIONS ||--o{ DISBURSEMENT_OUTCOMES : records
+    PAYROLL_PERIODS ||--o| FINALIZED_PAYROLL_ACCOUNTING_SUPPORT_EXPORTS : produces
+    PAYROLL_EXPORT_CONTRACT_VERSIONS ||--o{ FINALIZED_PAYROLL_ACCOUNTING_SUPPORT_EXPORTS : defines
+    FINALIZED_PAYROLL_ACCOUNTING_SUPPORT_EXPORTS ||--o{ PAYROLL_EXPORT_EXTERNAL_OUTCOMES : records
 ```
 
 # Entity definitions
@@ -1219,8 +1222,8 @@ that an entry was posted, or that a receiving system accepted the data (#29).
 
 The Certified Payroll Review Export is specified below (#636). The Finalized
 Payroll Accounting Support Export, its Employee Detail Companion, and Payroll
-Export External Outcomes arrive with #355. Payroll Export Checkpoint Reviews
-are specified below (#637).
+Export External Outcomes are specified below (#355). Payroll Export Checkpoint
+Reviews are specified below (#637).
 
 ## `payroll_export_contract_versions`
 
@@ -1317,6 +1320,71 @@ recorded against one Certified Payroll Review Export (#29, #330, #637)
 - A return revokes the certification, supersedes the export, and so revokes
   the other review, and moves the period to `FOR_REVIEW`.
 - Recording claims `BUDGET_REVIEW` or `ACCOUNTING_REVIEW` on the period (#330).
+
+**Deletion behavior:** Immutable.
+
+## `finalized_payroll_accounting_support_exports`
+
+Finalized Payroll Accounting Support Export: the Structured Export of one
+FINALIZED payroll for downstream accounting support, with its Employee Detail
+Companion (#29, #355)
+
+| Column                             | Logical type | Null? | Key / rule                          | Description                                          |
+| ---------------------------------- | ------------ | ----- | ----------------------------------- | ---------------------------------------------------- |
+| id                                 | uuid         | No    | PK                                  | Export                                               |
+| agency_id                          | uuid         | No    | FK agencies                         | Tenant                                               |
+| payroll_period_id                  | uuid         | No    | FK payroll_periods; unique          | The finalized period                                 |
+| calculation_version                | integer      | No    |                                     | The finalized calculation version                    |
+| calculation_hash                   | string       | No    |                                     | The hash of the certification it was finalized under |
+| payroll_export_contract_version_id | uuid         | No    | FK payroll_export_contract_versions | The contract it was generated under                  |
+| content                            | text         | No    |                                     | The export, as canonical JSON                        |
+| checksum                           | string       | No    | SHA-256 hex of `content`            | Integrity checksum                                   |
+| employee_detail_content            | text         | No    |                                     | The Employee Detail Companion, as canonical JSON     |
+| employee_detail_checksum           | string       | No    | SHA-256 hex of the companion        | Integrity checksum, named in `content`               |
+| generated_by_membership_id         | uuid         | No    | FK agency_memberships               | Who generated it                                     |
+| generated_at                       | datetime     | No    |                                     | When it was generated                                |
+
+**Constraints and indexes**
+
+- Only a FINALIZED period at its finalized version. One export per period:
+  generating again returns it.
+- `content` holds the contract, a statement that it is not a journal entry
+  and claims no posting, the period, the finalization, #636's Classified
+  Payroll Export Lines and Payroll Export Reconciliation, and the companion's
+  checksum. It holds no employee-level detail.
+- The companion lists each result with its Employee, totals, and classified
+  lines. Its totals equal the export's; a reconciliation failure refuses
+  generation and stores nothing.
+- Downloading the companion needs its own permission. A download is audited
+  and is not an outcome.
+- Generating claims no payroll function.
+
+**Deletion behavior:** Immutable. A voided payroll's supersession (#643) is
+not built yet.
+
+## `payroll_export_external_outcomes`
+
+Payroll Export External Outcome: append-only evidence of a handoff or an
+externally evidenced receipt, return, or posting of a Finalized Payroll
+Accounting Support Export (#29, #355)
+
+| Column                       | Logical type | Null? | Key / rule                                       | Description                            |
+| ---------------------------- | ------------ | ----- | ------------------------------------------------ | -------------------------------------- |
+| id                           | uuid         | No    | PK                                               | Outcome                                |
+| agency_id                    | uuid         | No    | FK agencies                                      | Tenant                                 |
+| accounting_support_export_id | uuid         | No    | FK finalized_payroll_accounting_support_exports  | The export                             |
+| outcome                      | enum         | No    |                                                  | HANDED_OFF, RECEIVED, RETURNED, POSTED |
+| external_reference           | string       | Yes   | Required unless HANDED_OFF                       | External reference, such as a JEV      |
+| evidence_document_version_id | uuid         | Yes   | FK document_versions; required unless HANDED_OFF | Finalized External Evidence            |
+| reason                       | string       | Yes   | Exactly when RETURNED                            | Why it was returned                    |
+| recorded_by_membership_id    | uuid         | No    | FK agency_memberships                            | Actor                                  |
+| recorded_at                  | datetime     | No    |                                                  | Timestamp                              |
+
+**Constraints and indexes**
+
+- Recorded by hand, in any order and number. None changes the export, and
+  generating or downloading the export records none.
+- Recording claims no payroll function.
 
 **Deletion behavior:** Immutable.
 

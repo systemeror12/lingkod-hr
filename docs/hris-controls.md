@@ -1818,6 +1818,9 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `payroll.registers.generate`           |                A |            A |              A |                   A |                A |       A |        C |       R |
 | `payroll.payment_exports.generate`     |                C |            — |              — |                   A |                A |       A |        — |       R |
 | `payroll.disbursement.update`          |                — |            — |              — |                   C |                C |       A |        — |       R |
+| `payroll.accounting_exports.generate`  |                — |            — |              — |                   A |                — |       — |        — |       — |
+| `payroll.export_detail.read`           |                — |            — |              — |                   A |                — |       — |        — |       — |
+| `payroll.export_outcomes.record`       |                — |            — |              — |                   A |                — |       — |        — |       — |
 | `payroll.audit.read`                   |                R |            R |              R |                   R |                R |       R |        R |       A |
 
 `payroll.periods.read`, held Agency-wide, reads a period's Payroll Exceptions
@@ -1848,6 +1851,14 @@ The same permission generates and reads the Contribution Summary and the
 GSIS, PhilHealth, Pag-IBIG, and Employees' Compensation Remittance Schedules
 of a `FINALIZED` period: Structured Exports for review that file and remit
 nothing (payroll-schema.md §12, #354).
+
+`payroll.accounting_exports.generate`, held Agency-wide, generates the
+Finalized Payroll Accounting Support Export of a `FINALIZED` period and
+downloads it. `payroll.export_detail.read` downloads its Employee Detail
+Companion, which holds employee-level pay, and
+`payroll.export_outcomes.record` records a Payroll Export External Outcome
+against it. Each download is an Audit Event and is not an outcome
+(payroll-schema.md §12, #355).
 
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,
