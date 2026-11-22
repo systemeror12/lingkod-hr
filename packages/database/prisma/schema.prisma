@@ -5828,6 +5828,43 @@ model PaymentInstruction {
   @@map("payment_instructions")
 }
 
+/// The Contribution Summary of one FINALIZED payroll (#354): a Structured
+/// Export for review, stored as canonical JSON with its checksum. It files
+/// and remits nothing. Immutable.
+model ContributionSummary {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "contribution_summaries_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  content                        String
+  checksum                       String
+
+  @@unique([agencyId, id], map: "contribution_summaries_agency_id_id_key")
+  @@map("contribution_summaries")
+}
+
+/// One contribution type's Remittance Schedule in a Contribution Summary
+/// (#354). Its totals equal its Contribution Lines. Immutable.
+model RemittanceSchedule {
+  id                    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String  @map("agency_id") @db.Uuid
+  contributionSummaryId String  @map("contribution_summary_id") @db.Uuid
+  contributionType      String  @map("contribution_type")
+  lineCount             Int     @map("line_count")
+  employeeShareTotal    Decimal @map("employee_share_total") @db.Decimal(19, 4)
+  employerShareTotal    Decimal @map("employer_share_total") @db.Decimal(19, 4)
+  totalAmount           Decimal @map("total_amount") @db.Decimal(19, 4)
+  content               String
+  checksum              String
+
+  @@unique([contributionSummaryId, contributionType], map: "remittance_schedules_summary_type_key")
+  @@unique([agencyId, id], map: "remittance_schedules_agency_id_id_key")
+  @@map("remittance_schedules")
+}
+
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
 model PayrollRuleSnapshot {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

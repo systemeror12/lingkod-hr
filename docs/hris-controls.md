@@ -1839,6 +1839,11 @@ Payment Export of a `FINALIZED` period and downloads its CSV, which carries
 full account numbers, and its masked reconciliation summary; each download is
 an Audit Event (payroll-schema.md §12, #337).
 
+`payroll.registers.generate`, held Agency-wide, generates and reads the
+Contribution Summary and the GSIS, PhilHealth, Pag-IBIG, and Employees'
+Compensation Remittance Schedules of a `FINALIZED` period: Structured Exports
+for review that file and remit nothing (payroll-schema.md §12, #354).
+
 Holding a permission is not enough. On one Payroll Period a person acts in at
 most one payroll function: preparation, HR certification, Budget review,
 Accounting review, approval, or disbursement. A second function is refused

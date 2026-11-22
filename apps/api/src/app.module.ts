@@ -24,6 +24,7 @@ import { PayslipsModule } from './payslips/payslips.module';
 import { PayrollExceptionsModule } from './payroll-exceptions/payroll-exceptions.module';
 import { PayrollResultsModule } from './payroll-results/payroll-results.module';
 import { PaymentExportsModule } from './payment-exports/payment-exports.module';
+import { ContributionRemittancesModule } from './contribution-remittances/contribution-remittances.module';
 import { AuthorizedPayrollComponentInputsModule } from './authorized-payroll-component-inputs/authorized-payroll-component-inputs.module';
 import { AgencyPayrollApplicabilitiesModule } from './agency-payroll-applicabilities/agency-payroll-applicabilities.module';
 import { CompensationBasisModule } from './compensation-basis/compensation-basis.module';
@@ -80,6 +81,7 @@ import { AttendanceDeficitChargesModule } from './attendance-deficit-charges/att
     PayrollResultsModule,
     PayslipsModule,
     PaymentExportsModule,
+    ContributionRemittancesModule,
     AuthorizedPayrollComponentInputsModule,
     AgencyPayrollApplicabilitiesModule,
     CompensationBasisModule,

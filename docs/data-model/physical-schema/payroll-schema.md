@@ -2197,6 +2197,113 @@ A superseding export, its retry linkage, a voided payroll's supersession
 have no `supersedes_payment_export_id`, `prior_payment_instruction_id`, or
 `retry_reason`, and `payroll_period_id` is UNIQUE.
 
+```sql
+CREATE TABLE contribution_summaries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL,
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE remittance_schedules (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  contribution_summary_id uuid NOT NULL,
+  contribution_type text NOT NULL
+    CHECK (contribution_type IN ('GSIS','PHILHEALTH','PAGIBIG','EMPLOYEES_COMPENSATION')),
+  line_count integer NOT NULL CHECK (line_count >= 0),
+  employee_share_total numeric(19,4) NOT NULL,
+  employer_share_total numeric(19,4) NOT NULL,
+  total_amount numeric(19,4) NOT NULL,
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  CHECK (total_amount = employee_share_total + employer_share_total),
+  CHECK (contribution_type <> 'EMPLOYEES_COMPENSATION' OR employee_share_total = 0),
+  FOREIGN KEY (agency_id, contribution_summary_id)
+    REFERENCES contribution_summaries (agency_id, id),
+  UNIQUE (contribution_summary_id, contribution_type),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Contribution Summary and its four Remittance Schedules, one each for GSIS,
+PhilHealth, Pag-IBIG, and Employees' Compensation, are Structured Exports for
+review of one `FINALIZED` payroll's contributions (PAY-009, #354). They file
+and remit nothing (PAY-010), and carry no form number, form title, or
+issuer's layout (#617). `POST .../payroll-periods/:periodId/contribution-remittances`
+generates them; it needs `payroll.registers.generate` held Agency-wide and
+claims no payroll function. It locks the period, reads every Contribution
+Line (section 9) of the period's `FINALIZED` results at the finalized
+calculation version, and writes the summary, its schedules, and a
+`CONTRIBUTION_REMITTANCE_GENERATED` Audit Event (idempotency key
+`generated`) in one transaction. A period has one summary: generating again,
+by anyone permitted, returns the stored artifacts unchanged and writes
+nothing. `GET .../contribution-remittances/:summaryId` reads them with the
+same permission. A period that is not `FINALIZED` is refused with
+`CONTRIBUTION_REMITTANCE_PAYROLL_NOT_FINALIZED`. Migration 0188 adds
+`CONTRIBUTION_REMITTANCE` version 1 to the contract versions; its definition
+names every field, the line order, and the control rules.
+
+Each artifact is canonical JSON, like the Certified Payroll Review Export:
+keys sorted at every depth, amounts as four-place decimal strings, as the
+Contribution Lines store them. Every artifact carries the contract, its
+statement that it is not a filing or a remittance and follows no issuer's
+format, the Agency, the summary's id, the generation time, and the period
+with its finalized version and finalization time. A schedule lists each
+Contribution Line of its type by agency employee number: the Employee's
+name, the base, the Employee's share, the Agency's share as employer, their
+sum, and the National Payroll Rule Version's id and code. Its totals are the
+line count and the sums of those lines. A type with no line, such as every
+type of a special period (section 9), still has a schedule, with no lines
+and zero totals. The summary lists each schedule's id, checksum, line count,
+and totals, then the totals over every type, so the five artifacts are
+tied. `checksum` is the SHA-256 of `content`, and a CHECK keeps the two
+together.
+
+Triggers keep both tables immutable, even for the database owner. A summary
+is admitted only for a `FINALIZED` period at its calculation version, and a
+deferred trigger refuses to commit one without a schedule of each of the four
+types. A schedule is admitted only in the transaction that writes its
+summary, and only when its line count and Employee and employer share totals
+equal the count and sums of the Contribution Lines of its type in the
+summary's `FINALIZED` results, so a schedule's totals always equal its
+lines. `hris_app` holds `SELECT` and `INSERT` only, and RLS is forced.
+Migration 0188 grants `payroll.registers.generate` Agency-wide to the Payroll
+Preparer, the HR Certifier, the Budget Officer, the Accounting Reviewer, the
+Payroll Approver, and the Cashier; the HR Admin's `C` and the Auditor's `R`
+are not seeded.
+
+- _Reading_: hris-controls.md §6.10 names no permission for remittance
+  schedules, and #12's story 10 has the Payroll Preparer produce "the
+  register, variance report and remittance schedules" together, so they share
+  `payroll.registers.generate`.
+- _Reading_: "the Agency and Employee contribution summary" is the summary of
+  the Employee's share and the Agency's share as employer of each type, the
+  two shares a Contribution Line holds; the per-Employee detail is on the
+  schedules.
+- _Reading_: the artifacts name Employees by agency employee number and legal
+  name and carry no government identifier, such as a GSIS, PhilHealth, or
+  Pag-IBIG number. No issuer format is claimed, so none is required, and the
+  identifiers stay behind their own access controls.
+- _Reading_: the artifacts are small JSON and hold no protected value, so
+  they are stored as `content` and not through the document service; the
+  logical ERD's `document_id` and `status` are not used, and reading them is
+  not separately audited, as with the Certified Payroll Review Export. A
+  voided payroll's supersession of them arrives with the void transaction.
+
 Files are stored through the shared document service.
 
 ---
