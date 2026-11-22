@@ -43,6 +43,12 @@ export interface CalculationScope {
   agencyPayrollApplicabilityIds: readonly string[];
   authorizedPayrollComponentInputIds: readonly string[];
   paymentDate: string;
+  /**
+   * Set when a Payroll Adjustment recalculates a FINALIZED period (#356): the
+   * Payroll Inputs and Attendance Payroll Facts read are those its final
+   * version's lines rest on, as recorded, instead of the unconsumed ones.
+   */
+  original?: { payrollPeriodId: string; calculationVersion: number };
 }
 
 type MonthSources = Pick<
@@ -79,6 +85,9 @@ export interface AgencyPayrollSources {
  *
  * For every period it reads each Employee's tax figures from the Agency's
  * finalized payrolls of the tax year, the withholding tax's year to date.
+ * A recalculation of a finalized period (`scope.original`) reads instead the
+ * inputs and facts its lines rest on, whatever their status, and no deficit
+ * charges: its finalization already settled them.
  * For a regular period it reads each Employee's Deduction Obligations in
  * effect on the period's last day, as they stood at the cutoff, and the
  * separation that ends the Employee's service in the period, if any.
@@ -98,13 +107,22 @@ export class PayrollSourcesReader {
     cutoffAt: Date,
     scope: CalculationScope,
   ): Promise<AgencyPayrollSources> {
+    const original = scope.original
+      ? await originalSourceIdsInTransaction(transaction, agencyId, scope.original)
+      : null;
     const inputs = await transaction.payrollInput.findMany({
-      where: {
-        agencyId,
-        status: 'PENDING',
-        inputKind: { in: CALCULATED_INPUT_KINDS },
-        acceptedAt: { lte: cutoffAt },
-      },
+      where: original
+        ? {
+            agencyId,
+            id: { in: original.payrollInputIds },
+            inputKind: { in: CALCULATED_INPUT_KINDS },
+          }
+        : {
+            agencyId,
+            status: 'PENDING',
+            inputKind: { in: CALCULATED_INPUT_KINDS },
+            acceptedAt: { lte: cutoffAt },
+          },
       orderBy: [{ employeeId: 'asc' }, { effectiveDate: 'asc' }, { id: 'asc' }],
       select: {
         id: true,
@@ -123,22 +141,26 @@ export class PayrollSourcesReader {
       agencyId,
       cutoffAt,
     );
-    const consumed = new Set(
-      (
-        await transaction.payrollConsumedAttendanceFact.findMany({
-          where: {
-            agencyId,
-            releasedAt: null,
-            attendancePayrollFactId: {
-              in: [...facts.absenceFacts, ...facts.nightDutyFacts].map((fact) => fact.id),
-            },
-          },
-          select: { attendancePayrollFactId: true },
-        })
-      ).map((row) => row.attendancePayrollFactId),
-    );
+    const consumed = original
+      ? null
+      : new Set(
+          (
+            await transaction.payrollConsumedAttendanceFact.findMany({
+              where: {
+                agencyId,
+                releasedAt: null,
+                attendancePayrollFactId: {
+                  in: [...facts.absenceFacts, ...facts.nightDutyFacts].map((fact) => fact.id),
+                },
+              },
+              select: { attendancePayrollFactId: true },
+            })
+          ).map((row) => row.attendancePayrollFactId),
+        );
+    const taken = (factId: string) =>
+      original ? original.attendancePayrollFactIds.has(factId) : !consumed!.has(factId);
     const uncharged = new Map<string, EmployeePayrollSources['unchargedDeficitFacts']>();
-    for (const publicationId of facts.publicationIds) {
+    for (const publicationId of original ? [] : facts.publicationIds) {
       for (const employee of await this.deficitCharges.unchargedFactsInTransaction(
         transaction,
         agencyId,
@@ -190,10 +212,10 @@ export class PayrollSourcesReader {
             payloadSnapshot: input.payloadSnapshot,
           })),
         absenceFacts: facts.absenceFacts.filter(
-          (fact) => fact.employeeId === employeeId && !consumed.has(fact.id),
+          (fact) => fact.employeeId === employeeId && taken(fact.id),
         ),
         nightDutyFacts: facts.nightDutyFacts.filter(
-          (fact) => fact.employeeId === employeeId && !consumed.has(fact.id),
+          (fact) => fact.employeeId === employeeId && taken(fact.id),
         ),
         nightShiftDifferentialRates: rates
           .filter((row) => row.employeeId === null || row.employeeId === employeeId)
@@ -418,6 +440,33 @@ export class PayrollSourcesReader {
     }
     return bases;
   }
+}
+
+/** The Payroll Inputs and Attendance Payroll Facts a finalized version's own lines rest on. */
+async function originalSourceIdsInTransaction(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  original: NonNullable<CalculationScope['original']>,
+) {
+  const sources = await transaction.$queryRaw<
+    { payroll_input_id: string | null; attendance_payroll_fact_id: string | null }[]
+  >`
+    SELECT DISTINCT s."payroll_input_id"::text, s."attendance_payroll_fact_id"::text
+    FROM "payroll_line_sources" s
+    JOIN "payroll_lines" l ON l."agency_id" = s."agency_id" AND l."id" = s."payroll_line_id"
+    JOIN "payroll_employees" e
+      ON e."agency_id" = l."agency_id" AND e."id" = l."payroll_employee_id"
+    WHERE e."agency_id" = CAST(${agencyId} AS uuid)
+      AND e."payroll_period_id" = CAST(${original.payrollPeriodId} AS uuid)
+      AND e."calculation_version" = ${original.calculationVersion}
+      AND l."payroll_adjustment_id" IS NULL
+  `;
+  return {
+    payrollInputIds: sources.flatMap((source) => source.payroll_input_id ?? []),
+    attendancePayrollFactIds: new Set(
+      sources.flatMap((source) => source.attendance_payroll_fact_id ?? []),
+    ),
+  };
 }
 
 /**

@@ -1232,7 +1232,10 @@ one of three ways:
 | A retroactive National Payroll Rule Version or Personnel fact | A user with `payroll.inputs.adjust`, with a reason, for one finalized period and one Employee or all of its Employees |
 
 Payroll never opens a recalculation on its own. An Employee and past period
-have at most one open adjustment, and a later cause joins it.
+have at most one open adjustment, and a later cause joins it. A recalculation
+request is refused while a period past `DRAFT` and not yet `FINALIZED`
+already carries the adjustment, since its difference is calculated; it is
+asked again once that period is finalized or returned to `DRAFT` (#356).
 
 - An open adjustment has no amount. Each calculation of the period that
   carries it computes the difference against the original result plus every
