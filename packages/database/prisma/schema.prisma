@@ -5904,6 +5904,25 @@ model PayrollExportExternalOutcome {
   @@map("payroll_export_external_outcomes")
 }
 
+/// One append-only Disbursement Outcome of a Payment Instruction (#28, #642).
+/// An instruction's latest outcome is its highest `sequence`.
+model DisbursementOutcome {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  paymentInstructionId      String   @map("payment_instruction_id") @db.Uuid
+  sequence                  Int
+  outcome                   String
+  externalReference         String?  @map("external_reference")
+  evidenceDocumentVersionId String?  @map("evidence_document_version_id") @db.Uuid
+  reason                    String?
+  recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@unique([paymentInstructionId, sequence], map: "disbursement_outcomes_instruction_sequence_key")
+  @@unique([agencyId, id], map: "disbursement_outcomes_agency_id_id_key")
+  @@map("disbursement_outcomes")
+}
+
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
 model PayrollRuleSnapshot {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Header,
@@ -16,6 +17,10 @@ import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import {
+  DisbursementOutcomesService,
+  type DisbursementOutcomeView,
+} from './disbursement-outcomes.service';
+import {
   PaymentExportsService,
   PaymentExportsServiceError,
   type PaymentExportArtifact,
@@ -27,7 +32,11 @@ const idSchema = z.string().uuid();
 @Controller('agencies')
 @UseGuards(AuthGuard, PermissionGuard)
 export class PaymentExportsController {
-  constructor(@Inject(PaymentExportsService) private readonly service: PaymentExportsService) {}
+  constructor(
+    @Inject(PaymentExportsService) private readonly service: PaymentExportsService,
+    @Inject(DisbursementOutcomesService)
+    private readonly outcomes: DisbursementOutcomesService,
+  ) {}
 
   /** Generate the Payment Export of a FINALIZED period; generating again returns the same one. */
   @Post(':agencyId/payroll-periods/:periodId/payment-exports')
@@ -72,6 +81,32 @@ export class PaymentExportsController {
     return file(
       await translate(context, () => this.service.downloadSummary(context, period, paymentExport)),
     );
+  }
+
+  /** Record a Payment Instruction's next Disbursement Outcome; claims DISBURSEMENT on the period. */
+  @Post(
+    ':agencyId/payroll-periods/:periodId/payment-exports/:exportId/instructions/:instructionId/disbursement-outcomes',
+  )
+  @RequirePermission('payroll.disbursement.update')
+  async recordOutcome(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Param('exportId') exportId: string,
+    @Param('instructionId') instructionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ outcome: DisbursementOutcomeView }> {
+    const [period, paymentExport] = this.parse(agencyId, periodId, exportId, context);
+    const instruction = parseId(
+      instructionId,
+      context,
+      'PAYMENT_INSTRUCTION_NOT_FOUND',
+      'The Payment Instruction',
+    );
+    const target = { periodId: period, exportId: paymentExport, instructionId: instruction };
+    return {
+      outcome: await translate(context, () => this.outcomes.record(context, target, body)),
+    };
   }
 
   private parse(

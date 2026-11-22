@@ -2401,10 +2401,73 @@ net, to that Employee's `ACTIVE` account effective that day. `hris_app` holds
 the Payroll Approver, and the Cashier; the Payroll Preparer's `C` and the
 Auditor's `R` are not seeded.
 
-A superseding export, its retry linkage, a voided payroll's supersession
-(#643), and Disbursement Outcomes (#642) are not built yet, so the tables
-have no `supersedes_payment_export_id`, `prior_payment_instruction_id`, or
+A superseding export, its retry linkage, and a voided payroll's supersession
+(#643) are not built yet, so the tables have no
+`supersedes_payment_export_id`, `prior_payment_instruction_id`, or
 `retry_reason`, and `payroll_period_id` is UNIQUE.
+
+```sql
+CREATE TABLE disbursement_outcomes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payment_instruction_id uuid NOT NULL,
+  sequence integer NOT NULL CHECK (sequence > 0),
+  outcome text NOT NULL
+    CHECK (outcome IN ('SUBMITTED','ACCEPTED','REJECTED','SETTLED','RETURNED')),
+  external_reference text CHECK (external_reference IS NULL OR btrim(external_reference) <> ''),
+  evidence_document_version_id uuid,
+  reason text,
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((outcome IN ('REJECTED','RETURNED')) = (reason IS NOT NULL)
+         AND (reason IS NULL OR btrim(reason) <> '')),
+  FOREIGN KEY (agency_id, payment_instruction_id)
+    REFERENCES payment_instructions (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (payment_instruction_id, sequence),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Disbursement Outcome is external evidence of one Payment Instruction's
+progress or result after handoff (#28, #642). The Cashier records it with
+`POST .../payment-exports/:exportId/instructions/:instructionId/disbursement-outcomes`,
+which needs `payroll.disbursement.update` held Agency-wide and claims the
+`DISBURSEMENT` function on the instruction's Payroll Period (section 5), so
+the period's Payroll Approver, or anyone holding another function there, is
+refused with `PAYROLL_FUNCTION_CONFLICT`. The command locks the period row,
+which must be `FINALIZED`, and writes the outcome and a
+`DISBURSEMENT_OUTCOME_RECORDED` Audit Event on the instruction, naming the
+previous and new outcome, in one transaction.
+
+An instruction's outcomes are numbered from 1 in the order recorded, and its
+latest outcome is the one with the highest `sequence`. The request names the
+`sequence` it takes, one more than the outcomes the Cashier read, and a stale
+or repeated request is refused with `DISBURSEMENT_OUTCOME_STALE`. Any outcome
+may follow any other (_reading_: #28 lists the outcomes but no order between
+them), so a wrong outcome is answered by a later one. `ACCEPTED` does not
+imply `SETTLED`, and one export's instructions may hold mixed outcomes. The
+external reference, such as the bank's batch number, and the evidence, an
+exact finalized Document Version of the Agency, are optional; `REJECTED` and
+`RETURNED` need a reason, and only they take one. Recording an outcome
+changes no export, instruction, or payroll row.
+
+`instructionsBlockingVoid` in `apps/api/src/payment-exports` returns the
+period's instructions whose latest outcome is `SUBMITTED`, `ACCEPTED`, or
+`SETTLED`; the void request and approval (section 5) refuse while it returns
+any. They call it after locking the period row, which recording an outcome
+also locks, so the answer holds until the void commits.
+
+A trigger rejects every `UPDATE` and `DELETE`, even for the database owner,
+and admits an outcome only on an instruction of a `FINALIZED` period, as the
+next `sequence` of its instruction. `hris_app` holds `SELECT` and `INSERT`
+only. Migration 0192 creates the table with forced RLS and grants
+`payroll.disbursement.update` Agency-wide to the Cashier; the Accounting
+Reviewer's and the Payroll Approver's `C` and the Auditor's `R` are not
+seeded.
 
 ```sql
 CREATE TABLE contribution_summaries (
