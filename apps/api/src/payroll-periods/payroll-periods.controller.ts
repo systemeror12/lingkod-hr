@@ -14,6 +14,10 @@ import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
+import {
+  PayrollAdjustmentsService,
+  type PayrollRecalculationResult,
+} from './payroll-adjustments.service';
 import { PayrollApprovalService } from './payroll-approval.service';
 import { PayrollCertificationService } from './payroll-certification.service';
 import { PayrollFinalizationService } from './payroll-finalization.service';
@@ -48,6 +52,7 @@ export class PayrollPeriodsController {
     @Inject(PayrollApprovalService) private readonly approval: PayrollApprovalService,
     @Inject(PayrollFinalizationService)
     private readonly finalization: PayrollFinalizationService,
+    @Inject(PayrollAdjustmentsService) private readonly adjustments: PayrollAdjustmentsService,
   ) {}
 
   @Get(':agencyId/payroll-periods/:periodId')
@@ -207,6 +212,20 @@ export class PayrollPeriodsController {
     return {
       period: await translate(context, () => this.finalization.finalize(context, id, body)),
     };
+  }
+
+  /** Open a Payroll Adjustment to recalculate a FINALIZED period for one or all Employees. */
+  @Post(':agencyId/payroll-periods/:periodId/adjustments')
+  @RequirePermission('payroll.inputs.adjust')
+  async openRecalculation(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PayrollRecalculationResult> {
+    assertAgency(agencyId, context);
+    const id = parsePeriodId(periodId, context);
+    return translate(context, () => this.adjustments.openRecalculation(context, id, body));
   }
 
   /** Read a Certified Payroll Review Export; the period detail names the current one. */

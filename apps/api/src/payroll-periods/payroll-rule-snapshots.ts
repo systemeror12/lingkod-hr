@@ -134,6 +134,7 @@ export type PayrollRuleSnapshotResult =
       nationalPayrollRuleVersionIds: string[];
       authorizedPayrollComponentInputIds: string[];
       agencyPayrollApplicabilityIds: string[];
+      payrollAdjustmentIds: string[];
     }
   | { outcome: 'REFUSED'; code: 'PAYROLL_RULE_NOT_IN_EFFECT'; reason: string };
 
@@ -147,6 +148,12 @@ export type PayrollRuleSnapshotResult =
  * whose effective period overlaps the period; they copy no values. Whether an input is paid is the calculation's
  * (#626). A required rule missing or expired on any date refuses the snapshot
  * and writes nothing.
+ *
+ * A regular period, and a special one with `carries_adjustments`, also names
+ * every OPEN Payroll Adjustment of the Agency, which this version carries
+ * (#356), and references the rule versions, inputs, and applicability records
+ * in effect on each original period's dates, which its recalculation reads.
+ * None of those is required: the original period was calculated with them.
  */
 export async function freezePayrollRuleSnapshot(
   transaction: Prisma.TransactionClient,
@@ -154,7 +161,14 @@ export async function freezePayrollRuleSnapshot(
 ): Promise<PayrollRuleSnapshotResult> {
   const period = await transaction.payrollPeriod.findUnique({
     where: { agencyId_id: { agencyId: input.agencyId, id: input.payrollPeriodId } },
-    select: { periodFrom: true, periodTo: true, cutoffAt: true, calculationVersion: true },
+    select: {
+      periodFrom: true,
+      periodTo: true,
+      cutoffAt: true,
+      calculationVersion: true,
+      runType: true,
+      carriesAdjustments: true,
+    },
   });
   if (!period) throw new Error('The Payroll Period is not in this Agency.');
   if (period.calculationVersion < 1) {
@@ -188,12 +202,36 @@ export async function freezePayrollRuleSnapshot(
   if (coverage.status === 'NOT_IN_EFFECT') {
     return { outcome: 'REFUSED', code: 'PAYROLL_RULE_NOT_IN_EFFECT', reason: coverage.reason };
   }
-  const nationalPayrollRuleVersionIds = coverage.ruleVersionIds;
+
+  const carried =
+    period.runType === 'REGULAR' || period.carriesAdjustments
+      ? await openAdjustmentsInTransaction(transaction, input.agencyId)
+      : [];
+  const ranges = [{ from: period.periodFrom, to: period.periodTo }];
+  const ruleVersionIds = new Set(coverage.ruleVersionIds);
+  for (const original of new Map(
+    carried.map((each) => [each.originalPayrollPeriodId, each]),
+  ).values()) {
+    ranges.push({ from: original.periodFrom, to: original.periodTo });
+    const references = ruleVersionsForSnapshot(
+      versionsByKind,
+      isoDateOf(original.periodFrom),
+      isoDateOf(original.periodTo),
+      [],
+    );
+    if (references.status === 'COVERED') {
+      for (const id of references.ruleVersionIds) ruleVersionIds.add(id);
+    }
+  }
+  const nationalPayrollRuleVersionIds = [...ruleVersionIds];
+  const payrollAdjustmentIds = carried.map((each) => each.id);
 
   const overlapsPeriod = {
     agencyId: input.agencyId,
-    effectiveFrom: { lte: period.periodTo },
-    OR: [{ effectiveTo: null }, { effectiveTo: { gte: period.periodFrom } }],
+    OR: ranges.map((range) => ({
+      effectiveFrom: { lte: range.to },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gte: range.from } }],
+    })),
   };
   const authorizedInputs = await transaction.authorizedPayrollComponentInput.findMany({
     where: { ...overlapsPeriod, status: 'APPROVED' },
@@ -232,6 +270,7 @@ export async function freezePayrollRuleSnapshot(
         ...item,
         agencyPayrollApplicabilityId,
       })),
+      ...payrollAdjustmentIds.map((payrollAdjustmentId) => ({ ...item, payrollAdjustmentId })),
     ],
   });
   return {
@@ -241,5 +280,24 @@ export async function freezePayrollRuleSnapshot(
     nationalPayrollRuleVersionIds,
     authorizedPayrollComponentInputIds,
     agencyPayrollApplicabilityIds,
+    payrollAdjustmentIds,
   };
+}
+
+/** The Agency's OPEN Payroll Adjustments, oldest original period first, with that period's dates. */
+async function openAdjustmentsInTransaction(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+) {
+  return transaction.$queryRaw<
+    { id: string; originalPayrollPeriodId: string; periodFrom: Date; periodTo: Date }[]
+  >`
+    SELECT a."id"::text, a."original_payroll_period_id"::text AS "originalPayrollPeriodId",
+           p."period_from" AS "periodFrom", p."period_to" AS "periodTo"
+    FROM "payroll_adjustments" a
+    JOIN "payroll_periods" p
+      ON p."agency_id" = a."agency_id" AND p."id" = a."original_payroll_period_id"
+    WHERE a."agency_id" = CAST(${agencyId} AS uuid) AND a."status" = 'OPEN'
+    ORDER BY p."period_from", a."original_payroll_period_id", a."employee_id"
+  `;
 }

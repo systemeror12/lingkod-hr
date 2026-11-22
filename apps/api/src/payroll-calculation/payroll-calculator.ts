@@ -187,6 +187,11 @@ export interface CalculatedLine {
   amount: string;
   source: Record<string, unknown>;
   sourceRecords?: LineSourceRecord[];
+  /**
+   * Set on a line that carries a Payroll Adjustment's difference (#356). It
+   * rests on no source record: the original period consumed them.
+   */
+  payrollAdjustmentId?: string;
 }
 
 export interface CalculatedException {
