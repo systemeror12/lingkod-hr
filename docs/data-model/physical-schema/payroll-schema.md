@@ -720,7 +720,7 @@ its period is `FOR_REVIEW` at the version it names, unapproved and unrevoked.
 An `UPDATE` may set the approval columns once, while the row is in force and
 its period is `CERTIFIED` at that version, and the revocation columns once; a
 revoked row never changes again, and every `DELETE` is rejected. Migration
-0168 creates the table, and migration 0189 adds the approval columns. The
+0168 creates the table, and migration 0193 adds the approval columns. The
 Certified Payroll Review Export (#636) binds the certification in force, and
 revoking it supersedes that export and revokes its checkpoint reviews.
 
@@ -777,7 +777,7 @@ time: the certifier, the Budget and Accounting checkpoint reviewers, the
 approver, and the finalizer, each by membership and display name (#639). No
 record holds who started a calculation, so the read names no calculator.
 
-Migration 0189 backfills the approver and finalizer of existing rows from their
+Migration 0193 backfills the approver and finalizer of existing rows from their
 `PAYROLL_PERIOD_APPROVED` and `PAYROLL_PERIOD_FINALIZED` Audit Events. A
 finalized period with no such event keeps a null finalizer, so the table CHECK
 only requires a time beside a finalizer; the trigger requires both on every
