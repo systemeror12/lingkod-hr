@@ -2197,6 +2197,124 @@ A superseding export, its retry linkage, a voided payroll's supersession
 have no `supersedes_payment_export_id`, `prior_payment_instruction_id`, or
 `retry_reason`, and `payroll_period_id` is UNIQUE.
 
+```sql
+CREATE TABLE finalized_payroll_accounting_support_exports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  calculation_hash text NOT NULL CHECK (calculation_hash ~ '^[0-9a-f]{64}$'),
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  employee_detail_content text NOT NULL,
+  employee_detail_checksum text NOT NULL
+    CHECK (employee_detail_checksum
+           = encode(sha256(convert_to(employee_detail_content, 'UTF8')), 'hex')),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE payroll_export_external_outcomes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  accounting_support_export_id uuid NOT NULL,
+  outcome text NOT NULL CHECK (outcome IN ('HANDED_OFF','RECEIVED','RETURNED','POSTED')),
+  external_reference text CHECK (external_reference IS NULL OR btrim(external_reference) <> ''),
+  evidence_document_version_id uuid,
+  reason text,
+  recorded_by_membership_id uuid NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (outcome = 'HANDED_OFF'
+         OR (external_reference IS NOT NULL AND evidence_document_version_id IS NOT NULL)),
+  CHECK ((outcome = 'RETURNED') = (reason IS NOT NULL)
+         AND (reason IS NULL OR btrim(reason) <> '')),
+  FOREIGN KEY (agency_id, accounting_support_export_id)
+    REFERENCES finalized_payroll_accounting_support_exports (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id)
+);
+```
+
+A Finalized Payroll Accounting Support Export (#29, #355) is generated from a
+`FINALIZED` Payroll Period by
+`POST .../payroll-periods/:periodId/accounting-support-exports`, which needs
+`payroll.accounting_exports.generate` held Agency-wide and claims no payroll
+function. It locks the period, reads every result and Payroll Line of the
+finalized calculation version, and writes the export and a
+`PAYROLL_ACCOUNTING_EXPORT_GENERATED` Audit Event (idempotency key
+`generated`) in one transaction. A period has one export: generating again,
+by anyone permitted, returns the stored one, its checksums unchanged, with
+the outcomes recorded against it, and writes nothing. Migration 0189 adds
+`FINALIZED_PAYROLL_ACCOUNTING_SUPPORT_EXPORT` version 1 to the contract
+versions.
+
+It reuses #636's Classified Payroll Export Lines and Payroll Export
+Reconciliation unchanged, bound to the calculation hash of the certification
+the payroll was finalized under (_reading_: finalization verified the results
+against that certification, section 11, so it is the hash of the finalized
+result). `content` is canonical JSON like the review export's. It carries
+the contract, a statement that it is not a journal entry, claims no debit,
+credit, or posting, and that neither generating nor downloading it records
+that a receiving system received, accepted, or posted it, the period, the
+finalization, the classified lines, the reconciliation, and the Employee
+Detail Companion's checksum, which ties the two artifacts. It holds no
+employee-level detail.
+
+The Employee Detail Companion is `employee_detail_content`: canonical JSON
+naming the export, with one entry per result, ordered by agency employee
+number, giving the Employee's number and legal name at generation, the
+result's gross, deductions, and net, and its own classified lines. Its
+`totals`, the employees' classified lines and reconciliations summed, must
+equal the export's classified lines and reconciliation, as part of the same
+reconciliation (_reading_: the glossary has the reconciliation prove
+"companion-detail totals agree before a payroll Structured Export is
+generated", so the companion is generated and reconciled with every export,
+and what is optional is obtaining it, under its own permission). A
+reconciliation failure refuses with `PAYROLL_EXPORT_RECONCILIATION_FAILED` and
+stores nothing; a period that is not `FINALIZED` is refused with
+`PAYROLL_ACCOUNTING_EXPORT_PAYROLL_NOT_FINALIZED`.
+
+`GET .../accounting-support-exports/:exportId/content` downloads the export
+and needs `payroll.accounting_exports.generate`.
+`GET .../accounting-support-exports/:exportId/employee-detail` downloads the
+companion and needs `payroll.export_detail.read`. Each
+download is a `PAYROLL_ACCOUNTING_EXPORT_DOWNLOADED` Audit Event naming the
+artifact and its checksum, and records no outcome.
+
+A Payroll Export External Outcome is append-only evidence recorded by hand by
+`POST .../accounting-support-exports/:exportId/external-outcomes`, which needs
+`payroll.export_outcomes.record` and claims no payroll function.
+`HANDED_OFF` records a handoff and may name an external reference and
+evidence. `RECEIVED`, `RETURNED`, and `POSTED` are externally evidenced, so
+each names the external reference, such as a JEV number, and the exact
+finalized Document Version of the Agency that evidences it, refused with
+`PAYROLL_EXPORT_OUTCOME_EVIDENCE_INVALID` otherwise. A return also gives its
+reason (_reading_: the glossary names a handoff and an externally evidenced
+receipt, return, or posting, and #29 lists the external reference, outcome,
+evidence, actor, and timestamp; the reason on a return follows the checkpoint
+review). Outcomes may come in any order and any number; each is a
+`PAYROLL_EXPORT_EXTERNAL_OUTCOME_RECORDED` Audit Event, and none changes the
+export. Outcomes are recorded against this export only; the Certified Payroll
+Review Export's outcomes are its checkpoint reviews.
+
+Triggers keep the export immutable, even for the database owner, admitting
+it only for a `FINALIZED` period at its calculation version, and reject every
+`UPDATE` and `DELETE` of an outcome. `hris_app` holds `SELECT` and `INSERT`
+on both. Migration 0189 grants the three permissions Agency-wide to the
+Accounting Reviewer only. A voided payroll's supersession of its export
+(#643) is not built yet, so the table has no `superseded_at` and
+`payroll_period_id` is UNIQUE.
+
 Files are stored through the shared document service.
 
 ---
@@ -2222,6 +2340,9 @@ Application permissions separately control:
 - Payment Exports, whose CSV carries full account numbers, so
   `payroll.payment_exports.generate` is its bank-detail control and each
   download is audited;
+- the Finalized Payroll Accounting Support Export, its Employee Detail
+  Companion, which holds employee-level pay, and its Payroll Export External
+  Outcomes, each under its own permission;
 - Disbursement Outcomes.
 
 A permission is not enough on its own: `payroll_period_actors` keeps each

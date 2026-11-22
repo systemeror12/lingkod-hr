@@ -5828,6 +5828,45 @@ model PaymentInstruction {
   @@map("payment_instructions")
 }
 
+/// The immutable, checksummed Finalized Payroll Accounting Support Export of
+/// one FINALIZED payroll, with its Employee Detail Companion (#29, #355).
+/// The foreign keys are in SQL.
+model FinalizedPayrollAccountingSupportExport {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "finalized_payroll_accounting_support_exports_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  calculationHash                String   @map("calculation_hash")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  content                        String
+  checksum                       String
+  employeeDetailContent          String   @map("employee_detail_content")
+  employeeDetailChecksum         String   @map("employee_detail_checksum")
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+
+  @@unique([agencyId, id], map: "finalized_payroll_accounting_support_exports_agency_id_id_key")
+  @@map("finalized_payroll_accounting_support_exports")
+}
+
+/// An append-only Payroll Export External Outcome recorded by hand against a
+/// Finalized Payroll Accounting Support Export (#29, #355). The foreign keys
+/// are in SQL.
+model PayrollExportExternalOutcome {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  accountingSupportExportId String   @map("accounting_support_export_id") @db.Uuid
+  outcome                   String
+  externalReference         String?  @map("external_reference")
+  evidenceDocumentVersionId String?  @map("evidence_document_version_id") @db.Uuid
+  reason                    String?
+  recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@index([agencyId, accountingSupportExportId, recordedAt], map: "payroll_export_external_outcomes_export_idx")
+  @@map("payroll_export_external_outcomes")
+}
+
 /// The immutable rule snapshot of one calculation version (payroll-schema.md §6).
 model PayrollRuleSnapshot {
   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
