@@ -20,7 +20,7 @@ const context: RequestContext = {
 
 describe('PaymentExportsController', () => {
   it('needs payroll.payment_exports.generate on every route', () => {
-    for (const route of ['generate', 'downloadCsv', 'downloadSummary'] as const) {
+    for (const route of ['generate', 'retry', 'downloadCsv', 'downloadSummary'] as const) {
       expect(
         Reflect.getMetadata(REQUIRED_PERMISSIONS, PaymentExportsController.prototype[route]),
       ).toEqual(['payroll.payment_exports.generate']);
@@ -47,6 +47,23 @@ describe('PaymentExportsController', () => {
     );
     await expect(
       controller.recordOutcome(agencyId, periodId, exportId, 'not-a-uuid', body, context),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('passes the instruction named in the route and the body to the retry', async () => {
+    const service = { retry: vi.fn().mockResolvedValue({ id: 'retry-export' }) };
+    const controller = new PaymentExportsController(service as never, {} as never);
+    const body = { reason: 'Destination corrected' };
+    await expect(
+      controller.retry(agencyId, periodId, exportId, instructionId, body, context),
+    ).resolves.toEqual({ export: { id: 'retry-export' } });
+    expect(service.retry).toHaveBeenCalledWith(
+      context,
+      { periodId, exportId, instructionId },
+      body,
+    );
+    await expect(
+      controller.retry(agencyId, periodId, exportId, 'not-a-uuid', body, context),
     ).rejects.toMatchObject({ status: 404 });
   });
 

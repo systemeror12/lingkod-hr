@@ -1850,7 +1850,12 @@ no payroll data (payroll-schema.md §12, #359).
 `payroll.payment_exports.generate`, held Agency-wide, generates the
 Payment Export of a `FINALIZED` period and downloads its CSV, which carries
 full account numbers, and its masked reconciliation summary; each download is
-an Audit Event (payroll-schema.md §12, #337).
+an Audit Event (payroll-schema.md §12, #337). The same permission retries a
+Payment Instruction whose latest Disbursement Outcome is `REJECTED` or
+`RETURNED`, with a reason, once its Employee's destination is corrected: a
+superseding Payment Export with one new instruction linked to the prior one,
+to the same payee for the same amount. A payee or amount change is a Payroll
+Adjustment (payroll-schema.md §12, #643).
 
 `payroll.disbursement.update`, held Agency-wide, records a Disbursement
 Outcome on a Payment Instruction of a `FINALIZED` period, and claims the

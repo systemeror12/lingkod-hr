@@ -535,7 +535,11 @@ async function exportsOf(
 ) {
   const where = { agencyId: context.agencyId, payrollPeriodId };
   const [paymentExport, register, accountingExport] = await Promise.all([
-    transaction.paymentExport.findFirst({ where, select: { id: true } }),
+    // A retry adds superseding exports (#643); the original heads their chain.
+    transaction.paymentExport.findFirst({
+      where: { ...where, supersedesPaymentExportId: null },
+      select: { id: true },
+    }),
     transaction.payrollRegister.findFirst({ where, select: { id: true } }),
     transaction.finalizedPayrollAccountingSupportExport.findFirst({ where, select: { id: true } }),
   ]);
