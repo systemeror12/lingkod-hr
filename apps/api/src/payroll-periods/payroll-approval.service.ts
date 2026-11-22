@@ -30,12 +30,13 @@ import {
  *
  * - Approve (`CERTIFIED → APPROVED`) needs both checkpoint reviews confirmed
  *   on the current Certified Payroll Review Export and no open blocking
- *   exception. It writes no row of its own: the certification in force binds
- *   the approved version and hash, and an APPROVED period can no longer be
- *   certified, reviewed, or recalculated, so the version stays locked.
+ *   exception. It records the approver and time on the certification in
+ *   force, which binds the approved version and hash; an APPROVED period can
+ *   no longer be certified, reviewed, or recalculated, so the version stays
+ *   locked.
  * - Return before finalization (`APPROVED → FOR_REVIEW`) records the reason on
  *   the certification it revokes, which supersedes the export and so revokes
- *   its reviews.
+ *   its reviews. The revoked certification keeps its approval as history.
  *
  * Both claim APPROVAL on the period; a person who holds another payroll
  * function there is refused. Each locks the period row, so two concurrent
@@ -102,6 +103,11 @@ export class PayrollApprovalService {
       }
       await claimFunction(transaction, context, periodId, 'APPROVAL');
 
+      // Written while the period is still CERTIFIED, as the certification guard requires.
+      await transaction.payrollCertification.update({
+        where: { id: certification.id },
+        data: { approvedByMembershipId: context.membershipId, approvedAt: new Date() },
+      });
       const after = await moveStatus(transaction, context, periodId, period, 'APPROVED');
       await transaction.auditEvent.create({
         data: auditEvent(context, {

@@ -6,6 +6,11 @@ import {
   periodStatusDisplay,
   stageCells,
   startsCollapsed,
+  approvalEntries,
+  reviewActions,
+  REVIEW_PERMISSIONS,
+  type CheckpointReview,
+  type PayrollPeriodReview,
   yearToDateFacts,
 } from './payroll-periods';
 
@@ -86,5 +91,179 @@ describe('yearToDateFacts', () => {
       ['Withholding tax', '₱0.00'],
     ]);
     expect(yearToDateFacts(null)).toEqual([]);
+  });
+});
+
+const reviewer = (checkpoint: 'BUDGET' | 'ACCOUNTING', name: string): CheckpointReview => ({
+  id: `review-${checkpoint}`,
+  reviewExportId: 'export-1',
+  checkpoint,
+  outcome: 'CONFIRMED',
+  externalReference: `${checkpoint}-REF`,
+  evidenceDocumentVersionId: 'evidence-1',
+  reason: null,
+  reviewedByMembershipId: `member-${checkpoint}`,
+  reviewedByName: name,
+  reviewedAt: '2026-11-20T02:00:00.000Z',
+});
+
+function review(
+  status: PayrollPeriodReview['status'],
+  checkpointReviews: CheckpointReview[] = [],
+  approved = false,
+): PayrollPeriodReview {
+  const certified = status !== 'FOR_REVIEW';
+  return {
+    id: 'period-1',
+    status,
+    calculationVersion: 1,
+    rowVersion: 4,
+    calculationHash: 'a'.repeat(64),
+    finalizedAt: status === 'FINALIZED' ? '2026-11-21T03:00:00.000Z' : null,
+    finalizedByMembershipId: status === 'FINALIZED' ? 'member-approver' : null,
+    finalizedByName: status === 'FINALIZED' ? 'Pia Approver' : null,
+    certification: certified
+      ? {
+          id: 'certification-1',
+          calculationVersion: 1,
+          calculationHash: 'a'.repeat(64),
+          certifiedByMembershipId: 'member-certifier',
+          certifiedByName: 'Hana Certifier',
+          certifiedAt: '2026-11-19T01:00:00.000Z',
+          approvedByMembershipId: approved ? 'member-approver' : null,
+          approvedByName: approved ? 'Pia Approver' : null,
+          approvedAt: approved ? '2026-11-20T05:00:00.000Z' : null,
+          reviewExportId: 'export-1',
+          checkpointReviews,
+        }
+      : null,
+  };
+}
+
+const all = new Set<string>(REVIEW_PERMISSIONS);
+const kinds = (actions: ReturnType<typeof reviewActions>) =>
+  actions.map((action) => (action.kind === 'checkpoint' ? action.checkpoint : action.kind));
+
+describe('checkpoint stages', () => {
+  it('reads Reviewed 1/2 after one confirmed review, pending, and Reviewed after both', () => {
+    expect(stageCells('CERTIFIED')![3]).toEqual({ label: 'Reviewed', state: 'pending' });
+    expect(stageCells('CERTIFIED', 1)![3]).toEqual({ label: 'Reviewed 1/2', state: 'pending' });
+    expect(stageCells('CERTIFIED', 1)![2]).toEqual({ label: 'Certified', state: 'current' });
+    expect(stageCells('CERTIFIED', 2)!.map(({ state }) => state)).toEqual([
+      'done',
+      'done',
+      'done',
+      'current',
+      'pending',
+      'pending',
+    ]);
+  });
+});
+
+describe('reviewActions', () => {
+  it('offers each actor only what their permission and the period state allow', () => {
+    const certifier = new Set(['payroll.periods.certify', 'payroll.periods.return']);
+    expect(kinds(reviewActions(review('FOR_REVIEW'), certifier))).toEqual(['certify', 'return']);
+    expect(kinds(reviewActions(review('CERTIFIED'), certifier))).toEqual([]);
+
+    const budget = new Set(['payroll.periods.review_funding']);
+    expect(kinds(reviewActions(review('FOR_REVIEW'), budget))).toEqual([]);
+    expect(kinds(reviewActions(review('CERTIFIED'), budget))).toEqual(['BUDGET']);
+    // A checkpoint reviewed on the export in force is not offered again.
+    expect(
+      kinds(reviewActions(review('CERTIFIED', [reviewer('BUDGET', 'Ben Budget')]), budget)),
+    ).toEqual([]);
+
+    const approver = new Set([
+      'payroll.periods.approve',
+      'payroll.periods.revoke_certification',
+      'payroll.periods.return_approved',
+      'payroll.periods.finalize',
+    ]);
+    expect(
+      kinds(reviewActions(review('CERTIFIED', [reviewer('BUDGET', 'Ben Budget')]), approver)),
+    ).toEqual(['revoke']);
+    const both = [reviewer('BUDGET', 'Ben Budget'), reviewer('ACCOUNTING', 'Ana Accounts')];
+    expect(kinds(reviewActions(review('CERTIFIED', both), approver))).toEqual([
+      'approve',
+      'revoke',
+    ]);
+    expect(kinds(reviewActions(review('APPROVED', both, true), approver))).toEqual([
+      'finalize',
+      'return-approved',
+    ]);
+    expect(reviewActions(review('FINALIZED', both, true), all)).toEqual([]);
+  });
+
+  it('offers no checkpoint without an export, and no certification without a hash', () => {
+    const certified = review('CERTIFIED');
+    certified.certification!.reviewExportId = null;
+    expect(kinds(reviewActions(certified, all))).toEqual(['revoke']);
+    expect(kinds(reviewActions({ ...review('FOR_REVIEW'), calculationHash: null }, all))).toEqual([
+      'return',
+    ]);
+  });
+});
+
+describe('approvalEntries', () => {
+  it('keeps certified, each review, approved, and finalized apart, with who and when', () => {
+    const finalized = review(
+      'FINALIZED',
+      [reviewer('BUDGET', 'Ben Budget'), reviewer('ACCOUNTING', 'Ana Accounts')],
+      true,
+    );
+    expect(approvalEntries(finalized)).toEqual([
+      {
+        step: 'Certified',
+        state: 'done',
+        by: 'Hana Certifier',
+        at: '2026-11-19T01:00:00.000Z',
+        note: 'Calculation version 1',
+      },
+      {
+        step: 'Budget review',
+        state: 'done',
+        by: 'Ben Budget',
+        at: '2026-11-20T02:00:00.000Z',
+        note: 'Confirmed · BUDGET-REF',
+      },
+      {
+        step: 'Accounting review',
+        state: 'done',
+        by: 'Ana Accounts',
+        at: '2026-11-20T02:00:00.000Z',
+        note: 'Confirmed · ACCOUNTING-REF',
+      },
+      {
+        step: 'Approved',
+        state: 'done',
+        by: 'Pia Approver',
+        at: '2026-11-20T05:00:00.000Z',
+        note: null,
+      },
+      {
+        step: 'Finalized',
+        state: 'done',
+        by: 'Pia Approver',
+        at: '2026-11-21T03:00:00.000Z',
+        note: null,
+      },
+    ]);
+  });
+
+  it('reads a step not taken as pending', () => {
+    const entries = approvalEntries(review('CERTIFIED', [reviewer('BUDGET', 'Ben Budget')]));
+    expect(entries.map(({ step, state }) => `${step} ${state}`)).toEqual([
+      'Certified done',
+      'Budget review done',
+      'Accounting review pending',
+      'Approved pending',
+      'Finalized pending',
+    ]);
+    expect(approvalEntries(review('FOR_REVIEW'))[0]).toMatchObject({
+      step: 'Certified',
+      state: 'pending',
+      by: null,
+    });
   });
 });

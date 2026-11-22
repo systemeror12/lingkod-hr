@@ -12,6 +12,12 @@
  *   `E2E-DTR-2026-01`, locked through route `DTR-PERIOD-LOCK`.
  * - `seedSyntheticRuleVersions()`: platform-wide National Payroll Rule Versions `E2E-SYNTHETIC-*`,
  *   in effect only in 2850 so no real schedule or test date meets them. Their rates are not rates.
+ * - `seedPayrollReviewFixture()`: Payroll Period `E2E-REVIEW-2850-CLOTHING` in the Work Queue
+ *   Agency, For review at calculation version 1 with Alex Rivera's one zero payslip, prepared by
+ *   Marisol Santos. One User per review function acts on it (payroll-review.spec.ts):
+ *   `payroll.certifier@` (HR Certifier), `payroll.budget@` (Budget Officer),
+ *   `payroll.accounting@` (Accounting Reviewer), and `payroll.approver@` (Payroll Approver).
+ *   Evidence `E2E-PAYROLL-REVIEW-EVIDENCE` has a fixed Document Version ID.
  * - `seededUserEmails` and `seedLocalCredentials()`: each seeded User's local passphrase, TOTP
  *   factor, and Recovery Codes, as the README documents.
  */
@@ -61,6 +67,25 @@ const factorResetCandidateEmail = 'factor.reset.candidate@example.test';
 // The same officer locks and unlocks this HRMO Administrator; each seed run unlocks them.
 const userLockCandidateEmail = 'user.lock.candidate@example.test';
 const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
+/**
+ * One User per payroll review function, so the one-function rule (#330) never stops the review
+ * E2E. Marisol Santos prepared the seeded period and holds Budget Officer too, so she reviews
+ * nothing on it.
+ */
+const payrollReviewers = [
+  { email: 'payroll.certifier@example.test', name: 'Celia Navarro', role: 'hr_certifier' },
+  { email: 'payroll.budget@example.test', name: 'Bernardo Lim', role: 'budget_officer' },
+  {
+    email: 'payroll.accounting@example.test',
+    name: 'Aurora Bautista',
+    role: 'accounting_reviewer',
+  },
+  { email: 'payroll.approver@example.test', name: 'Paolo Mendoza', role: 'payroll_approver' },
+] as const;
+const payrollReviewPeriodId = 'a9a00000-0000-4000-8000-000000000001';
+const payrollReviewEvidenceDocumentId = 'a9a00000-0000-4000-8000-000000000002';
+/** Repeated in apps/web/e2e/payroll-review.spec.ts, which types it as checkpoint evidence. */
+const payrollReviewEvidenceVersionId = 'a9a00000-0000-4000-8000-000000000003';
 
 /**
  * Local-only sign-in credentials, documented in the README. Every seeded User gets the passphrase;
@@ -93,6 +118,7 @@ const seededUserEmails = [
   securityOfficerEmail,
   factorResetCandidateEmail,
   userLockCandidateEmail,
+  ...payrollReviewers.map(({ email }) => email),
 ];
 
 function manilaToday(): string {
@@ -1075,6 +1101,9 @@ async function seed(): Promise<void> {
     await transaction.payrollEmployee.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollRuleSnapshotItem.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollRuleSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payslip.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollExportCheckpointReview.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.certifiedPayrollReviewExport.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollCertification.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollPeriodActor.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollPeriodComponent.deleteMany({ where: { agencyId: agency.id } });
@@ -3034,8 +3063,147 @@ async function seed(): Promise<void> {
       },
     });
   });
+  await seedPayrollReviewFixture(agency.id, membership.id);
   await seedDtrFixture();
   await seedSyntheticRuleVersions();
+}
+
+/**
+ * A Payroll Period For review and one User per review function (payroll-review.spec.ts). The
+ * period is written as a calculation leaves it, under `session_replication_role = 'replica'`, as
+ * no seed can run the calculation: a special period paying the cash clothing allowance, like the
+ * one payroll-periods.spec.ts calculates, whose one result (Alex Rivera) has no lines because no
+ * Agency grant is recorded. Its amounts are zero and establish no rule.
+ */
+async function seedPayrollReviewFixture(agencyId: string, preparerMembershipId: string) {
+  for (const reviewer of payrollReviewers) {
+    const user = await prisma.user.upsert({
+      where: { emailNormalized: reviewer.email },
+      update: {
+        displayName: reviewer.name,
+        globalStatus: 'ACTIVE',
+        lockedAt: null,
+        lockedByAgencyId: null,
+      },
+      create: {
+        emailNormalized: reviewer.email,
+        displayName: reviewer.name,
+        globalStatus: 'ACTIVE',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    const membership =
+      (await prisma.agencyMembership.findFirst({ where: { agencyId, userId: user.id } })) ??
+      (await prisma.agencyMembership.create({
+        data: { agencyId, userId: user.id, status: 'ACTIVE', activatedAt: new Date() },
+      }));
+    const role = await prisma.role.findFirstOrThrow({
+      where: { agencyId: null, code: reviewer.role, status: 'ACTIVE' },
+    });
+    if (
+      !(await prisma.membershipRole.findFirst({
+        where: { agencyId, membershipId: membership.id, roleId: role.id },
+      }))
+    ) {
+      await prisma.membershipRole.create({
+        data: {
+          agencyId,
+          membershipId: membership.id,
+          roleId: role.id,
+          effectiveFrom: new Date('2026-01-01'),
+          assignedByMembershipId: preparerMembershipId,
+          reason: 'Payroll review E2E fixture',
+        },
+      });
+    }
+  }
+
+  const alex = await prisma.employee.findFirstOrThrow({
+    where: { agencyId, employeeNumber: 'E2E-0001' },
+    select: { id: true },
+  });
+  const clothing = await prisma.payComponent.findUniqueOrThrow({
+    where: { code: 'CLOTHING_ALLOWANCE' },
+    select: { id: true },
+  });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    // The Payroll Periods are cleared with the Agency's other rows; the evidence is this
+    // fixture's own.
+    await transaction.documentVersion.deleteMany({
+      where: { agencyId, documentId: payrollReviewEvidenceDocumentId },
+    });
+    await transaction.document.deleteMany({
+      where: { agencyId, id: payrollReviewEvidenceDocumentId },
+    });
+    await transaction.document.create({
+      data: {
+        id: payrollReviewEvidenceDocumentId,
+        agencyId,
+        documentNo: 'E2E-PAYROLL-REVIEW-EVIDENCE',
+        documentType: 'AGENCY_ISSUANCE',
+        classification: 'INTERNAL',
+        status: 'APPROVED',
+        createdByMembershipId: preparerMembershipId,
+      },
+    });
+    await transaction.documentVersion.create({
+      data: {
+        id: payrollReviewEvidenceVersionId,
+        agencyId,
+        documentId: payrollReviewEvidenceDocumentId,
+        versionNo: 1,
+        storageKey: 'e2e/E2E-PAYROLL-REVIEW-EVIDENCE',
+        contentHash: 'a'.repeat(64),
+        mimeType: 'application/pdf',
+        sizeBytes: 1,
+        createdByMembershipId: preparerMembershipId,
+        issuedAt: new Date('2026-01-01'),
+      },
+    });
+    await transaction.document.update({
+      where: { id: payrollReviewEvidenceDocumentId },
+      data: { currentVersionId: payrollReviewEvidenceVersionId },
+    });
+
+    await transaction.payrollPeriod.create({
+      data: {
+        id: payrollReviewPeriodId,
+        agencyId,
+        code: 'E2E-REVIEW-2850-CLOTHING',
+        runType: 'SPECIAL',
+        periodFrom: new Date('2850-01-01'),
+        periodTo: new Date('2850-12-31'),
+        cutoffAt: new Date('2850-01-01T00:00:00+08:00'),
+        paymentDate: new Date('2850-06-15'),
+        status: 'FOR_REVIEW',
+        calculationVersion: 1,
+        rowVersion: 3,
+        components: { create: { payComponentId: clothing.id } },
+      },
+    });
+    await transaction.payrollPeriodActor.create({
+      data: {
+        agencyId,
+        payrollPeriodId: payrollReviewPeriodId,
+        membershipId: preparerMembershipId,
+        payrollFunction: 'PREPARATION',
+      },
+    });
+    await transaction.payrollEmployee.create({
+      data: {
+        agencyId,
+        payrollPeriodId: payrollReviewPeriodId,
+        calculationVersion: 1,
+        employeeId: alex.id,
+        compensationBasisSnapshot: { status: 'INDETERMINATE', reason: 'MISSING_PAY_BASIS' },
+        status: 'CALCULATED',
+        calculationHash: createHash('sha256')
+          .update(`e2e-payroll-review:${payrollReviewPeriodId}:${alex.id}`)
+          .digest('hex'),
+      },
+    });
+  });
 }
 
 /**

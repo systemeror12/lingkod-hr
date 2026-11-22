@@ -322,10 +322,13 @@ describe.skipIf(!enabled)('Payroll Export Checkpoint Reviews in PostgreSQL', () 
     );
     expect(budget.review).toMatchObject({ checkpoint: 'BUDGET', outcome: 'CONFIRMED' });
 
-    // The period detail lists the reviews in force on its current export.
+    // The period detail lists the reviews in force on its current export, naming each reviewer.
     const read = await periods.read(people.budgetOfficer, period.id);
     expect(read).toMatchObject({ status: 'CERTIFIED', rowVersion: period.rowVersion });
-    expect(read.certification?.checkpointReviews).toEqual([accounting.review, budget.review]);
+    expect(read.certification?.checkpointReviews).toEqual([
+      { ...accounting.review, reviewedByName: 'Payroll Period CONFIRM User 3' },
+      { ...budget.review, reviewedByName: 'Payroll Period CONFIRM User 2' },
+    ]);
 
     // One review of each checkpoint per export.
     await expect(

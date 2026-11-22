@@ -514,6 +514,7 @@ CREATE TABLE payroll_periods (
   carries_adjustments boolean NOT NULL DEFAULT false,
   calculation_version integer NOT NULL DEFAULT 0 CHECK (calculation_version >= 0),
   finalized_at timestamptz,
+  finalized_by_membership_id uuid,
   void_requested_by_membership_id uuid,
   void_requested_at timestamptz,
   void_reason text,
@@ -523,12 +524,15 @@ CREATE TABLE payroll_periods (
   row_version integer NOT NULL DEFAULT 1,
   CHECK (period_to >= period_from),
   CHECK (NOT carries_adjustments OR run_type = 'SPECIAL'),
+  CHECK (finalized_by_membership_id IS NULL OR finalized_at IS NOT NULL),
   CHECK ((void_requested_at IS NULL) = (void_requested_by_membership_id IS NULL)),
   CHECK ((status = 'VOIDED') = (voided_at IS NOT NULL)),
   CHECK (status <> 'VOIDED'
          OR (voided_by_membership_id IS NOT NULL AND btrim(void_reason) <> '')),
   CHECK (void_requested_by_membership_id IS NULL
          OR void_requested_by_membership_id <> voided_by_membership_id),
+  FOREIGN KEY (agency_id, finalized_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, void_requested_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, voided_by_membership_id)
@@ -676,6 +680,9 @@ CREATE TABLE payroll_certifications (
   revoked_by_membership_id uuid,
   revoked_at timestamptz,
   revocation_reason text,
+  approved_by_membership_id uuid,
+  approved_at timestamptz,
+  CHECK ((approved_at IS NULL) = (approved_by_membership_id IS NULL)),
   CHECK (
     (revoked_at IS NULL AND revoked_by_membership_id IS NULL AND revocation_reason IS NULL)
     OR (revoked_at IS NOT NULL AND revoked_by_membership_id IS NOT NULL
@@ -686,6 +693,8 @@ CREATE TABLE payroll_certifications (
   FOREIGN KEY (agency_id, certified_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, revoked_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, approved_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
   UNIQUE (agency_id, id)
 );
@@ -705,27 +714,31 @@ while the version has an open blocking exception.
 
 A period has at most one certification in force. Revoking it records the
 actor, time, and reason on the row, once; a trigger admits a row only while
-its period is `FOR_REVIEW` at the version it names, lets an `UPDATE` change
-only the revocation columns from empty, and rejects every `DELETE`. Migration
-0168 creates the table. The Certified Payroll Review Export (#636) binds the
-certification in force, and revoking it supersedes that export and revokes its
-checkpoint reviews.
+its period is `FOR_REVIEW` at the version it names, unapproved and unrevoked.
+An `UPDATE` may set the approval columns once, while the row is in force and
+its period is `CERTIFIED` at that version, and the revocation columns once; a
+revoked row never changes again, and every `DELETE` is rejected. Migration
+0168 creates the table, and migration 0189 adds the approval columns. The
+Certified Payroll Review Export (#636) binds the certification in force, and
+revoking it supersedes that export and revokes its checkpoint reviews.
 
 The Payroll Approver approves a `CERTIFIED` period (#638) with
 `payroll.periods.approve`, at the `row_version` they read. Approval is refused
 unless the Budget and Accounting checkpoint reviews are both confirmed on the
 current export (section 12), with `PAYROLL_CHECKPOINT_REVIEWS_UNCONFIRMED`,
-and while the version has an open blocking exception. It writes no row of its
-own. The certification in force already binds the approved version and hash,
-and an `APPROVED` period cannot be certified, reviewed, or recalculated, so
-the version stays locked until finalization or a return. The
+and while the version has an open blocking exception. In the same transaction
+it sets `approved_by_membership_id` and `approved_at` on the certification in
+force, which already binds the approved version and hash (#639). An
+`APPROVED` period cannot be certified, reviewed, or recalculated, so the
+version stays locked until finalization or a return. The
 `PAYROLL_PERIOD_APPROVED` Audit Event names the certification, version, hash,
 export and its checksum, and the two reviews.
 
 Return before finalization (`APPROVED → FOR_REVIEW`) needs
 `payroll.periods.return_approved` and a reason. In one transaction it revokes
 the certification in force with the approver as the revoker and that reason,
-supersedes the export, and so revokes its reviews. The
+supersedes the export, and so revokes its reviews. The revoked certification
+keeps its approval as history. The
 `PAYROLL_PERIOD_RETURNED_BEFORE_FINALIZATION` Audit Event names what it
 revoked. Both commands claim `APPROVAL`. Migration 0183 adds the two
 permissions and grants them to the Payroll Approver, Agency-wide. The
@@ -734,8 +747,9 @@ seeded.
 
 Finalization (`APPROVED → FINALIZED`, #335) needs `payroll.periods.finalize`,
 takes the `row_version` the approver read, claims `APPROVAL`, and runs section
-11 in one transaction. It sets `finalized_at`, which a trigger requires on
-that move and keeps fixed on every other update. Every refusal rolls the
+11 in one transaction. It sets `finalized_at` and `finalized_by_membership_id`
+(#639), which a trigger requires together on that move and keeps fixed on
+every other update. Every refusal rolls the
 transaction back, so the period stays `APPROVED` with nothing finalized:
 
 | Code                                | Refused when                                                                                     |
@@ -755,6 +769,17 @@ The `PAYROLL_PERIOD_FINALIZED` Audit Event names the certification, version,
 hash, result count, and the consumed inputs and facts, under the idempotency
 key `finalized`. Migration 0184 adds the permission and grants it to the
 Payroll Approver, Agency-wide.
+
+The period read (`payroll.periods.read`) names each review step's actor and
+time: the certifier, the Budget and Accounting checkpoint reviewers, the
+approver, and the finalizer, each by membership and display name (#639). No
+record holds who started a calculation, so the read names no calculator.
+
+Migration 0189 backfills the approver and finalizer of existing rows from their
+`PAYROLL_PERIOD_APPROVED` and `PAYROLL_PERIOD_FINALIZED` Audit Events. A
+finalized period with no such event keeps a null finalizer, so the table CHECK
+only requires a time beside a finalizer; the trigger requires both on every
+finalization.
 
 ---
 
@@ -1786,7 +1811,7 @@ The database transaction must:
 6. verify every source the approved version used is still unconsumed, and fail
    with a blocking exception if another payroll consumed one first;
 7. mark the approved version's employee results finalized;
-8. mark payroll period finalized;
+8. mark payroll period finalized, with its finalizer and time;
 9. mark its Payroll Inputs and `ONCE` Authorized Payroll Component Inputs
    consumed, and insert `payroll_consumed_attendance_facts`;
 10. mark the Payroll Adjustments it carried `POSTED`, and open one for each

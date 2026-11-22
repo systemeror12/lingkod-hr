@@ -362,6 +362,7 @@ describe.skipIf(!enabled)('Payroll approval and return before finalization in Po
     });
 
     // The certification, export, and reviews it approved stay in force.
+    // The read names each actor and when they acted.
     const approved = await periods.read(people.approver, period.id);
     expect(approved).toMatchObject({
       status: 'APPROVED',
@@ -370,10 +371,27 @@ describe.skipIf(!enabled)('Payroll approval and return before finalization in Po
         id: period.certification!.id,
         calculationVersion: period.calculationVersion,
         calculationHash: period.calculationHash,
+        certifiedByMembershipId: people.certifier.membershipId,
+        certifiedByName: 'Payroll Period APPROVE User 1',
+        approvedByMembershipId: people.approver.membershipId,
+        approvedByName: 'Payroll Period APPROVE User 4',
+        approvedAt: expect.any(String),
         reviewExportId: exportId,
-        checkpointReviews: [budget.review, accounting.review],
+        checkpointReviews: [
+          { ...budget.review, reviewedByName: 'Payroll Period APPROVE User 2' },
+          { ...accounting.review, reviewedByName: 'Payroll Period APPROVE User 3' },
+        ],
       },
+      finalizedByMembershipId: null,
+      finalizedByName: null,
     });
+    // The approval is recorded once; a direct edit is refused.
+    await expect(
+      admin.$transaction(async (transaction) => {
+        await transaction.$executeRaw`SELECT set_config('app.agency_id', ${payrollTenant.agency.id}, true)`;
+        await transaction.$executeRaw`UPDATE payroll_certifications SET approved_at = now() WHERE id = CAST(${period.certification!.id} AS uuid)`;
+      }),
+    ).rejects.toThrow(/records its approval once/);
     await expect(eventsOf(period.id, 'PAYROLL_PERIOD_APPROVED')).resolves.toEqual([
       expect.objectContaining({
         actorMembershipId: people.approver.membershipId,
@@ -553,6 +571,9 @@ describe.skipIf(!enabled)('Payroll approval and return before finalization in Po
       revokedByMembershipId: people.approver.membershipId,
       revocationReason: reason,
       revokedAt: expect.any(Date),
+      // The revoked certification keeps its approval as history.
+      approvedByMembershipId: people.approver.membershipId,
+      approvedAt: expect.any(Date),
     });
     await expect(reviewExport.read(people.approver, period.id, exportId)).resolves.toMatchObject({
       supersededAt: expect.any(String),

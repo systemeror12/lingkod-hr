@@ -5656,6 +5656,7 @@ model PayrollPeriod {
   carriesAdjustments          Boolean   @default(false) @map("carries_adjustments")
   calculationVersion          Int       @default(0) @map("calculation_version")
   finalizedAt                 DateTime? @map("finalized_at") @db.Timestamptz(6)
+  finalizedByMembershipId     String?   @map("finalized_by_membership_id") @db.Uuid
   voidRequestedByMembershipId String?   @map("void_requested_by_membership_id") @db.Uuid
   voidRequestedAt             DateTime? @map("void_requested_at") @db.Timestamptz(6)
   voidReason                  String?   @map("void_reason")
@@ -5714,6 +5715,8 @@ model PayrollCertification {
   revokedByMembershipId   String?   @map("revoked_by_membership_id") @db.Uuid
   revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(6)
   revocationReason        String?   @map("revocation_reason")
+  approvedByMembershipId  String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt              DateTime? @map("approved_at") @db.Timestamptz(6)
 
   payrollPeriod PayrollPeriod @relation(fields: [agencyId, payrollPeriodId], references: [agencyId, id], onDelete: Restrict, map: "payroll_certifications_period_fkey")
 

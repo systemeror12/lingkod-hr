@@ -525,7 +525,7 @@ describe.skipIf(!enabled)('Payroll certification in PostgreSQL', () => {
         where: { id },
         data: { calculationHash: 'e'.repeat(64) },
       }),
-    ).rejects.toThrow(/only to record its revocation/);
+    ).rejects.toThrow(/only to record its approval or its revocation/);
     await expect(admin.payrollCertification.delete({ where: { id } })).rejects.toThrow(
       /cannot be deleted/,
     );
@@ -538,7 +538,7 @@ describe.skipIf(!enabled)('Payroll certification in PostgreSQL', () => {
         where: { id },
         data: { revocationReason: 'Rewritten' },
       }),
-    ).rejects.toThrow(/only to record its revocation/);
+    ).rejects.toThrow(/only to record its approval or its revocation/);
   });
 
   it('seeds the §6.10 roles with the review permissions', async () => {
