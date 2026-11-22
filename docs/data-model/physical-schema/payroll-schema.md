@@ -2779,6 +2779,87 @@ Accounting Reviewer only. A voided payroll's export is superseded by its
 period's `VOIDED` status (#358), so the table has no `superseded_at`, and
 `payroll_period_id` is UNIQUE.
 
+```sql
+CREATE TABLE legacy_register_comparisons (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL,
+  calculation_version integer NOT NULL,
+  content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+  row_count integer NOT NULL CHECK (row_count > 0),
+  compared_by_membership_id uuid NOT NULL,
+  compared_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, compared_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (payroll_period_id, content_hash),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE legacy_register_differences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  legacy_register_comparison_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  pay_component_id uuid NOT NULL REFERENCES pay_components (id),
+  legacy_amount numeric(19,4),
+  payroll_amount numeric(19,4),
+  CHECK (legacy_amount IS DISTINCT FROM payroll_amount),
+  FOREIGN KEY (agency_id, legacy_register_comparison_id)
+    REFERENCES legacy_register_comparisons (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  UNIQUE (legacy_register_comparison_id, employee_id, pay_component_id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Legacy Register Comparison (#12 story 12, #359) compares a legacy payroll
+register with a `FINALIZED` Payroll Period by Employee and pay component. It
+only reports differences and decides neither value is right. No document
+defines a legacy register's format or which states may be compared, so
+(_reading_) the file is LingkodHR's own, and only a `FINALIZED` payroll is
+compared, because its lines no longer change.
+
+`POST .../payroll-periods/:periodId/legacy-register-comparisons` takes the file
+as the multipart field `file`, at most 5 MiB, and needs
+`payroll.legacy_registers.compare` held Agency-wide. It claims no payroll
+function. The file is UTF-8 CSV with the header
+`employee_number,component_code,amount`, then one row per Employee and
+component: the Agency's employee number, a `pay_components` code, both matched
+case-insensitively, and a peso amount with up to two decimal places, signed as
+the legacy register states it. The import refuses the whole file with
+`LEGACY_REGISTER_INVALID` and every reason by line when the file isn't UTF-8,
+the header is wrong, there are no rows, a row has the wrong field count, a
+value is missing, an amount is malformed, an Employee and component appear
+twice, or an employee number or component code is unknown. A refused file
+writes nothing. A period that is not `FINALIZED` is refused with
+`LEGACY_REGISTER_PAYROLL_NOT_FINALIZED`.
+
+The payroll side of an Employee and component is the sum of its Payroll
+Lines in the period's `FINALIZED` results at the finalized calculation
+version, adjustment lines included. In one transaction, which holds the
+period `FOR SHARE`, the import writes the comparison, one difference for
+every Employee and component whose two amounts differ, and a
+`LEGACY_REGISTER_COMPARED` Audit Event. A difference stores both values. An
+amount is `NULL` where its side has none: the register has no row, or the
+payroll no line, for that Employee and component. Matching amounts aren't
+stored. The import writes no other table. The file itself is not stored: the
+comparison keeps its SHA-256 as `content_hash` and its `row_count`. The same
+file compared with the same period gives the same differences, so importing it
+again returns the stored comparison and writes nothing.
+`GET .../legacy-register-comparisons` lists a period's comparisons with their
+difference counts, and `GET .../legacy-register-comparisons/:comparisonId`
+reads one with its differences. Both need the same permission.
+
+Migration 0195 creates both tables with forced RLS. Triggers admit a
+comparison only for a `FINALIZED` period at its calculation version, admit a
+difference only in the transaction that writes its comparison, and reject
+every `UPDATE` and `DELETE` of either. `hris_app` holds `SELECT` and `INSERT`
+on both. The migration grants the permission Agency-wide to the Payroll
+Preparer only.
+
 Files are stored through the shared document service.
 
 ---
@@ -2807,7 +2888,8 @@ Application permissions separately control:
 - the Finalized Payroll Accounting Support Export, its Employee Detail
   Companion, which holds employee-level pay, and its Payroll Export External
   Outcomes, each under its own permission;
-- Disbursement Outcomes.
+- Disbursement Outcomes;
+- Legacy Register Comparisons, which hold employee-level pay.
 
 A permission is not enough on its own: `payroll_period_actors` keeps each
 person to one payroll function on a Payroll Period (section 5).

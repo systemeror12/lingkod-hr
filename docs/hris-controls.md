@@ -1824,6 +1824,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `payroll.accounting_exports.generate`  |                — |            — |              — |                   A |                — |       — |        — |       — |
 | `payroll.export_detail.read`           |                — |            — |              — |                   A |                — |       — |        — |       — |
 | `payroll.export_outcomes.record`       |                — |            — |              — |                   A |                — |       — |        — |       — |
+| `payroll.legacy_registers.compare`     |                A |            — |              — |                   — |                — |       — |        — |       — |
 | `payroll.audit.read`                   |                R |            R |              R |                   R |                R |       R |        R |       A |
 
 `payroll.periods.read`, held Agency-wide, reads a period's Payroll Exceptions
@@ -1839,6 +1840,12 @@ records, changes, and ends an Employee's Deduction Obligations, and records
 the issuer's Contribution Billing of a `DRAFT` regular Payroll Period
 (payroll-schema.md §9, #349). There is no `payroll.payslips.supersede`:
 the system supersedes a Payslip when its payroll is voided (§5.21).
+
+`payroll.legacy_registers.compare`, held Agency-wide, imports a legacy
+payroll register for a `FINALIZED` period and reads the comparisons, which
+report where its amounts differ from the finalized Payroll Lines by Employee
+and pay component (#12 story 12). It claims no payroll function and changes
+no payroll data (payroll-schema.md §12, #359).
 
 `payroll.payment_exports.generate`, held Agency-wide, generates the
 Payment Export of a `FINALIZED` period and downloads its CSV, which carries
