@@ -5559,6 +5559,12 @@ model DeductionObligation {
   recordedAt                 DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(6)
   endedByMembershipId        String?   @map("ended_by_membership_id") @db.Uuid
   endedAt                    DateTime? @map("ended_at") @db.Timestamptz(6)
+  /// The negative Payroll Adjustment a COA recovery collects, and the
+  /// PAYROLL_ADJUSTMENT_NEGATIVE warning its balance comes from (#648).
+  /// Foreign keys, the one-per-adjustment index, and the guard live in
+  /// migration 0201.
+  payrollAdjustmentId        String?   @map("payroll_adjustment_id") @db.Uuid
+  payrollExceptionId         String?   @map("payroll_exception_id") @db.Uuid
 
   @@unique([agencyId, id], map: "deduction_obligations_agency_id_id_key")
   @@index([agencyId, employeeId, status, incurredOn], map: "deduction_obligations_employee_idx")
@@ -6299,6 +6305,7 @@ model PayrollAdjustment {
   causes PayrollAdjustmentCause[]
 
   @@unique([agencyId, id])
+  @@unique([agencyId, id, employeeId], map: "payroll_adjustments_agency_id_id_employee_id_key")
   @@index([agencyId, status], map: "payroll_adjustments_open_idx")
   @@map("payroll_adjustments")
 }

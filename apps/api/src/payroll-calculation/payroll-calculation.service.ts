@@ -709,7 +709,10 @@ async function carriedAdjustmentsInTransaction(
 /**
  * What the original period already paid the Employee: its final version's
  * own lines, and the lines of every POSTED adjustment for the same Employee
- * and period in the finalized result that carried it.
+ * and period in the finalized result that carried it. A POSTED adjustment
+ * that a COA recovery collects (#648, ADR 0017) has no lines; its difference
+ * is the recovered warning's, which the obligation now owes, so a later
+ * recalculation does not find the same overpayment again.
  */
 async function previousLinesInTransaction(
   transaction: Prisma.TransactionClient,
@@ -719,7 +722,9 @@ async function previousLinesInTransaction(
   const rows = await transaction.$queryRaw<
     { code: string; line_type: string; amount: Prisma.Decimal; source_snapshot: unknown }[]
   >`
-    SELECT c."code"::text, l."line_type", l."amount", l."source_snapshot"
+    SELECT "code", "line_type", "amount", "source_snapshot" FROM (
+    SELECT c."code"::text, l."line_type", l."amount", l."source_snapshot",
+           l."created_at", l."id"::text AS "id", 0 AS "ordinal"
     FROM "payroll_lines" l
     JOIN "payroll_employees" e
       ON e."agency_id" = l."agency_id" AND e."id" = l."payroll_employee_id"
@@ -738,7 +743,23 @@ async function previousLinesInTransaction(
             AND a."status" = 'POSTED'
         ))
       )
-    ORDER BY l."created_at", l."id"
+    UNION ALL
+    SELECT line ->> 'componentCode', line ->> 'lineType', (line ->> 'amount')::numeric,
+           '{}'::jsonb, o."recorded_at", o."id"::text, recovered.ordinal
+    FROM "payroll_adjustments" a
+    JOIN "deduction_obligations" o
+      ON o."agency_id" = a."agency_id" AND o."payroll_adjustment_id" = a."id"
+     AND o."supersedes_obligation_id" IS NULL
+    JOIN "payroll_exceptions" x
+      ON x."agency_id" = o."agency_id" AND x."id" = o."payroll_exception_id"
+    CROSS JOIN LATERAL jsonb_array_elements(x."details" -> 'lines')
+      WITH ORDINALITY AS recovered(line, ordinal)
+    WHERE a."agency_id" = CAST(${agencyId} AS uuid)
+      AND a."original_payroll_period_id" = CAST(${adjustment.original.id} AS uuid)
+      AND a."employee_id" = CAST(${adjustment.employeeId} AS uuid)
+      AND a."status" = 'POSTED'
+    ) previous
+    ORDER BY "created_at", "id", "ordinal"
   `;
   return rows.map((row) => ({
     componentCode: row.code,

@@ -1270,6 +1270,20 @@ asked again once that period is finalized or returned to `DRAFT` (#356).
   decision, the date a COA-decreed obligation is incurred, the installment
   schedule in force, or the FY 2027 deduction list and floor. Each blocks the
   part of #648 that needs it.
+- #648 builds the COA route only
+  ([ADR 0017](adr/0017-recover-a-negative-adjustment-as-a-coa-deduction-obligation.md)).
+  A user with `payroll.deductions.manage` records the final and executory COA
+  decision, with its Notice of Finality of Decision or COA Order of Execution
+  as the authority, as a Deduction Obligation payable to
+  `NATIONAL_GOVERNMENT_COA_DECISION` that names the adjustment. Its balance is
+  the negative difference Payroll calculated, not entered. Its scheduled
+  amount is the whole amount or COA's approved monthly amount, as recorded,
+  with no check against COA's installment policy. Its date incurred is the
+  date the decision became final and executory, a project decision. Recording
+  it posts the adjustment, and each regular period's own review chain then
+  approves the deductions. A cash payment at the cashier is a change of the
+  obligation with the official receipt, or its end. There is no consent
+  route.
 - No authority found addresses negative net pay. A recovery never produces
   it, because of the floor. By the developer's ruling, it is a blocking
   exception (#623).

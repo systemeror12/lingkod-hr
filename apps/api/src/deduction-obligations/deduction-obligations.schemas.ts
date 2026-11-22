@@ -24,6 +24,7 @@ const terms = {
 };
 
 export const deductionObligationIdSchema = z.uuid();
+export const payrollAdjustmentIdSchema = z.uuid();
 
 export const recordDeductionObligationSchema = z
   .object({
@@ -35,6 +36,25 @@ export const recordDeductionObligationSchema = z
   })
   .strict();
 
+/**
+ * A final and executory COA decision that recovers a negative Payroll
+ * Adjustment (#648, ADR 0017). The payee category is always
+ * NATIONAL_GOVERNMENT_COA_DECISION, and the balance is the negative net
+ * difference Payroll's calculation found, so neither is entered.
+ * `scheduledAmount` is the whole amount or the monthly amount COA approved;
+ * `incurredOn` is the date the decision became final and executory.
+ */
+export const recordRecoveryObligationSchema = z
+  .object({
+    payeeName: text(255),
+    issuerReference: text(100),
+    incurredOn: isoDate,
+    scheduledAmount: amount,
+    effectiveFrom: isoDate,
+    ...authority,
+  })
+  .strict();
+
 export const changeDeductionObligationSchema = z.object({ ...terms, reason: text(1000) }).strict();
 
 export const endDeductionObligationSchema = z
@@ -42,5 +62,6 @@ export const endDeductionObligationSchema = z
   .strict();
 
 export type RecordDeductionObligationInput = z.infer<typeof recordDeductionObligationSchema>;
+export type RecordRecoveryObligationInput = z.infer<typeof recordRecoveryObligationSchema>;
 export type ChangeDeductionObligationInput = z.infer<typeof changeDeductionObligationSchema>;
 export type EndDeductionObligationInput = z.infer<typeof endDeductionObligationSchema>;

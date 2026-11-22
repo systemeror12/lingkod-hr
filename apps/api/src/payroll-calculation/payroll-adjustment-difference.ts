@@ -5,7 +5,9 @@ import { WITHHOLDING_TAX_COMPONENT_CODE } from './withholding-tax.calculator';
 
 /**
  * The warning a carrying period writes for an adjustment whose difference is
- * negative: it stays OPEN and no period carries it until #648.
+ * negative: it stays OPEN, and no period carries it, until the COA decision
+ * that recovers it is recorded as a Deduction Obligation (#648, ADR 0017).
+ * That obligation's balance is this warning's negated `netDifference`.
  */
 export const PAYROLL_ADJUSTMENT_NEGATIVE = 'PAYROLL_ADJUSTMENT_NEGATIVE';
 
@@ -44,7 +46,8 @@ export interface AdjustmentOriginal {
  * period's withholding tax reads it like any other line.
  *
  * A negative net difference (earnings less deductions) writes no line and a
- * `PAYROLL_ADJUSTMENT_NEGATIVE` warning: the adjustment stays OPEN (#648).
+ * `PAYROLL_ADJUSTMENT_NEGATIVE` warning: the adjustment stays OPEN until its
+ * COA recovery is recorded (ADR 0017).
  */
 export function adjustmentDifference(
   original: AdjustmentOriginal,
@@ -139,7 +142,7 @@ export function adjustmentDifference(
           exceptionType: PAYROLL_ADJUSTMENT_NEGATIVE,
           severity: 'WARNING',
           details: {
-            message: `Recalculating ${original.periodFrom} to ${original.periodTo} gives ${net.toFixed(2)} less than was paid. A recovery is not carried yet, so the Payroll Adjustment stays open.`,
+            message: `Recalculating ${original.periodFrom} to ${original.periodTo} gives ${net.toFixed(2)} less than was paid. The Payroll Adjustment stays open until a final and executory COA decision is recorded as its recovery.`,
             ...original,
             netDifference: net.toFixed(4),
             lines: lines.map(({ componentCode, lineType, amount }) => ({

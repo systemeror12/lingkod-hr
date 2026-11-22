@@ -787,7 +787,7 @@ The Payroll Preparer's reasoned decision to leave one Employee who has a blockin
 _Avoid_: Exception waiver, withheld payslip, excluded employee
 
 **Payroll Adjustment**:
-Payroll's recalculation of one Employee's result for one past Payroll Period, kept as the line-by-line difference and settled in a later Payroll Period. A positive difference is additional pay and a negative one is a recovery. No user enters its amount.
+Payroll's recalculation of one Employee's result for one past Payroll Period, kept as the line-by-line difference and settled in a later Payroll Period. A positive difference is additional pay and a negative one is a recovery. No user enters its amount. A recovery is collected only under a final and executory COA decision, recorded as the Deduction Obligation that names the adjustment (ADR 0017).
 _Avoid_: Refund, correction case, manual adjustment, Locked Attendance Adjustment, Monetization Adjustment
 
 **Payslip**:
