@@ -5876,6 +5876,24 @@ model RemittanceSchedule {
   @@map("remittance_schedules")
 }
 
+/// The Payroll Variance and Exception Report of one FINALIZED payroll
+/// (#645): a Structured Export for review, stored as canonical JSON with its
+/// checksum. Immutable; the foreign keys are in migration 0199.
+model PayrollVarianceReport {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  payrollPeriodId                String   @unique(map: "payroll_variance_reports_period_key") @map("payroll_period_id") @db.Uuid
+  calculationVersion             Int      @map("calculation_version")
+  payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
+  generatedByMembershipId        String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+  content                        String
+  checksum                       String
+
+  @@unique([agencyId, id], map: "payroll_variance_reports_agency_id_id_key")
+  @@map("payroll_variance_reports")
+}
+
 /// The immutable, checksummed Finalized Payroll Accounting Support Export of
 /// one FINALIZED payroll, with its Employee Detail Companion (#29, #355).
 /// The foreign keys are in SQL.

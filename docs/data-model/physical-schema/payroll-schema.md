@@ -2721,6 +2721,83 @@ Both need `payroll.registers.generate` held Agency-wide, which migration
   (#358) and stay readable.
 
 ```sql
+CREATE TABLE payroll_variance_reports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  payroll_period_id uuid NOT NULL UNIQUE,
+  calculation_version integer NOT NULL,
+  payroll_export_contract_version_id uuid NOT NULL
+    REFERENCES payroll_export_contract_versions (id),
+  generated_by_membership_id uuid NOT NULL,
+  generated_at timestamptz NOT NULL,
+  content text NOT NULL,
+  checksum text NOT NULL
+    CHECK (checksum = encode(sha256(convert_to(content, 'UTF8')), 'hex')),
+  FOREIGN KEY (agency_id, payroll_period_id)
+    REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, generated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+```
+
+A Payroll Variance and Exception Report is a Structured Export for review of
+one `FINALIZED` payroll (PAY-009, #645). It compares the payroll with its
+prior comparable period by Employee and component, and lists the period's
+Payroll Exceptions with their decisions.
+`POST .../payroll-periods/:periodId/variance-report` generates it; it needs
+`payroll.registers.generate` held Agency-wide and claims no payroll function.
+It locks the period, reads the `FINALIZED` results and Payroll Lines of the
+finalized calculation version and of the prior comparable period's, and every
+exception of the period, and writes the report and a
+`PAYROLL_VARIANCE_REPORT_GENERATED` Audit Event (idempotency key `generated`)
+in one transaction. A period has one report: generating again, by anyone
+permitted, returns the stored one unchanged and writes nothing. A period that
+is not `FINALIZED` is refused with
+`PAYROLL_VARIANCE_REPORT_PAYROLL_NOT_FINALIZED`. Migration 0199 adds
+`PAYROLL_VARIANCE_EXCEPTION_REPORT` version 1 to the contract versions; its
+definition names every field, the order, and the control rules.
+
+`content` is canonical JSON, like the Contribution Summary's, with the
+contract, a statement that it changes, acknowledges, or resolves nothing, the
+Agency, the report's id, the generation time, and the period with its
+finalized version. Its `variance` is one of:
+
+- `COMPARED`: the prior comparable period, and each Employee whose net pay or
+  any component differs, by agency employee number. Each differing component
+  and line type gives both values, each the sum of the result's lines of it,
+  and their difference. A value is `null`, not zero, where the Employee had
+  no result in that period or the result no line of that component, so a new
+  Employee and a removed component read as absent.
+- `NO_PRIOR_COMPARABLE_PERIOD`: the reason, and no difference. The report
+  never states zero variance for a period it could not compare.
+
+`exceptions` lists every exception of the period, of every calculation
+version, with its type, severity, status, and `details`, its Employee by
+agency employee number and legal name, its decision (`null` while `OPEN`,
+otherwise the reason and the deciding membership), and each Payroll Hold
+placed on it, so a held Employee, who has no result, stays on the report
+(#328).
+
+A trigger rejects every `UPDATE` and `DELETE`, even for the database owner,
+and admits a report only for a `FINALIZED` period at its calculation version.
+`hris_app` holds `SELECT` and `INSERT` only, and RLS is forced.
+
+- _Reading_: no source defines "prior comparable period" for the report.
+  It is the Agency's last `FINALIZED` regular period before this one, by
+  period start, the period the net pay variance check compares against (#623,
+  section 10). A `SPECIAL` period has none, because that check compares
+  regular runs only; the report says so rather than invent a comparison.
+- _Reading_: the report lists the exceptions of every calculation version,
+  not only the finalized one's. A blocking exception returns the period to
+  `DRAFT`, so the finalized version seldom carries one, and an explained
+  Contribution Billing Difference's resolution lives on an earlier version
+  (section 10); the finalized version alone would drop them.
+- _Reading_: #12's story 10 has the Payroll Preparer produce "the register,
+  variance report and remittance schedules" together, so the report shares
+  `payroll.registers.generate`, as the remittance schedules do.
+
+```sql
 CREATE TABLE finalized_payroll_accounting_support_exports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
