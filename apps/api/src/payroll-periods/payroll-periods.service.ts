@@ -38,17 +38,26 @@ export interface PayrollPeriodSummary {
   rowVersion: number;
 }
 
-/** The Payroll Certification in force on a period, and its current review export. */
+/**
+ * The Payroll Certification in force on a period, its approval, and its current
+ * review export. A `...ByName` is the member's display name, or null when the
+ * membership can no longer be read.
+ */
 export interface PayrollCertificationSummary {
   id: string;
   calculationVersion: number;
   calculationHash: string;
   certifiedByMembershipId: string;
+  certifiedByName: string | null;
   certifiedAt: string;
+  /** Who approved the period at this certification, and when (#639); null until approved. */
+  approvedByMembershipId: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
   /** The Certified Payroll Review Export certifying generated; null only before #636. */
   reviewExportId: string | null;
   /** The checkpoint reviews recorded against that export, which are the ones in force (#637). */
-  checkpointReviews: PayrollCheckpointReviewView[];
+  checkpointReviews: (PayrollCheckpointReviewView & { reviewedByName: string | null })[];
 }
 
 /** One Payroll Export Checkpoint Review (#637). */
@@ -92,11 +101,14 @@ export function toCheckpointReviewView(
 /**
  * A period as a reviewer reads it: its summary, the hash of its current
  * calculation version (null before the first calculation completes and while
- * one runs), and the certification in force.
+ * one runs), the certification in force, and who finalized it. No record holds
+ * who started a calculation, so the detail names none.
  */
 export interface PayrollPeriodDetail extends PayrollPeriodSummary {
   calculationHash: string | null;
   certification: PayrollCertificationSummary | null;
+  finalizedByMembershipId: string | null;
+  finalizedByName: string | null;
 }
 
 export class PayrollPeriodsServiceError extends Error {
@@ -160,7 +172,7 @@ export class PayrollPeriodsService {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const period = await transaction.payrollPeriod.findUnique({
         where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
-        select: summarySelect,
+        select: { ...summarySelect, finalizedByMembershipId: true },
       });
       if (!period) {
         throw new PayrollPeriodsServiceError(
@@ -177,6 +189,8 @@ export class PayrollPeriodsService {
           calculationHash: true,
           certifiedByMembershipId: true,
           certifiedAt: true,
+          approvedByMembershipId: true,
+          approvedAt: true,
         },
       });
       const reviewExport =
@@ -196,6 +210,18 @@ export class PayrollPeriodsService {
             orderBy: { reviewedAt: 'asc' },
           })
         : [];
+      const actorIds = [
+        period.finalizedByMembershipId,
+        certification?.certifiedByMembershipId,
+        certification?.approvedByMembershipId,
+        ...checkpointReviews.map((review) => review.reviewedByMembershipId),
+      ].filter((id): id is string => Boolean(id));
+      const memberships = await transaction.agencyMembership.findMany({
+        where: { agencyId: context.agencyId, id: { in: [...new Set(actorIds)] } },
+        select: { id: true, user: { select: { displayName: true } } },
+      });
+      const names = new Map(memberships.map((row) => [row.id, row.user.displayName]));
+      const nameOf = (id: string | null) => (id ? (names.get(id) ?? null) : null);
       const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
       return {
         ...toSummary(period),
@@ -204,10 +230,18 @@ export class PayrollPeriodsService {
           : null,
         certification: certification && {
           ...certification,
+          certifiedByName: nameOf(certification.certifiedByMembershipId),
           certifiedAt: certification.certifiedAt.toISOString(),
+          approvedByName: nameOf(certification.approvedByMembershipId),
+          approvedAt: certification.approvedAt?.toISOString() ?? null,
           reviewExportId: reviewExport?.id ?? null,
-          checkpointReviews: checkpointReviews.map(toCheckpointReviewView),
+          checkpointReviews: checkpointReviews.map((review) => ({
+            ...toCheckpointReviewView(review),
+            reviewedByName: nameOf(review.reviewedByMembershipId),
+          })),
         },
+        finalizedByMembershipId: period.finalizedByMembershipId,
+        finalizedByName: nameOf(period.finalizedByMembershipId),
       };
     });
   }

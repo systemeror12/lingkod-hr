@@ -120,7 +120,12 @@ export class PayrollFinalizationService {
         const finalizedAt = new Date();
         const row = await transaction.payrollPeriod.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
-          data: { status: 'FINALIZED', finalizedAt, rowVersion: period.rowVersion + 1 },
+          data: {
+            status: 'FINALIZED',
+            finalizedAt,
+            finalizedByMembershipId: context.membershipId,
+            rowVersion: period.rowVersion + 1,
+          },
           select: summarySelect,
         });
         const results = await transaction.payrollEmployee.updateMany({
@@ -191,11 +196,11 @@ async function finalizedBy(
   context: RequestContext,
   periodId: string,
 ): Promise<string | null> {
-  const event = await transaction.auditEvent.findFirst({
-    where: { agencyId: context.agencyId, entityId: periodId, action: PAYROLL_PERIOD_FINALIZED },
-    select: { actorMembershipId: true },
+  const period = await transaction.payrollPeriod.findUniqueOrThrow({
+    where: { agencyId_id: { agencyId: context.agencyId, id: periodId } },
+    select: { finalizedByMembershipId: true },
   });
-  return event?.actorMembershipId ?? null;
+  return period.finalizedByMembershipId;
 }
 
 async function readSummary(

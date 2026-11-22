@@ -6,7 +6,7 @@ import {
   loadAuthorityOptions,
   loadEmployeeOptions,
 } from '../../../lib/payroll-page-data';
-import type { PayrollPeriodList } from '../../../lib/payroll-periods';
+import { REVIEW_PERMISSIONS, type PayrollPeriodList } from '../../../lib/payroll-periods';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 
 export const metadata: Metadata = { title: 'Employee Payslips' };
@@ -25,10 +25,16 @@ export default async function PayslipsPage() {
   if (!hasPermission(session, 'payroll.periods.read')) return forbidden;
 
   const canManageDeductions = hasPermission(session, 'payroll.deductions.manage');
+  const reviewPermissions = REVIEW_PERMISSIONS.filter((code) => hasPermission(session, code));
+  // Billing and checkpoint reviews each cite a finalized Document Version as evidence.
+  const citesEvidence =
+    canManageDeductions ||
+    reviewPermissions.includes('payroll.periods.review_funding') ||
+    reviewPermissions.includes('payroll.periods.review_accounting');
   const [list, employees, authorities] = await Promise.all([
     getAgencyJson(session, '/payroll-periods'),
     loadEmployeeOptions(session),
-    canManageDeductions ? loadAuthorityOptions(session) : Promise.resolve([]),
+    citesEvidence ? loadAuthorityOptions(session) : Promise.resolve([]),
   ]);
   if (list.status === 403) return forbidden;
   const value = list.value as Partial<PayrollPeriodList> | null;
@@ -44,7 +50,9 @@ export default async function PayslipsPage() {
       canCreate={hasPermission(session, 'payroll.periods.create')}
       canManageDeductions={canManageDeductions}
       employees={employees}
+      evidenceReadable={hasPermission(session, 'documents.evidence.read')}
       initialList={value as PayrollPeriodList}
+      reviewPermissions={reviewPermissions}
     />
   );
 }

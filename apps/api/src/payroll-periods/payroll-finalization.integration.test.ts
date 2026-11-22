@@ -410,6 +410,12 @@ describe.skipIf(!enabled)('Payroll finalization in PostgreSQL', () => {
         where: { payrollPeriodId: period.id },
       }),
     ).resolves.toMatchObject({ attendancePayrollFactId: factId, releasedAt: null });
+    // The period read names who finalized it and when.
+    await expect(periods.read(people.certifier, period.id)).resolves.toMatchObject({
+      finalizedAt: finalized.finalizedAt,
+      finalizedByMembershipId: people.approver.membershipId,
+      finalizedByName: 'Payroll Period FINALIZE User 4',
+    });
     const [audit] = await eventsOf(period.id);
     expect(audit).toMatchObject({
       actorMembershipId: people.approver.membershipId,
@@ -519,7 +525,13 @@ describe.skipIf(!enabled)('Payroll finalization in PostgreSQL', () => {
         'finalization time',
         (transaction) =>
           transaction.$executeRaw`UPDATE payroll_periods SET finalized_at = now() WHERE id = CAST(${period.id} AS uuid)`,
-        /finalization time only as it is finalized/,
+        /finalization time and finalizer only as it is finalized/,
+      ],
+      [
+        'finalizer',
+        (transaction) =>
+          transaction.$executeRaw`UPDATE payroll_periods SET finalized_by_membership_id = CAST(${people.secondApprover.membershipId} AS uuid) WHERE id = CAST(${period.id} AS uuid)`,
+        /finalization time and finalizer only as it is finalized/,
       ],
       [
         'period status',
@@ -588,6 +600,15 @@ describe.skipIf(!enabled)('Payroll finalization in PostgreSQL', () => {
         }),
       ),
     ).rejects.toThrow(/consumed only by the finalization of its period/);
+    // Moving the period itself to FINALIZED needs both its time and its finalizer.
+    await expect(
+      withDatabaseContext({ agencyId }, (transaction) =>
+        transaction.payrollPeriod.updateMany({
+          where: { id: setup.period.id },
+          data: { status: 'FINALIZED', finalizedAt: new Date() },
+        }),
+      ),
+    ).rejects.toThrow(/records when it is finalized, and by whom/);
   });
 
   it('rolls back with the period APPROVED when another payroll consumed a source first', async () => {

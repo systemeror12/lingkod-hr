@@ -5,14 +5,17 @@ import type { AuthorityOption, EmployeeOption } from '../lib/payroll-page-data';
 import { decimalLabel } from '../lib/payroll-inputs';
 import {
   contributionTypeLabel,
+  confirmedCheckpoints,
   exceptionMessage,
   exceptionStatusDisplay,
   exceptionTypeLabel,
   lineSourceLabel,
   lineTypeLabel,
   moneyLabel,
+  instantLabel,
   periodStatusDisplay,
   resultStatusDisplay,
+  reviewActions,
   runTypeLabel,
   severityDisplay,
   stageCells,
@@ -22,9 +25,11 @@ import {
   type PayrollLine,
   type PayrollPeriod,
   type PayrollPeriodList,
+  type PayrollPeriodReview,
   type PayrollResult,
   type PayrollResultDetail,
   type PayrollRunType,
+  type ReviewAction,
 } from '../lib/payroll-periods';
 import { dateLabel } from '../lib/overtime-format';
 import { cn } from '../lib/class-names';
@@ -35,6 +40,7 @@ import {
 } from './contribution-billings';
 import { Facts } from './payroll-inputs-workspace';
 import { ContributionsTaxDeductions } from './payslip-deductions';
+import { actionLabel, PayrollReview } from './payroll-review';
 import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import {
@@ -66,6 +72,8 @@ type PeriodDetail =
       results: PayrollResult[];
       exceptions: PayrollException[];
       billings: ContributionBilling[];
+      /** Who acted and what certifying binds; null before the period is calculated. */
+      review: PayrollPeriodReview | null;
     };
 
 type Form =
@@ -109,7 +117,9 @@ function message(caught: unknown, fallback: string): string {
  * Exceptions; and the payslip form, whose Salary Computation shows each Payroll Line with its
  * rule version and sources, then its contributions, tax, and deductions. A regular period also
  * lists its issuer contribution billing, which a deductions manager records while it is in Draft.
- * The API decides every refusal; this screen shows its reason.
+ * From For review to Finalized, each period shows its Approvals and the review commands the actor's
+ * permissions and the period's state allow. The API decides every refusal; this screen shows its
+ * reason.
  */
 export function PayslipsWorkspace({
   agencyId,
@@ -118,7 +128,9 @@ export function PayslipsWorkspace({
   canCalculate,
   canManageDeductions,
   employees,
+  evidenceReadable = false,
   initialList,
+  reviewPermissions = [],
 }: {
   agencyId: string;
   authorities: AuthorityOption[];
@@ -126,7 +138,11 @@ export function PayslipsWorkspace({
   canCalculate: boolean;
   canManageDeductions: boolean;
   employees: EmployeeOption[];
+  /** Whether the actor can list the Agency's Document Versions to cite as review evidence. */
+  evidenceReadable?: boolean;
   initialList: PayrollPeriodList;
+  /** The review permissions (`REVIEW_PERMISSIONS`) the actor holds Agency-wide. */
+  reviewPermissions?: string[];
 }) {
   const [list, setList] = useState(initialList);
   // Periods the actor opened or closed; any other starts open unless it is finished.
@@ -139,6 +155,8 @@ export function PayslipsWorkspace({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [acting, setActing] = useState<{ periodId: string; action: ReviewAction } | null>(null);
+  const held = new Set(reviewPermissions);
   const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
   const periodById = new Map(list.periods.map((period) => [period.id, period]));
   const isOpen = (period: PayrollPeriod) => toggled[period.id] ?? !startsCollapsed(period.status);
@@ -160,7 +178,9 @@ export function PayslipsWorkspace({
   );
 
   const refreshList = useCallback(async () => {
-    setList((await request('/payroll-periods')) as PayrollPeriodList);
+    const next = (await request('/payroll-periods')) as PayrollPeriodList;
+    setList(next);
+    return next;
   }, [request]);
 
   const loadDetail = useCallback(
@@ -170,7 +190,7 @@ export function PayslipsWorkspace({
       try {
         // A version that is computing has no results yet, and an uncalculated period has none.
         const calculated = period.calculationVersion > 0 && period.status !== 'CALCULATING';
-        const [results, exceptions, billings] = await Promise.all([
+        const [results, exceptions, billings, review] = await Promise.all([
           calculated
             ? (request(`/payroll-periods/${period.id}/results`) as Promise<{
                 results: PayrollResult[];
@@ -187,6 +207,11 @@ export function PayslipsWorkspace({
                 billings: ContributionBilling[];
               }>)
             : { billings: [] },
+          calculated
+            ? (request(`/payroll-periods/${period.id}`) as Promise<{
+                period: PayrollPeriodReview;
+              }>)
+            : { period: null },
         ]);
         setDetails((current) => ({
           ...current,
@@ -196,6 +221,7 @@ export function PayslipsWorkspace({
             results: results.results,
             exceptions: exceptions.exceptions,
             billings: billings.billings,
+            review: review.period,
           },
         }));
       } catch (caught: unknown) {
@@ -380,7 +406,71 @@ export function PayslipsWorkspace({
       setDraft((current) => ({ ...current, [key]: value }));
     };
 
+  function reviewOf(period: PayrollPeriod): PayrollPeriodReview | null {
+    const detail = details[period.id];
+    return detail?.state === 'ready' ? detail.review : null;
+  }
+
+  function actionsOf(period: PayrollPeriod): ReviewAction[] {
+    const review = reviewOf(period);
+    return review ? reviewActions(review, held) : [];
+  }
+
+  /** After a review command: read the list and the period again, and say what changed. */
+  async function reviewed(periodId: string, done: string): Promise<void> {
+    setError('');
+    setNotice(done);
+    try {
+      const next = await refreshList();
+      const period = next.periods.find((item) => item.id === periodId);
+      if (period) await loadDetail(period);
+    } catch (caught: unknown) {
+      setError(message(caught, 'The Payroll Periods could not be read again.'));
+    }
+  }
+
+  function reviewSection(period: PayrollPeriod): ReactNode {
+    const review = reviewOf(period);
+    if (!review) return null;
+    return (
+      <PayrollReview
+        acting={acting?.periodId === period.id ? acting.action : null}
+        actions={actionsOf(period)}
+        code={period.code}
+        evidenceOptions={authorities}
+        evidenceReadable={evidenceReadable}
+        onAct={(action) => {
+          setActing(action ? { periodId: period.id, action } : null);
+          // A period acted on stays open, even once it is finished.
+          if (action) setToggled((current) => ({ ...current, [period.id]: true }));
+        }}
+        onDone={(done) => reviewed(period.id, done)}
+        request={request}
+        review={review}
+      />
+    );
+  }
+
   function nextStep(period: PayrollPeriod): ReactNode {
+    // The one next step that moves the period forward for this actor; the rest sit in its body.
+    const primary = actionsOf(period).find((action) => action.primary);
+    if (primary) {
+      return (
+        <Button
+          disabled={busy}
+          onClick={() => {
+            setNotice('');
+            setActing({ periodId: period.id, action: primary });
+            setToggled((current) => ({ ...current, [period.id]: true }));
+          }}
+          type="button"
+          variant="primary"
+        >
+          {actionLabel(primary)}
+          <span className="sr-only"> for {period.code}</span>
+        </Button>
+      );
+    }
     if (period.status === 'DRAFT' && canCalculate) {
       return (
         <Button
@@ -531,7 +621,7 @@ export function PayslipsWorkspace({
     return (
       <div className="grid gap-5">
         <div className="grid gap-5 p-4">
-          <StageBar period={period} />
+          <StageBar period={period} review={reviewOf(period)} />
           <Facts
             facts={[
               ['Run type', runTypeLabel[period.runType]],
@@ -553,6 +643,9 @@ export function PayslipsWorkspace({
             ]}
           />
         </div>
+        {detail?.state === 'ready' && detail.review ? (
+          <div className="px-4">{reviewSection(period)}</div>
+        ) : null}
         {period.status === 'CALCULATING' ? (
           <StateSurface busy compact label={`${period.code} payslips`}>
             <strong className="text-body font-[650] text-ink">
@@ -921,10 +1014,11 @@ export function PayslipsWorkspace({
               <DialogBody className="grid gap-6">
                 {openPeriod ? (
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <StageBar period={openPeriod} />
+                    <StageBar period={openPeriod} review={reviewOf(openPeriod)} />
                     {nextStep(openPeriod)}
                   </div>
                 ) : null}
+                {openPeriod ? reviewSection(openPeriod) : null}
                 <FormError message={error} />
                 {notice ? (
                   <p className="m-0 text-small text-ink" role="status">
@@ -982,19 +1076,20 @@ export function PayslipsWorkspace({
   );
 }
 
-function instantLabel(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('en-PH', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Asia/Manila',
-  });
-}
-
-/** The period's stages, each its own cell; only a reached Finalized is green. */
-export function StageBar({ period }: { period: PayrollPeriod }) {
-  const cells = stageCells(period.status);
+/**
+ * The period's stages, each its own cell; only a reached Finalized is green. With the period read,
+ * a certified period counts its confirmed checkpoint reviews.
+ */
+export function StageBar({
+  period,
+  review = null,
+}: {
+  period: PayrollPeriod;
+  review?: PayrollPeriodReview | null;
+}) {
+  const confirmed =
+    review && review.status === period.status ? confirmedCheckpoints(review).length : 0;
+  const cells = stageCells(period.status, confirmed);
   if (!cells) {
     return <StatusTag tone="neutral">{periodStatusDisplay[period.status].label}</StatusTag>;
   }
@@ -1009,6 +1104,7 @@ export function StageBar({ period }: { period: PayrollPeriod }) {
             className={cn(
               'rounded-tag border px-2.5 py-1 text-caption font-[600] whitespace-nowrap',
               cell.state === 'pending' && 'border-border-subtle text-ink-muted',
+              cell.label.startsWith('Reviewed ') && 'border-dashed',
               cell.state !== 'pending' && !finalized && 'border-info text-info',
               cell.state === 'current' && !finalized && 'bg-info/8',
               cell.label === 'Computing…' &&

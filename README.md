@@ -149,7 +149,12 @@ run removes its factor and Recovery Codes again. For Factor Reset,
 `factor.reset.candidate@example.test` is an HRMO Administrator whose factor
 the officer can reset; each seed run restores the candidate's factor. For
 Global User Lock, the officer can lock and unlock
-`user.lock.candidate@example.test`; each seed run unlocks the candidate. The seed
+`user.lock.candidate@example.test`; each seed run unlocks the candidate. For
+payroll review, Payroll Period `E2E-REVIEW-2850-CLOTHING` waits For review, and
+one User holds each review function: `payroll.certifier@example.test` (HR
+Certifier), `payroll.budget@example.test` (Budget Officer),
+`payroll.accounting@example.test` (Accounting Reviewer), and
+`payroll.approver@example.test` (Payroll Approver). The seed
 refuses to run in production.
 
 To sign in locally:

@@ -276,14 +276,19 @@ const reached: Record<Exclude<PayrollPeriodStatus, 'VOIDED'>, number> = {
 /**
  * The stage bar of a period: Draft, Calculated, Certified, Reviewed, Approved, and Finalized,
  * each its own cell. A running calculation reads `Computing…` in the Calculated cell and never
- * as done. A voided period has no stage bar.
+ * as done. A certified period is Reviewed once both checkpoint reviews are confirmed; after one
+ * it reads `Reviewed 1/2`, still pending. A voided period has no stage bar.
  */
-export function stageCells(status: PayrollPeriodStatus): StageCell[] | null {
+export function stageCells(status: PayrollPeriodStatus, confirmedReviews = 0): StageCell[] | null {
   if (status === 'VOIDED') return null;
-  const done = reached[status];
+  const reviewed = status === 'CERTIFIED' && confirmedReviews >= CHECKPOINTS.length;
+  const done = reviewed ? reached.CERTIFIED + 1 : reached[status];
   return STAGES.map((label, index) => {
     if (status === 'CALCULATING' && index === 1) return { label: 'Computing…', state: 'current' };
     if (index < done) return { label, state: index === done - 1 ? 'current' : 'done' };
+    if (status === 'CERTIFIED' && label === 'Reviewed' && confirmedReviews > 0) {
+      return { label: `Reviewed ${confirmedReviews}/${CHECKPOINTS.length}`, state: 'pending' };
+    }
     return { label, state: 'pending' };
   });
 }
@@ -291,4 +296,235 @@ export function stageCells(status: PayrollPeriodStatus): StageCell[] | null {
 /** Finished periods start collapsed on the list. */
 export function startsCollapsed(status: PayrollPeriodStatus): boolean {
   return status === 'FINALIZED' || status === 'VOIDED';
+}
+
+export type PayrollExportCheckpoint = 'BUDGET' | 'ACCOUNTING';
+
+/** Budget reviews funding and Accounting reviews the accounts, in either order (#29). */
+export const CHECKPOINTS: readonly PayrollExportCheckpoint[] = ['BUDGET', 'ACCOUNTING'];
+
+export const checkpointLabel: Record<PayrollExportCheckpoint, string> = {
+  BUDGET: 'Budget',
+  ACCOUNTING: 'Accounting',
+};
+
+/** One Payroll Export Checkpoint Review of the current Certified Payroll Review Export. */
+export interface CheckpointReview {
+  id: string;
+  reviewExportId: string;
+  checkpoint: PayrollExportCheckpoint;
+  outcome: 'CONFIRMED' | 'RETURNED';
+  externalReference: string | null;
+  evidenceDocumentVersionId: string | null;
+  reason: string | null;
+  reviewedByMembershipId: string;
+  reviewedByName: string | null;
+  reviewedAt: string;
+}
+
+/** The Payroll Certification in force, its approval, and its export's checkpoint reviews. */
+export interface PayrollCertification {
+  id: string;
+  calculationVersion: number;
+  calculationHash: string;
+  certifiedByMembershipId: string;
+  certifiedByName: string | null;
+  certifiedAt: string;
+  approvedByMembershipId: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  reviewExportId: string | null;
+  checkpointReviews: CheckpointReview[];
+}
+
+/** A period as `GET /payroll-periods/:id` reads it: what certifying binds and who acted. */
+export interface PayrollPeriodReview {
+  id: string;
+  status: PayrollPeriodStatus;
+  calculationVersion: number;
+  rowVersion: number;
+  calculationHash: string | null;
+  finalizedAt: string | null;
+  finalizedByMembershipId: string | null;
+  finalizedByName: string | null;
+  certification: PayrollCertification | null;
+}
+
+/** The checkpoint reviews confirmed on the export in force. */
+export function confirmedCheckpoints(review: PayrollPeriodReview): PayrollExportCheckpoint[] {
+  const reviews = review.certification?.checkpointReviews ?? [];
+  return CHECKPOINTS.filter((checkpoint) =>
+    reviews.some((row) => row.checkpoint === checkpoint && row.outcome === 'CONFIRMED'),
+  );
+}
+
+/** The review commands of a period (hris-controls.md §5.20); `primary` ones move it forward. */
+export type ReviewAction =
+  | { kind: 'certify'; primary: true }
+  | { kind: 'return'; primary: false }
+  | { kind: 'checkpoint'; checkpoint: PayrollExportCheckpoint; primary: true }
+  | { kind: 'revoke'; primary: false }
+  | { kind: 'approve'; primary: true }
+  | { kind: 'return-approved'; primary: false }
+  | { kind: 'finalize'; primary: true };
+
+/** The permission each review command needs, Agency-wide (§6.10). */
+export const REVIEW_PERMISSIONS = [
+  'payroll.periods.certify',
+  'payroll.periods.return',
+  'payroll.periods.review_funding',
+  'payroll.periods.review_accounting',
+  'payroll.periods.revoke_certification',
+  'payroll.periods.approve',
+  'payroll.periods.return_approved',
+  'payroll.periods.finalize',
+] as const;
+
+export type ReviewPermission = (typeof REVIEW_PERMISSIONS)[number];
+
+const checkpointPermission: Record<PayrollExportCheckpoint, ReviewPermission> = {
+  BUDGET: 'payroll.periods.review_funding',
+  ACCOUNTING: 'payroll.periods.review_accounting',
+};
+
+/**
+ * The review commands the actor's permissions and the period's state allow, primary first. A
+ * checkpoint is offered until it is reviewed on the export in force; approval once both are
+ * confirmed. The API still decides each command, including the one-function rule, and its
+ * refusal reads as its reason.
+ */
+export function reviewActions(
+  review: PayrollPeriodReview,
+  held: ReadonlySet<string>,
+): ReviewAction[] {
+  const actions: ReviewAction[] = [];
+  switch (review.status) {
+    case 'FOR_REVIEW':
+      if (held.has('payroll.periods.certify') && review.calculationHash) {
+        actions.push({ kind: 'certify', primary: true });
+      }
+      if (held.has('payroll.periods.return')) actions.push({ kind: 'return', primary: false });
+      break;
+    case 'CERTIFIED': {
+      const reviews = review.certification?.checkpointReviews ?? [];
+      if (review.certification?.reviewExportId) {
+        for (const checkpoint of CHECKPOINTS) {
+          if (
+            held.has(checkpointPermission[checkpoint]) &&
+            !reviews.some((row) => row.checkpoint === checkpoint)
+          ) {
+            actions.push({ kind: 'checkpoint', checkpoint, primary: true });
+          }
+        }
+      }
+      if (
+        held.has('payroll.periods.approve') &&
+        confirmedCheckpoints(review).length === CHECKPOINTS.length
+      ) {
+        actions.push({ kind: 'approve', primary: true });
+      }
+      if (held.has('payroll.periods.revoke_certification')) {
+        actions.push({ kind: 'revoke', primary: false });
+      }
+      break;
+    }
+    case 'APPROVED':
+      if (held.has('payroll.periods.finalize')) actions.push({ kind: 'finalize', primary: true });
+      if (held.has('payroll.periods.return_approved')) {
+        actions.push({ kind: 'return-approved', primary: false });
+      }
+      break;
+    default:
+      break;
+  }
+  return actions;
+}
+
+/** One entry of a period's Approvals: a step, and who took it when, or that it is pending. */
+export interface ApprovalEntry {
+  step: string;
+  state: 'done' | 'pending';
+  by: string | null;
+  at: string | null;
+  note: string | null;
+}
+
+const memberName = (name: string | null) => name ?? 'Unknown member';
+
+/**
+ * Who certified, reviewed (Budget and Accounting apart), approved, and finalized the period, and
+ * when. A step not taken yet reads Pending, never done. No record holds who started a
+ * calculation, so the calculation has no entry.
+ */
+export function approvalEntries(review: PayrollPeriodReview): ApprovalEntry[] {
+  const certification = review.certification;
+  const pending = (step: string): ApprovalEntry => ({
+    step,
+    state: 'pending',
+    by: null,
+    at: null,
+    note: null,
+  });
+  // A finalized period keeps its certification; anything earlier without one is not certified.
+  const entries: ApprovalEntry[] = [
+    certification
+      ? {
+          step: 'Certified',
+          state: 'done',
+          by: memberName(certification.certifiedByName),
+          at: certification.certifiedAt,
+          note: `Calculation version ${certification.calculationVersion}`,
+        }
+      : pending('Certified'),
+  ];
+  for (const checkpoint of CHECKPOINTS) {
+    const step = `${checkpointLabel[checkpoint]} review`;
+    const row = certification?.checkpointReviews.find((item) => item.checkpoint === checkpoint);
+    entries.push(
+      row
+        ? {
+            step,
+            state: 'done',
+            by: memberName(row.reviewedByName),
+            at: row.reviewedAt,
+            note:
+              row.outcome === 'CONFIRMED'
+                ? `Confirmed · ${row.externalReference ?? 'no reference'}`
+                : `Returned · ${row.reason ?? ''}`,
+          }
+        : pending(step),
+    );
+  }
+  entries.push(
+    certification?.approvedAt
+      ? {
+          step: 'Approved',
+          state: 'done',
+          by: memberName(certification.approvedByName),
+          at: certification.approvedAt,
+          note: null,
+        }
+      : pending('Approved'),
+    review.finalizedAt
+      ? {
+          step: 'Finalized',
+          state: 'done',
+          by: review.finalizedByMembershipId ? memberName(review.finalizedByName) : 'Not recorded',
+          at: review.finalizedAt,
+          note: null,
+        }
+      : pending('Finalized'),
+  );
+  return entries;
+}
+
+/** An instant in Philippine time, such as `Nov 20, 2026, 10:00 AM`. */
+export function instantLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-PH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Manila',
+  });
 }
