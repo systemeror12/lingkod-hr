@@ -5781,11 +5781,14 @@ model CertifiedPayrollReviewExport {
 
 /// The immutable, checksummed Payment Export of one FINALIZED payroll (#28,
 /// #337). Its CSV is rendered from these rows and its instructions, and
-/// `checksum` is of the rendering's bytes; the summary is stored.
+/// `checksum` is of the rendering's bytes; the summary is stored. The partial
+/// unique index payment_exports_period_key on (payroll_period_id) WHERE
+/// supersedes_payment_export_id IS NULL lives in migration 0198; Prisma
+/// cannot express it.
 model PaymentExport {
   id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                       String   @map("agency_id") @db.Uuid
-  payrollPeriodId                String   @unique(map: "payment_exports_period_key") @map("payroll_period_id") @db.Uuid
+  payrollPeriodId                String   @map("payroll_period_id") @db.Uuid
   calculationVersion             Int      @map("calculation_version")
   paymentDate                    DateTime @map("payment_date") @db.Date
   payrollExportContractVersionId String   @map("payroll_export_contract_version_id") @db.Uuid
@@ -5801,6 +5804,8 @@ model PaymentExport {
   instructionTotal               Decimal  @map("instruction_total") @db.Decimal(19, 2)
   excludedResultCount            Int      @map("excluded_result_count")
   excludedResultTotal            Decimal  @map("excluded_result_total") @db.Decimal(19, 2)
+  /// The export a retry supersedes (#643); null for the period's original.
+  supersedesPaymentExportId      String?  @map("supersedes_payment_export_id") @db.Uuid
 
   @@unique([agencyId, id], map: "payment_exports_agency_id_id_key")
   @@map("payment_exports")
@@ -5824,6 +5829,9 @@ model PaymentInstruction {
   accountHolderName           String  @map("account_holder_name")
   amount                      Decimal @db.Decimal(19, 2)
   paymentReference            String  @map("payment_reference")
+  /// The REJECTED or RETURNED attempt this instruction retries (#643).
+  priorPaymentInstructionId   String? @unique(map: "payment_instructions_prior_key") @map("prior_payment_instruction_id") @db.Uuid
+  retryReason                 String? @map("retry_reason")
 
   @@unique([paymentExportId, payrollEmployeeId], map: "payment_instructions_export_result_key")
   @@unique([agencyId, id], map: "payment_instructions_agency_id_id_key")

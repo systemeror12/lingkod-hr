@@ -2310,7 +2310,8 @@ grants `payroll.periods.review_funding` to the Budget Officer and
 CREATE TABLE payment_exports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  payroll_period_id uuid NOT NULL UNIQUE,
+  payroll_period_id uuid NOT NULL,
+  supersedes_payment_export_id uuid CHECK (supersedes_payment_export_id <> id),
   calculation_version integer NOT NULL,
   payment_date date NOT NULL,
   payroll_export_contract_version_id uuid NOT NULL
@@ -2334,10 +2335,16 @@ CREATE TABLE payment_exports (
          AND source_net_total = instruction_total + excluded_result_total),
   FOREIGN KEY (agency_id, payroll_period_id)
     REFERENCES payroll_periods (agency_id, id),
+  FOREIGN KEY (agency_id, supersedes_payment_export_id)
+    REFERENCES payment_exports (agency_id, id),
   FOREIGN KEY (agency_id, generated_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
   UNIQUE (agency_id, id)
 );
+
+-- One original export per period; retries are superseding exports beside it.
+CREATE UNIQUE INDEX payment_exports_period_key ON payment_exports (payroll_period_id)
+  WHERE supersedes_payment_export_id IS NULL;
 
 CREATE TABLE payment_instructions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2356,8 +2363,14 @@ CREATE TABLE payment_instructions (
   account_holder_name text NOT NULL,
   amount numeric(19,2) NOT NULL CHECK (amount > 0),
   payment_reference text NOT NULL,
+  prior_payment_instruction_id uuid UNIQUE,
+  retry_reason text,
+  CHECK ((prior_payment_instruction_id IS NULL) = (retry_reason IS NULL)
+         AND (retry_reason IS NULL OR btrim(retry_reason) <> '')),
   FOREIGN KEY (agency_id, payment_export_id)
     REFERENCES payment_exports (agency_id, id),
+  FOREIGN KEY (agency_id, prior_payment_instruction_id)
+    REFERENCES payment_instructions (agency_id, id),
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
   FOREIGN KEY (agency_id, payroll_bank_account_id)
@@ -2373,8 +2386,9 @@ by `POST .../payroll-periods/:periodId/payment-exports`, which needs
 function. It locks the period, reads the period's `FINALIZED` results at the
 finalized calculation version, and writes the export, its instructions, and a
 `PAYMENT_EXPORT_GENERATED` Audit Event (idempotency key `generated`) in one
-transaction. A period has one export: generating again, by anyone permitted,
-returns the stored one, its checksums unchanged, and writes nothing.
+transaction. A period has one original export: generating again, by anyone
+permitted, returns the stored one, its checksums unchanged, and writes
+nothing.
 Migration 0186 adds `PAYMENT_EXPORT` version 1 to the contract versions, and
 its definition names every CSV column, the row order, and the control rules.
 
@@ -2426,10 +2440,47 @@ net, to that Employee's `ACTIVE` account effective that day. `hris_app` holds
 the Payroll Approver, and the Cashier; the Payroll Preparer's `C` and the
 Auditor's `R` are not seeded.
 
-A superseding export, its retry linkage, and a voided payroll's supersession
-(#643) are not built yet, so the tables have no
-`supersedes_payment_export_id`, `prior_payment_instruction_id`, or
-`retry_reason`, and `payroll_period_id` is UNIQUE.
+A Payment Instruction whose latest Disbursement Outcome is `REJECTED` or
+`RETURNED` is retried (#28, #643) by
+`POST .../payment-exports/:exportId/instructions/:instructionId/retries`
+with a `reason`. It needs `payroll.payment_exports.generate` held
+Agency-wide and, like generation, claims no payroll function. It locks the
+period, which must be `FINALIZED`, and writes, like generation, a superseding
+export whose `supersedes_payment_export_id` names the instruction's export,
+one new instruction whose `prior_payment_instruction_id` names it and whose
+`retry_reason` is the reason, and a `PAYMENT_EXPORT_RETRY_GENERATED` Audit
+Event naming both, the prior outcome, and the reason. The new instruction
+resends the prior one's result, payee, amount, and payment reference to the
+Employee's destination designated today, so its controls count that one
+result. Its CSV and summary are contract version 1; the summary also names
+the superseded export, the prior instruction, and the reason. The prior
+export and instruction never change and are never resent. The retry is
+refused with:
+
+- `PAYMENT_INSTRUCTION_NOT_RETRYABLE` unless the latest outcome is `REJECTED`
+  or `RETURNED`, so while it is `SUBMITTED` or `ACCEPTED`;
+- `PAYMENT_INSTRUCTION_ALREADY_RETRIED` once the instruction has been
+  retried: each attempt is retried at most once, so a chain of retries is a
+  line and only its latest attempt is retried again;
+- `PAYMENT_RETRY_DESTINATION_UNCHANGED` when the designated destination is
+  still the prior attempt's Payroll Bank Account (_reading_: #28 retries
+  after the destination "is corrected", and a corrected account is a
+  successor row), and `PAYMENT_EXPORT_DESTINATION_BLOCKED` when it is
+  missing, ineffective, or unverified;
+- `PAYMENT_RETRY_CHANGES_PAYEE_OR_AMOUNT` when the request names an amount or
+  payee, since a payee or amount change is a Payroll Adjustment (ADR 0016).
+
+The period row lock orders two retries at once, so of two retries of one
+attempt the second is refused, and `prior_payment_instruction_id` is UNIQUE
+behind it. The export trigger admits a superseding export only beside an
+export of the same period. The instruction trigger admits an instruction
+with a prior attempt only in a superseding export, retrying an instruction of
+the superseded export whose latest outcome is `REJECTED` or `RETURNED`, with
+the same result, payee, amount, and payment reference, to a different
+account. `instructionsBlockingVoid` reads retried instructions like any
+other. A voided payroll's supersession of its exports belongs to the void
+command (#358). Migration 0198 adds the columns and replaces the UNIQUE
+`payroll_period_id` with the partial index above.
 
 ```sql
 CREATE TABLE disbursement_outcomes (

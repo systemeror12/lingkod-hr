@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   designatedDestination,
   planPaymentExport,
+  planPaymentRetry,
   renderPaymentExportCsv,
   renderPaymentExportSummary,
   type PaymentExportDestinationCandidate,
@@ -169,6 +170,90 @@ describe('planPaymentExport', () => {
   });
 });
 
+describe('planPaymentRetry', () => {
+  const prior = {
+    payrollEmployeeId: 'result-E-001',
+    payrollBankAccountId: 'account-E-001',
+    agencyEmployeeNumber: 'E-001',
+    payeeLegalName: 'Payee E-001',
+    amount: '1500.50',
+    paymentReference: 'REG-2874-03-E-001',
+  };
+  const corrected = account('E-001', {
+    id: 'account-E-001-corrected',
+    accountName: 'Corrected Holder',
+    maskedAccountNumber: '******9999',
+  });
+
+  it('resends the prior payee and amount to the corrected destination, alone in its controls', () => {
+    const plan = planPaymentRetry({
+      prior,
+      employeeId: 'employee-E-001',
+      destinations: [account('E-001', { status: 'CORRECTED' }), corrected],
+      onDate,
+    });
+    expect(plan.instructions).toEqual([
+      {
+        payrollEmployeeId: 'result-E-001',
+        payrollBankAccountId: 'account-E-001-corrected',
+        agencyEmployeeNumber: 'E-001',
+        payeeLegalName: 'Payee E-001',
+        destinationType: 'BANK_ACCOUNT',
+        institutionIdentifierScheme: 'AGENCY_BANK_CODE',
+        institutionIdentifier: 'LBP',
+        institutionName: 'LBP',
+        maskedAccountIdentifier: '******9999',
+        accountHolderName: 'Corrected Holder',
+        amount: '1500.50',
+        paymentReference: 'REG-2874-03-E-001',
+      },
+    ]);
+    expect(plan.excluded).toEqual([]);
+    expect(plan.controls).toEqual({
+      sourceResultCount: 1,
+      sourceNetTotal: '1500.50',
+      instructionCount: 1,
+      instructionTotal: '1500.50',
+      excludedResultCount: 0,
+      excludedResultTotal: '0.00',
+    });
+  });
+
+  it('refuses to resend to the destination of the prior attempt', () => {
+    expect(() =>
+      planPaymentRetry({
+        prior,
+        employeeId: 'employee-E-001',
+        destinations: [account('E-001')],
+        onDate,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: 'PAYMENT_RETRY_DESTINATION_UNCHANGED',
+        message:
+          'The retry of E-001 would resend to the Payroll Bank Account of its prior attempt. Correct the destination first; nothing was generated.',
+      }),
+    );
+  });
+
+  it('refuses a missing, ineffective, or unverified destination', () => {
+    expect(() =>
+      planPaymentRetry({
+        prior,
+        employeeId: 'employee-E-001',
+        destinations: [account('E-001', { status: 'PENDING_VERIFICATION', id: 'new' })],
+        onDate,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: 'PAYMENT_EXPORT_DESTINATION_BLOCKED',
+        message:
+          'The retry is blocked: an unverified Payroll Bank Account for E-001. Nothing was generated.',
+      }),
+    );
+  });
+});
+
 describe('designatedDestination', () => {
   it('takes the ACTIVE account effective on the date', () => {
     const current = account('E-001', { id: 'current', effectiveFrom: '2026-06-01' });
@@ -256,5 +341,24 @@ describe('renderers', () => {
     expect(summary).toContain('Excluded zero or negative net pay: 1, total 0.00');
     expect(summary).toContain('000200 | Zero Pay | 0.00');
     expect(summary).toContain('marks no one paid');
+    expect(summary).not.toContain('Supersedes');
+  });
+
+  it("names the superseded export, the prior attempt, and the reason in a retry's summary", () => {
+    const summary = renderPaymentExportSummary(
+      {
+        ...snapshot,
+        retry: {
+          supersedesPaymentExportId: 'export-0',
+          priorPaymentInstructionId: 'instruction-0',
+          reason: 'Account closed; corrected',
+        },
+      },
+      [],
+      'a'.repeat(64),
+    );
+    expect(summary).toContain(
+      'Generated at: 2026-11-21T01:02:03.456Z\nSupersedes Payment Export: export-0\nRetry of Payment Instruction: instruction-0\nRetry reason: Account closed; corrected\nCSV SHA-256:',
+    );
   });
 });

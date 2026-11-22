@@ -10,24 +10,54 @@ import {
 } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { createHash, randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
 import { manilaToday } from '../employee-scope';
 import {
   PAYMENT_EXPORT_CONTRACT,
   PaymentExportBlockedError,
   planPaymentExport,
+  planPaymentRetry,
   renderPaymentExportCsv,
   renderPaymentExportSummary,
   type PaymentExportControls,
   type PaymentExportPeriod,
+  type PaymentExportPlan,
   type PaymentExportSnapshot,
 } from './payment-export-contract';
 
 export const PAYMENT_EXPORT_GENERATED = 'PAYMENT_EXPORT_GENERATED';
 export const PAYMENT_EXPORT_DOWNLOADED = 'PAYMENT_EXPORT_DOWNLOADED';
+export const PAYMENT_EXPORT_RETRY_GENERATED = 'PAYMENT_EXPORT_RETRY_GENERATED';
 
 const PERMISSION = 'payroll.payment_exports.generate';
 const ENCRYPTION_VERSION = 1;
+
+/** The latest Disbursement Outcomes after which an instruction may be handed off again (#28). */
+const RETRYABLE_OUTCOMES: readonly string[] = ['REJECTED', 'RETURNED'];
+
+/** Request fields that would change who is paid or how much; a retry never takes them. */
+const PAYEE_OR_AMOUNT_FIELDS = [
+  'amount',
+  'payee',
+  'payeeLegalName',
+  'payrollEmployeeId',
+  'employeeId',
+  'agencyEmployeeNumber',
+] as const;
+
+/** Retrying a REJECTED or RETURNED Payment Instruction needs only the reason. */
+export const paymentRetrySchema = z
+  .object({
+    reason: z
+      .string({ error: 'A retry needs a reason.' })
+      .trim()
+      .min(1, 'A retry needs a reason.')
+      .max(2000),
+  })
+  .strict();
+
+export type PaymentRetryInput = z.input<typeof paymentRetrySchema>;
 
 export class PaymentExportsServiceError extends Error {
   constructor(
@@ -43,6 +73,9 @@ export class PaymentExportsServiceError extends Error {
 export interface PaymentInstructionView {
   id: string;
   payrollEmployeeId: string;
+  /** The REJECTED or RETURNED attempt this instruction retries, with the reason (#643). */
+  priorPaymentInstructionId: string | null;
+  retryReason: string | null;
   /** The designated Payroll Bank Account the instruction snapshots. */
   payrollBankAccountId: string;
   agencyEmployeeNumber: string;
@@ -61,6 +94,8 @@ export interface PaymentInstructionView {
 export interface PaymentExportView {
   id: string;
   payrollPeriodId: string;
+  /** The export whose instruction this retry export resends; null for the period's original. */
+  supersedesPaymentExportId: string | null;
   calculationVersion: number;
   paymentDate: string;
   contract: { code: string; version: number };
@@ -85,6 +120,8 @@ export interface PaymentExportArtifact {
 const instructionSelect = {
   id: true,
   payrollEmployeeId: true,
+  priorPaymentInstructionId: true,
+  retryReason: true,
   payrollBankAccountId: true,
   agencyEmployeeNumber: true,
   payeeLegalName: true,
@@ -102,10 +139,10 @@ type ExportRow = PaymentExport;
 type InstructionRow = Prisma.PaymentInstructionGetPayload<{ select: typeof instructionSelect }>;
 
 /**
- * Generates and downloads the Payment Export of a FINALIZED payroll (#28,
- * #337). Both need `payroll.payment_exports.generate` held Agency-wide.
- * Generating claims no payroll function (hris-controls.md §5.20) and marks
- * no one paid.
+ * Generates, retries, and downloads the Payment Exports of a FINALIZED
+ * payroll (#28, #337, #643). Each needs `payroll.payment_exports.generate`
+ * held Agency-wide. Generating or retrying claims no payroll function
+ * (hris-controls.md §5.20) and marks no one paid.
  */
 @Injectable()
 export class PaymentExportsService {
@@ -133,110 +170,213 @@ export class PaymentExportsService {
     requirePermission(context, 'Generating a Payment Export');
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const period = await lockFinalizedPeriod(transaction, context, periodId);
-      const stored = await transaction.paymentExport.findUnique({
-        where: { payrollPeriodId: periodId },
+      const stored = await transaction.paymentExport.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          payrollPeriodId: periodId,
+          supersedesPaymentExportId: null,
+        },
       });
       if (stored) return toView(stored, await readInstructions(transaction, stored));
 
       const results = await readSourceResults(transaction, context, period);
-      const destinations = await transaction.payrollBankAccount.findMany({
+      const destinations = await readDestinations(
+        transaction,
+        context,
+        results.map((result) => result.employeeId),
+      );
+      const plan = planned(() =>
+        planPaymentExport({ period, results, destinations, onDate: manilaToday() }),
+      );
+      return this.write(transaction, context, period, plan, destinations);
+    });
+  }
+
+  /**
+   * Retry one Payment Instruction after its latest Disbursement Outcome is
+   * REJECTED or RETURNED and its Employee's destination is corrected (#28,
+   * #643): a superseding Payment Export, written like any other, with one new
+   * instruction linked to the prior attempt and the reason. It resends the
+   * prior payee, amount, and payment reference to the Employee's designated
+   * destination today in Asia/Manila, which must differ from the prior one.
+   * The prior export and instruction never change.
+   *
+   * Refused while the latest outcome is anything else, or none; once the
+   * attempt has been retried, so only the latest attempt of a chain is
+   * retried; and for any payee or amount in the request, which is a Payroll
+   * Adjustment (ADR 0016). The period row lock orders two retries at once,
+   * and orders a retry against a Disbursement Outcome recorded meanwhile.
+   */
+  async retry(
+    context: RequestContext,
+    target: { periodId: string; exportId: string; instructionId: string },
+    rawInput: unknown,
+  ): Promise<PaymentExportView> {
+    requirePermission(context, 'Retrying a Payment Instruction');
+    const { reason } = parseRetry(rawInput);
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const period = await lockFinalizedPeriod(transaction, context, target.periodId);
+      const superseded = await readExport(transaction, context, target.periodId, target.exportId);
+      const prior = await transaction.paymentInstruction.findFirst({
         where: {
           agencyId: context.agencyId,
-          employeeId: { in: results.map((result) => result.employeeId) },
+          paymentExportId: superseded.id,
+          id: target.instructionId,
         },
-        select: {
-          id: true,
-          employeeId: true,
-          status: true,
-          effectiveFrom: true,
-          effectiveTo: true,
-          bankCode: true,
-          accountName: true,
-          maskedAccountNumber: true,
-          encryptedAccountNumber: true,
-          encryptionVersion: true,
-        },
+        select: instructionSelect,
       });
-      let plan;
-      try {
-        plan = planPaymentExport({
-          period,
-          results,
-          destinations: destinations.map((account) => ({
-            ...account,
-            effectiveFrom: isoDate(account.effectiveFrom),
-            effectiveTo: account.effectiveTo ? isoDate(account.effectiveTo) : null,
-          })),
-          onDate: manilaToday(),
-        });
-      } catch (error: unknown) {
-        if (error instanceof PaymentExportBlockedError) {
-          throw new PaymentExportsServiceError(error.message, 409, error.code);
-        }
-        throw error;
+      if (!prior) {
+        throw new PaymentExportsServiceError(
+          'The Payment Instruction could not be found.',
+          404,
+          'PAYMENT_INSTRUCTION_NOT_FOUND',
+        );
+      }
+      const retried = await transaction.paymentInstruction.findFirst({
+        where: { agencyId: context.agencyId, priorPaymentInstructionId: prior.id },
+        select: { id: true, paymentExportId: true },
+      });
+      if (retried) {
+        throw new PaymentExportsServiceError(
+          `This Payment Instruction was already retried by Payment Instruction ${retried.id} in Payment Export ${retried.paymentExportId}; only the latest attempt can be retried.`,
+          409,
+          'PAYMENT_INSTRUCTION_ALREADY_RETRIED',
+        );
+      }
+      const latest = await transaction.disbursementOutcome.findFirst({
+        where: { agencyId: context.agencyId, paymentInstructionId: prior.id },
+        orderBy: { sequence: 'desc' },
+        select: { outcome: true },
+      });
+      if (!latest || !RETRYABLE_OUTCOMES.includes(latest.outcome)) {
+        throw new PaymentExportsServiceError(
+          `${
+            latest
+              ? `This Payment Instruction's latest Disbursement Outcome is ${latest.outcome}`
+              : 'This Payment Instruction has no Disbursement Outcome yet'
+          }; it is handed off again only after it is REJECTED or RETURNED.`,
+          409,
+          'PAYMENT_INSTRUCTION_NOT_RETRYABLE',
+        );
       }
 
-      const byId = new Map(destinations.map((account) => [account.id, account]));
-      const id = randomUUID();
-      const generatedAt = new Date();
-      const rows = plan.instructions.map((instruction) => ({ ...instruction, id: randomUUID() }));
-      const snapshot: PaymentExportSnapshot = {
+      const { employeeId } = await transaction.payrollEmployee.findUniqueOrThrow({
+        where: { agencyId_id: { agencyId: context.agencyId, id: prior.payrollEmployeeId } },
+        select: { employeeId: true },
+      });
+      const destinations = await readDestinations(transaction, context, [employeeId]);
+      const plan = planned(() =>
+        planPaymentRetry({
+          prior: { ...prior, amount: prior.amount.toFixed(2) },
+          employeeId,
+          destinations,
+          onDate: manilaToday(),
+        }),
+      );
+      return this.write(transaction, context, period, plan, destinations, {
+        supersedesPaymentExportId: superseded.id,
+        priorPaymentInstructionId: prior.id,
+        priorOutcome: latest.outcome,
+        reason,
+      });
+    });
+  }
+
+  /**
+   * Store a planned export, its instructions, and its Audit Event, with the
+   * CSV's and the summary's checksums. A retry's export supersedes the prior
+   * attempt's, and its instruction names that attempt and the reason.
+   */
+  private async write(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    period: PaymentExportPeriod,
+    plan: PaymentExportPlan,
+    destinations: Destination[],
+    retry?: NonNullable<PaymentExportSnapshot['retry']> & { priorOutcome: string },
+  ): Promise<PaymentExportView> {
+    const byId = new Map(destinations.map((account) => [account.id, account]));
+    const id = randomUUID();
+    const generatedAt = new Date();
+    const rows = plan.instructions.map((instruction) => ({ ...instruction, id: randomUUID() }));
+    const snapshot: PaymentExportSnapshot = {
+      id,
+      agencyId: context.agencyId,
+      generatedAt: generatedAt.toISOString(),
+      currency: 'PHP',
+      period,
+      controls: plan.controls,
+      ...(retry && {
+        retry: {
+          supersedesPaymentExportId: retry.supersedesPaymentExportId,
+          priorPaymentInstructionId: retry.priorPaymentInstructionId,
+          reason: retry.reason,
+        },
+      }),
+      instructions: rows.map((row) => ({
+        ...row,
+        accountIdentifier: this.accountIdentifier(byId.get(row.payrollBankAccountId)!),
+      })),
+    };
+    const checksum = sha256(renderPaymentExportCsv(snapshot));
+    const summaryContent = renderPaymentExportSummary(snapshot, plan.excluded, checksum);
+
+    const contract = await transaction.payrollExportContractVersion.findUniqueOrThrow({
+      where: { code_version: PAYMENT_EXPORT_CONTRACT },
+      select: { id: true },
+    });
+    const created = await transaction.paymentExport.create({
+      data: {
         id,
         agencyId: context.agencyId,
-        generatedAt: generatedAt.toISOString(),
+        payrollPeriodId: period.id,
+        supersedesPaymentExportId: retry?.supersedesPaymentExportId ?? null,
+        calculationVersion: period.calculationVersion,
+        paymentDate: new Date(`${period.paymentDate}T00:00:00.000Z`),
+        payrollExportContractVersionId: contract.id,
         currency: 'PHP',
-        period,
-        controls: plan.controls,
-        instructions: rows.map((row) => ({
-          ...row,
-          accountIdentifier: this.accountIdentifier(byId.get(row.payrollBankAccountId)!),
-        })),
-      };
-      const checksum = sha256(renderPaymentExportCsv(snapshot));
-      const summaryContent = renderPaymentExportSummary(snapshot, plan.excluded, checksum);
-
-      const contract = await transaction.payrollExportContractVersion.findUniqueOrThrow({
-        where: { code_version: PAYMENT_EXPORT_CONTRACT },
-        select: { id: true },
-      });
-      const created = await transaction.paymentExport.create({
-        data: {
-          id,
-          agencyId: context.agencyId,
-          payrollPeriodId: periodId,
-          calculationVersion: period.calculationVersion,
-          paymentDate: new Date(`${period.paymentDate}T00:00:00.000Z`),
-          payrollExportContractVersionId: contract.id,
-          currency: 'PHP',
-          generatedByMembershipId: context.membershipId,
-          generatedAt,
-          checksum,
-          summaryContent,
-          summaryChecksum: sha256(summaryContent),
-          ...plan.controls,
-        },
-      });
-      await transaction.paymentInstruction.createMany({
-        data: rows.map((row) => ({ ...row, agencyId: context.agencyId, paymentExportId: id })),
-      });
-      await transaction.auditEvent.create({
-        data: {
-          ...audit(context, PAYMENT_EXPORT_GENERATED, id),
-          newStatus: 'GENERATED',
-          metadata: {
-            payrollPeriodId: periodId,
-            calculationVersion: period.calculationVersion,
-            contract: PAYMENT_EXPORT_CONTRACT,
-            checksum,
-            summaryChecksum: created.summaryChecksum,
-            ...plan.controls,
-          },
-          // One Payment Export per period: generating again returns it.
-          idempotencyKey: 'generated',
-        },
-      });
-      return toView(created, await readInstructions(transaction, created));
+        generatedByMembershipId: context.membershipId,
+        generatedAt,
+        checksum,
+        summaryContent,
+        summaryChecksum: sha256(summaryContent),
+        ...plan.controls,
+      },
     });
+    await transaction.paymentInstruction.createMany({
+      data: rows.map((row) => ({
+        ...row,
+        agencyId: context.agencyId,
+        paymentExportId: id,
+        priorPaymentInstructionId: retry?.priorPaymentInstructionId ?? null,
+        retryReason: retry?.reason ?? null,
+      })),
+    });
+    await transaction.auditEvent.create({
+      data: {
+        ...audit(context, retry ? PAYMENT_EXPORT_RETRY_GENERATED : PAYMENT_EXPORT_GENERATED, id),
+        newStatus: 'GENERATED',
+        reason: retry?.reason ?? null,
+        metadata: {
+          payrollPeriodId: period.id,
+          calculationVersion: period.calculationVersion,
+          contract: PAYMENT_EXPORT_CONTRACT,
+          checksum,
+          summaryChecksum: created.summaryChecksum,
+          ...plan.controls,
+          ...(retry && {
+            supersedesPaymentExportId: retry.supersedesPaymentExportId,
+            priorPaymentInstructionId: retry.priorPaymentInstructionId,
+            priorOutcome: retry.priorOutcome,
+            paymentInstructionId: rows[0]!.id,
+          }),
+        },
+        // One original export per period: generating again returns it. A
+        // retry export is generated once, for the attempt it resends.
+        idempotencyKey: 'generated',
+      },
+    });
+    return toView(created, await readInstructions(transaction, created));
   }
 
   /**
@@ -356,6 +496,70 @@ function requirePermission(context: RequestContext, command: string): void {
       'PAYMENT_EXPORT_FORBIDDEN',
     );
   }
+}
+
+/** The parsed reason, after refusing any payee or amount a retry would change. */
+function parseRetry(rawInput: unknown): z.output<typeof paymentRetrySchema> {
+  if (typeof rawInput === 'object' && rawInput !== null) {
+    const changed = PAYEE_OR_AMOUNT_FIELDS.filter((field) => field in rawInput);
+    if (changed.length > 0) {
+      throw new PaymentExportsServiceError(
+        `A retry resends its prior attempt's payee and amount to a corrected destination, so it cannot set ${changed.join(', ')}. A payee or amount change is a Payroll Adjustment against the finalized payroll (ADR 0016); nothing was generated.`,
+        409,
+        'PAYMENT_RETRY_CHANGES_PAYEE_OR_AMOUNT',
+      );
+    }
+  }
+  const parsed = paymentRetrySchema.safeParse(rawInput);
+  if (parsed.success) return parsed.data;
+  const issue = parsed.error.issues[0];
+  throw new PaymentExportsServiceError(
+    `${issue?.path.map(String).join('.') || 'request'}: ${issue?.message ?? 'invalid'}`,
+    400,
+    'INVALID_INPUT',
+  );
+}
+
+/** A plan, or the refusal it raised, as this service's error. */
+function planned(plan: () => PaymentExportPlan): PaymentExportPlan {
+  try {
+    return plan();
+  } catch (error: unknown) {
+    if (error instanceof PaymentExportBlockedError) {
+      throw new PaymentExportsServiceError(error.message, 409, error.code);
+    }
+    throw error;
+  }
+}
+
+type Destination = Awaited<ReturnType<typeof readDestinations>>[number];
+
+/** Every Payroll Bank Account of the Employees, with its dates as ISO text and its ciphertext. */
+async function readDestinations(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  employeeIds: string[],
+) {
+  const accounts = await transaction.payrollBankAccount.findMany({
+    where: { agencyId: context.agencyId, employeeId: { in: employeeIds } },
+    select: {
+      id: true,
+      employeeId: true,
+      status: true,
+      effectiveFrom: true,
+      effectiveTo: true,
+      bankCode: true,
+      accountName: true,
+      maskedAccountNumber: true,
+      encryptedAccountNumber: true,
+      encryptionVersion: true,
+    },
+  });
+  return accounts.map((account) => ({
+    ...account,
+    effectiveFrom: isoDate(account.effectiveFrom),
+    effectiveTo: account.effectiveTo ? isoDate(account.effectiveTo) : null,
+  }));
 }
 
 /** The period, locked until the command commits, so concurrent generations serialize. */
@@ -556,6 +760,7 @@ function toView(row: ExportRow, instructions: InstructionRow[]): PaymentExportVi
   return {
     id: row.id,
     payrollPeriodId: row.payrollPeriodId,
+    supersedesPaymentExportId: row.supersedesPaymentExportId,
     calculationVersion: row.calculationVersion,
     paymentDate: isoDate(row.paymentDate),
     contract: PAYMENT_EXPORT_CONTRACT,
