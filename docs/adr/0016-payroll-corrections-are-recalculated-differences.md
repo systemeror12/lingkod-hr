@@ -1,6 +1,6 @@
 # ADR 0016: Payroll corrections are recalculated differences, and a payroll is voided only before money moves
 
-- Status: Accepted
+- Status: Accepted; amended 2026-11-22 by [ADR 0017](0017-recover-a-negative-adjustment-as-a-coa-deduction-obligation.md) for #648
 - Date: 2026-11-14
 - Scope: how a finalized Payroll Period is corrected (#330)
 
@@ -24,4 +24,4 @@ The rejected alternative was an entered adjustment: a user types the amounts wit
 - Payroll must be able to recalculate a past period for one Employee from the rules and facts on record for its dates.
 - A wrong payroll that has already been paid is never replaced. Replacing it would pay everyone twice and then need netting.
 - The four-value `adjustment_type` goes. Direction is the sign of the difference, and void is not an adjustment.
-- A negative adjustment is a recovery. It stays open until #661 records how an Agency may recover an overpayment.
+- A negative adjustment is a recovery. It stays open until #661 records how an Agency may recover an overpayment. _Amended by [ADR 0017](0017-recover-a-negative-adjustment-as-a-coa-deduction-obligation.md):_ it stays open until a final and executory COA decision is recorded as the Deduction Obligation that recovers it, which posts it.

@@ -147,6 +147,9 @@ export class AuthorizedDeductionsCalculator implements PayrollCalculator {
             payeeName: obligation.payeeName,
             issuerReference: obligation.issuerReference,
             incurredOn: obligation.incurredOn,
+            ...(obligation.payrollAdjustmentId
+              ? { payrollAdjustmentId: obligation.payrollAdjustmentId }
+              : {}),
             priority,
             amountDue: due.toFixed(4),
             notDeductedAmount: notDeducted.toFixed(4),

@@ -9,10 +9,12 @@ import {
   isoDateOf,
   type DeductionPayeeCategory,
 } from '../payroll-rule-versions/national-payroll-rule-versions';
+import { PAYROLL_ADJUSTMENT_NEGATIVE } from '../payroll-calculation/payroll-adjustment-difference';
 import type {
   ChangeDeductionObligationInput,
   EndDeductionObligationInput,
   RecordDeductionObligationInput,
+  RecordRecoveryObligationInput,
 } from './deduction-obligations.schemas';
 
 export type DeductionObligationStatus = 'ACTIVE' | 'SUPERSEDED' | 'ENDED';
@@ -34,6 +36,10 @@ export interface DeductionObligationSummary {
   supersedesObligationId: string | null;
   changeReason: string | null;
   endReason: string | null;
+  /** The negative Payroll Adjustment a COA recovery collects (#648), or null. */
+  payrollAdjustmentId: string | null;
+  /** The `PAYROLL_ADJUSTMENT_NEGATIVE` warning a recovery's balance comes from. */
+  payrollExceptionId: string | null;
 }
 
 export class DeductionObligationsServiceError extends Error {
@@ -66,6 +72,8 @@ const obligationSelect = {
   supersedesObligationId: true,
   changeReason: true,
   endReason: true,
+  payrollAdjustmentId: true,
+  payrollExceptionId: true,
 } satisfies Prisma.DeductionObligationSelect;
 
 type ObligationRow = Prisma.DeductionObligationGetPayload<{ select: typeof obligationSelect }>;
@@ -158,6 +166,103 @@ export class DeductionObligationsService {
     });
   }
 
+  /**
+   * Record the final and executory COA decision that recovers a negative
+   * Payroll Adjustment (#648, ADR 0017), and post the adjustment in the same
+   * transaction. The obligation is payable to NATIONAL_GOVERNMENT_COA_DECISION
+   * for the adjustment's Employee, and its balance is the negative net
+   * difference that the latest calculation carrying the adjustment found and
+   * reported as `PAYROLL_ADJUSTMENT_NEGATIVE`. From then on the obligation
+   * carries the balance: a regular period deducts it by priority and floor
+   * (#634), and a cash payment at the cashier is a change or an end with the
+   * official receipt as its authority.
+   */
+  async recordRecovery(
+    context: RequestContext,
+    payrollAdjustmentId: string,
+    input: RecordRecoveryObligationInput,
+  ): Promise<DeductionObligationSummary> {
+    this.assertPermission(context);
+    return this.inTransaction(context, async (transaction) => {
+      const [adjustment] = await transaction.$queryRaw<{ status: string; employee_id: string }[]>`
+        SELECT "status", "employee_id"::text FROM "payroll_adjustments"
+        WHERE "agency_id" = CAST(${context.agencyId} AS uuid)
+          AND "id" = CAST(${payrollAdjustmentId} AS uuid)
+        FOR UPDATE
+      `;
+      if (!adjustment) {
+        throw new DeductionObligationsServiceError(
+          'The Payroll Adjustment could not be found.',
+          404,
+          'PAYROLL_ADJUSTMENT_NOT_FOUND',
+        );
+      }
+      if (adjustment.status !== 'OPEN') {
+        throw new DeductionObligationsServiceError(
+          `The Payroll Adjustment is ${adjustment.status}. Only an OPEN one is recovered.`,
+          409,
+          'PAYROLL_ADJUSTMENT_NOT_OPEN',
+        );
+      }
+      const recovery = await latestRecoveryAmount(
+        transaction,
+        context.agencyId,
+        payrollAdjustmentId,
+      );
+      await this.assertAuthority(transaction, context, input);
+      const payeeCategory = 'NATIONAL_GOVERNMENT_COA_DECISION';
+      const payeeRuleVersionId = await this.allowedPayeeRuleVersion(
+        transaction,
+        payeeCategory,
+        input.effectiveFrom,
+      );
+      const created = await transaction.deductionObligation.create({
+        data: {
+          agencyId: context.agencyId,
+          employeeId: adjustment.employee_id,
+          payeeCategory,
+          payeeName: input.payeeName,
+          issuerReference: input.issuerReference,
+          incurredOn: dateOf(input.incurredOn),
+          outstandingBalance: recovery.amount,
+          scheduledAmount: new Prisma.Decimal(input.scheduledAmount),
+          authorityDocumentVersionId: input.authorityDocumentVersionId,
+          effectiveFrom: dateOf(input.effectiveFrom),
+          payeeRuleVersionId,
+          status: 'ACTIVE',
+          recordedByMembershipId: context.membershipId,
+          payrollAdjustmentId,
+          payrollExceptionId: recovery.payrollExceptionId,
+        },
+        select: obligationSelect,
+      });
+      await transaction.payrollAdjustment.update({
+        where: { id: payrollAdjustmentId },
+        data: { status: 'POSTED', postedAt: new Date() },
+      });
+      const after = summary(created);
+      await writeAudit(transaction, context, 'DEDUCTION_OBLIGATION_RECORDED', after, {
+        previousStatus: null,
+        reason: null,
+        metadata: {
+          after: { ...after },
+          payrollAdjustment: {
+            id: payrollAdjustmentId,
+            previousStatus: 'OPEN',
+            newStatus: 'POSTED',
+          },
+          recoveryAmountFrom: {
+            payrollExceptionId: recovery.payrollExceptionId,
+            payrollPeriodId: recovery.payrollPeriodId,
+            calculationVersion: recovery.calculationVersion,
+            netDifference: recovery.netDifference,
+          },
+        },
+      });
+      return after;
+    });
+  }
+
   async change(
     context: RequestContext,
     obligationId: string,
@@ -197,6 +302,8 @@ export class DeductionObligationsService {
           status: 'ACTIVE',
           supersedesObligationId: current.id,
           changeReason: input.reason,
+          payrollAdjustmentId: current.payrollAdjustmentId,
+          payrollExceptionId: current.payrollExceptionId,
           recordedByMembershipId: context.membershipId,
         },
         select: obligationSelect,
@@ -360,6 +467,71 @@ export class DeductionObligationsService {
       );
     }
   }
+}
+
+/**
+ * What a recovery collects: the negative net difference of the
+ * `PAYROLL_ADJUSTMENT_NEGATIVE` warning in the latest calculation that
+ * carried the adjustment, if that calculation is its period's current one.
+ * Any other outcome, including a calculation still running, has no amount to
+ * recover yet.
+ */
+async function latestRecoveryAmount(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  payrollAdjustmentId: string,
+) {
+  const [latest] = await transaction.$queryRaw<
+    {
+      payroll_period_id: string;
+      code: string;
+      calculation_version: number;
+      current_version: number;
+      payroll_exception_id: string | null;
+      net_difference: string | null;
+    }[]
+  >`
+    SELECT s."payroll_period_id"::text, p."code"::text, s."calculation_version",
+           p."calculation_version" AS "current_version",
+           x."id"::text AS "payroll_exception_id",
+           x."details" ->> 'netDifference' AS "net_difference"
+    FROM "payroll_rule_snapshot_items" i
+    JOIN "payroll_rule_snapshots" s
+      ON s."agency_id" = i."agency_id" AND s."id" = i."payroll_rule_snapshot_id"
+    JOIN "payroll_periods" p
+      ON p."agency_id" = s."agency_id" AND p."id" = s."payroll_period_id"
+    LEFT JOIN "payroll_exceptions" x
+      ON x."agency_id" = s."agency_id"
+     AND x."payroll_period_id" = s."payroll_period_id"
+     AND x."calculation_version" = s."calculation_version"
+     AND x."exception_type" = ${PAYROLL_ADJUSTMENT_NEGATIVE}
+     AND x."details" ->> 'payrollAdjustmentId' = i."payroll_adjustment_id"::text
+    WHERE i."agency_id" = CAST(${agencyId} AS uuid)
+      AND i."payroll_adjustment_id" = CAST(${payrollAdjustmentId} AS uuid)
+    ORDER BY s."created_at" DESC, s."id" DESC
+    LIMIT 1
+  `;
+  if (
+    !latest ||
+    latest.calculation_version !== latest.current_version ||
+    !latest.payroll_exception_id ||
+    !latest.net_difference
+  ) {
+    throw new DeductionObligationsServiceError(
+      latest
+        ? `The latest calculation that carried the Payroll Adjustment, ${latest.code} version ${latest.calculation_version}, found no negative difference to recover.`
+        : 'No Payroll Period has calculated the Payroll Adjustment yet, so there is no amount to recover.',
+      409,
+      'PAYROLL_ADJUSTMENT_NOT_NEGATIVE',
+    );
+  }
+  return {
+    payrollExceptionId: latest.payroll_exception_id,
+    payrollPeriodId: latest.payroll_period_id,
+    calculationVersion: latest.calculation_version,
+    netDifference: latest.net_difference,
+    amount: new Prisma.Decimal(latest.net_difference).neg(),
+  };
 }
 
 function termsData(input: ChangeDeductionObligationInput | RecordDeductionObligationInput) {

@@ -19,7 +19,9 @@ import {
   changeDeductionObligationSchema,
   deductionObligationIdSchema,
   endDeductionObligationSchema,
+  payrollAdjustmentIdSchema,
   recordDeductionObligationSchema,
+  recordRecoveryObligationSchema,
 } from './deduction-obligations.schemas';
 import {
   DeductionObligationsService,
@@ -71,6 +73,29 @@ export class DeductionObligationsController {
     }
     const input = parse(recordDeductionObligationSchema, body, context);
     return this.run(context, () => this.service.record(context, employee.data, input));
+  }
+
+  /** Record the COA decision that recovers a negative Payroll Adjustment (#648). */
+  @Post(':agencyId/payroll-adjustments/:payrollAdjustmentId/recovery')
+  @RequirePermission('payroll.deductions.manage')
+  async recordRecovery(
+    @Param('agencyId') agencyId: string,
+    @Param('payrollAdjustmentId') payrollAdjustmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ obligation: DeductionObligationSummary }> {
+    this.assertAgency(agencyId, context);
+    const adjustment = payrollAdjustmentIdSchema.safeParse(payrollAdjustmentId);
+    if (!adjustment.success) {
+      throw failure(
+        context,
+        404,
+        'PAYROLL_ADJUSTMENT_NOT_FOUND',
+        'The Payroll Adjustment could not be found.',
+      );
+    }
+    const input = parse(recordRecoveryObligationSchema, body, context);
+    return this.run(context, () => this.service.recordRecovery(context, adjustment.data, input));
   }
 
   @Post(':agencyId/deduction-obligations/:obligationId/change')

@@ -1498,6 +1498,8 @@ CREATE TABLE deduction_obligations (
   recorded_at timestamptz NOT NULL DEFAULT now(),
   ended_by_membership_id uuid,
   ended_at timestamptz,
+  payroll_adjustment_id uuid,
+  payroll_exception_id uuid,
   CHECK (effective_to IS NULL OR effective_to >= effective_from),
   CHECK ((status = 'ENDED') = (effective_to IS NOT NULL)),
   CHECK ((supersedes_obligation_id IS NOT NULL) = (change_reason IS NOT NULL)),
@@ -1511,8 +1513,19 @@ CREATE TABLE deduction_obligations (
     REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, ended_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
+  CHECK ((payroll_adjustment_id IS NULL) = (payroll_exception_id IS NULL)
+         AND (payroll_adjustment_id IS NULL
+              OR payee_category = 'NATIONAL_GOVERNMENT_COA_DECISION')),
+  FOREIGN KEY (agency_id, payroll_adjustment_id, employee_id)
+    REFERENCES payroll_adjustments (agency_id, id, employee_id),
+  FOREIGN KEY (agency_id, payroll_exception_id)
+    REFERENCES payroll_exceptions (agency_id, id),
   UNIQUE (agency_id, id)
 );
+
+CREATE UNIQUE INDEX deduction_obligations_one_per_adjustment_key
+  ON deduction_obligations (payroll_adjustment_id)
+  WHERE payroll_adjustment_id IS NOT NULL AND supersedes_obligation_id IS NULL;
 ```
 
 A Deduction Obligation is an Employee's issuer-validated loan or deduction:
@@ -1543,6 +1556,42 @@ incurred, and does not start earlier. A deferred trigger refuses a
 no row is deleted. A partial unique index allows one `ACTIVE` row per Employee,
 payee category, payee name, and issuer reference. Record, change, and end need
 `payroll.deductions.manage` held Agency-wide and write an Audit Event.
+
+A COA recovery is a Deduction Obligation that names the negative Payroll
+Adjustment it recovers (#648,
+[ADR 0017](../../adr/0017-recover-a-negative-adjustment-as-a-coa-deduction-obligation.md)).
+Migration 0201 adds `payroll_adjustment_id` and `payroll_exception_id`. The
+command `POST /agencies/:agencyId/payroll-adjustments/:payrollAdjustmentId/recovery`
+records it from the final and executory COA decision: its payee, its
+reference, the date it became final and executory as `incurred_on`, the whole
+amount or the monthly amount COA approved as `scheduled_amount`, its
+`effective_from`, and the Notice of Finality of Decision or COA Order of
+Execution as the authority. The payee category is always
+`NATIONAL_GOVERNMENT_COA_DECISION`, and the Employee is the adjustment's. The
+recorder enters no balance. It is the negative `netDifference` of the
+`PAYROLL_ADJUSTMENT_NEGATIVE` warning in the latest calculation that carried
+the adjustment, which `payroll_exception_id` names. The command refuses with
+`PAYROLL_ADJUSTMENT_NOT_NEGATIVE` when no calculation has carried the
+adjustment, or the latest one found no negative difference or is not its
+period's current version, and with `PAYROLL_ADJUSTMENT_NOT_OPEN` once the
+adjustment is no longer `OPEN`. It posts the adjustment in the same
+transaction and writes one `DEDUCTION_OBLIGATION_RECORDED` Audit Event naming
+the adjustment and the warning.
+
+The schema holds the link. A foreign key keeps the obligation's Agency and
+Employee the adjustment's. The partial unique index allows one obligation
+chain per adjustment: its first version names it, and a successor keeps both
+columns. A `BEFORE INSERT` trigger locks the adjustment of a first version
+and refuses one that is not `OPEN`, and it refuses a warning that is not a
+`PAYROLL_ADJUSTMENT_NEGATIVE` of the current calculation version of its
+period, naming the adjustment and the Employee, or whose negated
+`netDifference` is not the balance.
+
+No issuer reports a recovery's balance. The calculation applies the version's
+balance less what `FINALIZED` results deducted against that version, and a
+version fully collected is not due. A cash payment at the agency cashier is a
+change with the official receipt as its authority and the balance still owed,
+or an end.
 
 ```sql
 CREATE TABLE loan_deduction_lines (
@@ -1585,7 +1634,8 @@ every date of the month (FY 2026 GAA sec. 62,
   net pay at the floor, and the rest is its `not_deducted_amount`.
 
 A deducted amount is also a `LOAN_DEDUCTION` Payroll Line, so the result's
-totals include it. A stopped amount raises the `NET_PAY_FLOOR_STOPPED_DEDUCTION`
+totals include it. A recovery's line also names its `payrollAdjustmentId` in
+`source_snapshot`. A stopped amount raises the `NET_PAY_FLOOR_STOPPED_DEDUCTION`
 warning, which lists each obligation and the amount not taken; it stays owed.
 No version in effect on every date, a version that changes inside the month,
 and an obligation whose payee category the version does not allow block the
@@ -1738,7 +1788,7 @@ CREATE TABLE payroll_adjustments (
   posted_by_payroll_period_id uuid,
   posted_at timestamptz,
   cancelled_at timestamptz,
-  CHECK ((status = 'POSTED') = (posted_by_payroll_period_id IS NOT NULL)),
+  CHECK (posted_by_payroll_period_id IS NULL OR status = 'POSTED'),
   CHECK ((status = 'POSTED') = (posted_at IS NOT NULL)),
   CHECK ((status = 'CANCELLED') = (cancelled_at IS NOT NULL)),
   FOREIGN KEY (agency_id, original_payroll_period_id)
@@ -1747,7 +1797,8 @@ CREATE TABLE payroll_adjustments (
     REFERENCES payroll_periods (agency_id, id),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
-  UNIQUE (agency_id, id)
+  UNIQUE (agency_id, id),
+  UNIQUE (agency_id, id, employee_id)
 );
 
 CREATE UNIQUE INDEX payroll_adjustments_one_open_key
@@ -1822,6 +1873,21 @@ and never below the net-take-home floor. These tables do not yet hold that
 decision, an approved monthly amount, or an adjustment settled across more
 than one period. #648 adds them. Voiding the original period cancels its open
 adjustments, and voiding a period that carried one returns it to `OPEN`.
+
+#648 records that decision as a Deduction Obligation that names the
+adjustment (section 9,
+[ADR 0017](../../adr/0017-recover-a-negative-adjustment-as-a-coa-deduction-obligation.md)).
+Recording it posts the adjustment with no `posted_by_payroll_period_id`, since
+no period's lines carry it, and the obligation then carries the balance
+across as many periods as it takes. Until it is recorded the adjustment stays
+`OPEN` and each carrying period writes the warning, as above. Migration 0201
+relaxes the posting CHECK to match and splits the mutation trigger: this
+posting goes to its own guard, which allows only `status` and `posted_at` to
+change, in the transaction that records the obligation's first version.
+Every other change still goes to the guard of migration 0190. A later
+recalculation of the same period and Employee counts a recovered adjustment's
+difference, the warning's lines, as already paid back, so the overpayment is
+not found again.
 
 Migration 0190 creates both tables (#356) with forced RLS under the Agency
 policy. `hris_app` may insert both and update only an adjustment's `status`,

@@ -318,9 +318,10 @@ async function consumeSources(
 /**
  * Post every Payroll Adjustment the version's snapshot carried whose Employee
  * has a result in the version, unless the calculation found its difference
- * negative, which stays OPEN (#648). An Employee held out of this period has
- * no result, so their carried adjustments stay OPEN too. Each must still be
- * OPEN: one another payroll posted first refuses the finalization.
+ * negative, which stays OPEN until its COA recovery is recorded (ADR 0017).
+ * An Employee held out of this period has no result, so their carried
+ * adjustments stay OPEN too. Each must still be OPEN: one another payroll
+ * posted first refuses the finalization.
  */
 async function postAdjustments(
   transaction: Prisma.TransactionClient,

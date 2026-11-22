@@ -108,6 +108,12 @@ export interface DeductionObligationDue {
   incurredOn: string;
   outstandingBalance: string;
   scheduledAmount: string;
+  /**
+   * The negative Payroll Adjustment a COA recovery collects (#648). Its
+   * `outstandingBalance` is already less what finalized payrolls deducted
+   * against this version, since no issuer reports the balance.
+   */
+  payrollAdjustmentId?: string;
 }
 
 /**

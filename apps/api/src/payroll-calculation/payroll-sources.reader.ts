@@ -475,6 +475,10 @@ async function originalSourceIdsInTransaction(
  * recorded by the cutoff that started by `periodTo`, has not ended before it,
  * and has no successor recorded by the cutoff that started by then. An end
  * recorded after the cutoff is ignored, because ending changes the row in place.
+ *
+ * A COA recovery of a Payroll Adjustment (#648, ADR 0017) has no issuer to
+ * report its balance, so its balance is the version's less what `FINALIZED`
+ * results deducted against that version, and one fully collected is not due.
  */
 async function deductionObligationsInTransaction(
   transaction: Prisma.TransactionClient,
@@ -498,6 +502,7 @@ async function deductionObligationsInTransaction(
       effectiveTo: true,
       endedAt: true,
       supersedesObligationId: true,
+      payrollAdjustmentId: true,
     },
   });
   const superseded = new Set(started.flatMap((row) => row.supersedesObligationId ?? []));
@@ -507,18 +512,42 @@ async function deductionObligationsInTransaction(
     const effectiveTo = endedBy(row);
     return !superseded.has(row.id) && (effectiveTo === null || effectiveTo >= on);
   });
+  const recoveryIds = inEffect.flatMap((row) => (row.payrollAdjustmentId ? [row.id] : []));
+  const collected = new Map(
+    recoveryIds.length === 0
+      ? []
+      : (
+          await transaction.$queryRaw<{ id: string; deducted: Prisma.Decimal }[]>`
+            SELECT l."deduction_obligation_id"::text AS "id", sum(l."deducted_amount") AS "deducted"
+            FROM "loan_deduction_lines" l
+            JOIN "payroll_employees" e
+              ON e."agency_id" = l."agency_id" AND e."id" = l."payroll_employee_id"
+            WHERE l."agency_id" = CAST(${agencyId} AS uuid)
+              AND l."deduction_obligation_id" = ANY(CAST(${recoveryIds} AS uuid[]))
+              AND e."status" = 'FINALIZED'
+            GROUP BY 1
+          `
+        ).map((row) => [row.id, new Prisma.Decimal(row.deducted)]),
+  );
   return (employeeId) =>
     inEffect
       .filter((row) => row.employeeId === employeeId)
-      .map((row) => ({
-        id: row.id,
-        payeeCategory: row.payeeCategory as DeductionPayeeCategory,
-        payeeName: row.payeeName,
-        issuerReference: row.issuerReference,
-        incurredOn: row.incurredOn.toISOString().slice(0, 10),
-        outstandingBalance: row.outstandingBalance.toFixed(4),
-        scheduledAmount: row.scheduledAmount.toFixed(4),
-      }));
+      .flatMap((row) => {
+        const balance = row.outstandingBalance.sub(collected.get(row.id) ?? 0);
+        if (!balance.gt(0)) return [];
+        return [
+          {
+            id: row.id,
+            payeeCategory: row.payeeCategory as DeductionPayeeCategory,
+            payeeName: row.payeeName,
+            issuerReference: row.issuerReference,
+            incurredOn: row.incurredOn.toISOString().slice(0, 10),
+            outstandingBalance: balance.toFixed(4),
+            scheduledAmount: row.scheduledAmount.toFixed(4),
+            ...(row.payrollAdjustmentId ? { payrollAdjustmentId: row.payrollAdjustmentId } : {}),
+          },
+        ];
+      });
 }
 
 /**
