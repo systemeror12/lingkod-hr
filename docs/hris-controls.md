@@ -1872,6 +1872,11 @@ GSIS, PhilHealth, Pag-IBIG, and Employees' Compensation Remittance Schedules
 of a `FINALIZED` period: Structured Exports for review that file and remit
 nothing (payroll-schema.md §12, #354).
 
+It also generates and reads the Tax Summary, the Loan Remittance Summary by
+payee, and the Deduction Register of a `FINALIZED` period: Structured
+Exports for review that are no BIR form and file or remit nothing
+(payroll-schema.md §12, #646).
+
 `payroll.accounting_exports.generate`, held Agency-wide, generates the
 Finalized Payroll Accounting Support Export of a `FINALIZED` period and
 downloads it. `payroll.export_detail.read` downloads its Employee Detail
