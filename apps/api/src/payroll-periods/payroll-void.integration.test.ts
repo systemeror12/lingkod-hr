@@ -932,17 +932,19 @@ describe.skipIf(!enabled)('Payroll void and replace in PostgreSQL', () => {
         reason: 'The leave was cancelled after payroll.',
       })
     ).adjustments;
-    await asApp(tenant, (transaction) =>
-      transaction.payrollAdjustmentCause.create({
-        data: {
+    await expect(
+      withDatabaseContext({ agencyId }, (transaction) =>
+        inputs.withdrawInTransaction(transaction, {
           agencyId,
-          payrollAdjustmentId: againstMarch!.payrollAdjustmentId,
-          origin: 'SOURCE_CORRECTION',
+          sourceModule: 'LEAVE',
           payrollInputId: setup.payrollInputId,
-          sourceCorrectionKey: `leave-cancellation:${suffix}`,
-        },
-      }),
-    );
+          correctionKey: `leave-cancellation:${suffix}`,
+        }),
+      ),
+    ).resolves.toMatchObject({
+      outcome: 'DEFERRED',
+      payrollAdjustmentId: againstMarch!.payrollAdjustmentId,
+    });
     await expect(
       asApp(tenant, (transaction) =>
         transaction.payrollAdjustment.update({

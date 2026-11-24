@@ -86,8 +86,9 @@ export interface AgencyPayrollSources {
  * For every period it reads each Employee's tax figures from the Agency's
  * finalized payrolls of the tax year, the withholding tax's year to date.
  * A recalculation of a finalized period (`scope.original`) reads instead the
- * inputs and facts its lines rest on, whatever their status, and no deficit
- * charges: its finalization already settled them.
+ * inputs and facts its lines rest on, whatever their status, less any input a
+ * source has since withdrawn (#650), and no deficit charges: its finalization
+ * already settled them.
  * For a regular period it reads each Employee's Deduction Obligations in
  * effect on the period's last day, as they stood at the cutoff, and the
  * separation that ends the Employee's service in the period, if any.
@@ -442,7 +443,12 @@ export class PayrollSourcesReader {
   }
 }
 
-/** The Payroll Inputs and Attendance Payroll Facts a finalized version's own lines rest on. */
+/**
+ * The Payroll Inputs and Attendance Payroll Facts a finalized version's own
+ * lines rest on, less each input a source withdrew after that payroll
+ * consumed it: its `SOURCE_CORRECTION` cause asks the recalculation to leave
+ * it out (#650).
+ */
 async function originalSourceIdsInTransaction(
   transaction: Prisma.TransactionClient,
   agencyId: string,
@@ -460,6 +466,12 @@ async function originalSourceIdsInTransaction(
       AND e."payroll_period_id" = CAST(${original.payrollPeriodId} AS uuid)
       AND e."calculation_version" = ${original.calculationVersion}
       AND l."payroll_adjustment_id" IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "payroll_adjustment_causes" c
+        WHERE c."agency_id" = s."agency_id"
+          AND c."origin" = 'SOURCE_CORRECTION'
+          AND c."payroll_input_id" = s."payroll_input_id"
+      )
   `;
   return {
     payrollInputIds: sources.flatMap((source) => source.payroll_input_id ?? []),

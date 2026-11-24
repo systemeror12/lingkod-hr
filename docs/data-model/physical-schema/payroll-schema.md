@@ -440,9 +440,20 @@ In the second case the withdrawal answers `WITHDRAWN`, and in the same
 transaction writes a `PAYROLL_INPUT_WITHDRAWN` blocking exception on the
 current calculation version of each live period (section 10). The input's
 payload is never edited, and no correction record links to it: the next
-calculation version reads only `PENDING` inputs. Until #650 builds the third
-case, Payroll refuses it as `RETRYABLE_FAILURE` with
-`PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE`, and changes nothing.
+calculation version reads only `PENDING` inputs.
+
+In the third case (#650) the input and its finalized payroll stay as they
+are. Payroll opens the Employee's Payroll Adjustment against that payroll, or
+joins the `OPEN` one, with a `SOURCE_CORRECTION` cause naming the input and
+the source's key (section 10), and answers `DEFERRED` with the adjustment's
+identifier, original period, and status. A retry under the same key answers
+`ALREADY_DEFERRED` with the adjustment's current status, and another key is
+refused. A replacement may name the deferred input. The withdrawal locks the
+consuming period `FOR SHARE` before the input, as a void does, so a void
+either returned the input to `PENDING` first, and the second case answers, or
+waits and then cancels the input under the cause's key. A cause that would
+join an adjustment a live period already carries is refused as
+`RETRYABLE_FAILURE` with `PAYROLL_ADJUSTMENT_IN_PAYROLL`.
 
 For a Leave Monetization input, Payroll resolves the authoritative salary source
 and computes `amount`; Leave may not supply either as an unrestricted value. The
@@ -1955,7 +1966,9 @@ when the Employee already has another `OPEN` adjustment against the same
 original, whose recalculation counts the whole difference. A cause joins only an `OPEN` adjustment, which it locks `FOR SHARE`,
 so a posting waits for it or it for the posting, and a `PAYROLL_HOLD` cause
 only in the finalization of the held period, naming that period's active hold
-of the Employee. Causes are immutable. `SOURCE_CORRECTION` arrives with #650.
+of the Employee. Causes are immutable. A `SOURCE_CORRECTION` cause is written
+by a source's withdrawal of an input the original consumed (#650, section 4),
+and the carrying recalculation leaves that input out.
 
 `RECALCULATION` is the command
 `POST /agencies/:agencyId/payroll-periods/:periodId/adjustments`, with a

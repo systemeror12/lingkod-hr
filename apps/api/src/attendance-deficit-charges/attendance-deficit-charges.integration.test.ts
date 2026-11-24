@@ -676,7 +676,9 @@ it.skipIf(!enabled)(
     expect(charged.charges.map((charge) => charge.unpaidQuantity)).toEqual(['0.000', '0.046']);
     expect(await balance(accountId)).toBe('0.000');
 
-    // A consumed remainder cannot be withdrawn yet, so the adjustment rolls back.
+    // A remainder consumed by a payroll that is not FINALIZED (here, no period
+    // at all) is refused as retryable, so the adjustment rolls back. A finalized
+    // payroll's consumption defers to a Payroll Adjustment instead (#650).
     await seed((transaction) =>
       transaction.payrollInput.updateMany({
         where: { agencyId: tenant.agency.id },
