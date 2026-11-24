@@ -3554,26 +3554,18 @@ async function seedPayslipReleaseFixture(): Promise<void> {
  * verified account sealed with this run's `DATA_ENCRYPTION_KEY`; the other has no account, so the
  * API blocks its export. Each run clears the exports, outcomes, and corrected accounts the spec
  * leaves. The amount is a fixture and establishes no rule.
- *
- * hris-controls.md §6.10 marks `payroll.periods.read` R for the Cashier, but no migration grants
- * the `cashier` role it yet, and the Payroll workspace needs it. Until one does, an Agency role of
- * this fixture grants the Cashier that one read.
  */
 async function seedPaymentExportFixture(): Promise<void> {
   const fixture = paymentExportFixture;
   const agencyId = fixture.agencyId;
   const role = (code: string) =>
     prisma.role.findFirstOrThrow({ where: { agencyId: null, code, status: 'ACTIVE' } });
-  const [cashierRole, preparerRole, approverRole, clothing, periodsRead] = await Promise.all([
+  const [cashierRole, preparerRole, approverRole, clothing] = await Promise.all([
     role('cashier'),
     role('payroll_preparer'),
     role('payroll_approver'),
     prisma.payComponent.findUniqueOrThrow({
       where: { code: 'CLOTHING_ALLOWANCE' },
-      select: { id: true },
-    }),
-    prisma.permission.findUniqueOrThrow({
-      where: { code: 'payroll.periods.read' },
       select: { id: true },
     }),
   ]);
@@ -3604,23 +3596,16 @@ async function seedPaymentExportFixture(): Promise<void> {
     await transaction.payrollPeriodActor.deleteMany({ where });
     await transaction.payrollPeriodComponent.deleteMany({ where });
     await transaction.payrollPeriod.deleteMany({ where });
+    // Each run assigns the fixture's roles afresh.
+    await transaction.membershipRole.deleteMany({ where });
+    await transaction.rolePermission.deleteMany({ where: { role: { agencyId } } });
+    await transaction.role.deleteMany({ where });
     await transaction.agencyMembership.updateMany({ where, data: { employeeId: null } });
     await transaction.employee.deleteMany({ where });
   });
 
-  const periodReader =
-    (await prisma.role.findFirst({ where: { agencyId, code: 'e2e_cashier_period_read' } })) ??
-    (await prisma.role.create({
-      data: {
-        agencyId,
-        code: 'e2e_cashier_period_read',
-        name: 'Cashier period read (E2E, until a migration grants it)',
-        status: 'ACTIVE',
-        permissions: { create: { permissionId: periodsRead.id, scopePolicy: 'AGENCY' } },
-      },
-    }));
   const people = [
-    { ...fixture.cashier, roleIds: [cashierRole.id, periodReader.id] },
+    { ...fixture.cashier, roleIds: [cashierRole.id] },
     { ...fixture.preparer, roleIds: [preparerRole.id] },
     { ...fixture.approver, roleIds: [approverRole.id] },
   ];
