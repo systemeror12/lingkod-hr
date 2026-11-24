@@ -24,6 +24,7 @@ import {
   PaymentExportsService,
   PaymentExportsServiceError,
   type PaymentExportArtifact,
+  type PaymentExportRecord,
   type PaymentExportView,
 } from './payment-exports.service';
 
@@ -37,6 +38,20 @@ export class PaymentExportsController {
     @Inject(DisbursementOutcomesService)
     private readonly outcomes: DisbursementOutcomesService,
   ) {}
+
+  /** The period's Payment Exports, each instruction with its Disbursement Outcomes in order. */
+  @Get(':agencyId/payroll-periods/:periodId/payment-exports')
+  @RequirePermission('payroll.payment_exports.generate')
+  @Header('Cache-Control', 'no-store')
+  async list(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ exports: PaymentExportRecord[] }> {
+    assertAgency(agencyId, context);
+    const id = parseId(periodId, context, 'PAYROLL_PERIOD_NOT_FOUND', 'The Payroll Period');
+    return { exports: await translate(context, () => this.service.list(context, id)) };
+  }
 
   /** Generate the Payment Export of a FINALIZED period; generating again returns the same one. */
   @Post(':agencyId/payroll-periods/:periodId/payment-exports')
