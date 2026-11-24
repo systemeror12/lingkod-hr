@@ -48,6 +48,20 @@ export class AccountingSupportExportsController {
     return { export: await translate(context, () => this.service.generate(context, id)) };
   }
 
+  /** The period's export with its outcomes, or null when none has been generated. */
+  @Get(ROUTE)
+  @RequirePermission('payroll.accounting_exports.generate')
+  @Header('Cache-Control', 'no-store')
+  async read(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ export: AccountingSupportExportView | null }> {
+    assertAgency(agencyId, context);
+    const id = parseId(periodId, context, 'PAYROLL_PERIOD_NOT_FOUND', 'The Payroll Period');
+    return { export: await translate(context, () => this.service.read(context, id)) };
+  }
+
   /** Download the export as canonical JSON; audited, and not an outcome. */
   @Get(`${ROUTE}/:exportId/content`)
   @RequirePermission('payroll.accounting_exports.generate')

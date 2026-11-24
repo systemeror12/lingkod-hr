@@ -3,6 +3,7 @@ import { PayrollReports } from '../../../components/payroll-reports';
 import { ShellState } from '../../../components/shell-state';
 import { getAgencyJson } from '../../../lib/payroll-page-data';
 import type { PayrollPeriodList } from '../../../lib/payroll-periods';
+import { canReadPayrollReports } from '../../../lib/navigation';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 
 export const metadata: Metadata = { title: 'Payroll Reports' };
@@ -16,15 +17,10 @@ const forbidden = (
   />
 );
 
-/** Payroll → Reports: one Finalized period's outputs. Today it lists the Payment Export. */
+/** Payroll → Reports: one Finalized period's outputs, each behind its own permission. */
 export default async function PayrollReportsPage() {
   const session = await getActiveSession();
-  if (
-    !hasPermission(session, 'payroll.periods.read') ||
-    !hasPermission(session, 'payroll.payment_exports.generate')
-  ) {
-    return forbidden;
-  }
+  if (!canReadPayrollReports(session)) return forbidden;
 
   const list = await getAgencyJson(session, '/payroll-periods');
   if (list.status === 403) return forbidden;
@@ -34,7 +30,10 @@ export default async function PayrollReportsPage() {
   return (
     <PayrollReports
       agencyId={session.agencyId}
+      canGenerateAccountingExport={hasPermission(session, 'payroll.accounting_exports.generate')}
       canGeneratePaymentExport={hasPermission(session, 'payroll.payment_exports.generate')}
+      canGenerateRegisters={hasPermission(session, 'payroll.registers.generate')}
+      canReadEmployeeDetail={hasPermission(session, 'payroll.export_detail.read')}
       periods={periods.filter((period) => period.status === 'FINALIZED')}
     />
   );

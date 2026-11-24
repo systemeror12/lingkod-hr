@@ -25,6 +25,7 @@ describe('AccountingSupportExportsController', () => {
         AccountingSupportExportsController.prototype[route],
       );
     expect(required('generate')).toEqual(['payroll.accounting_exports.generate']);
+    expect(required('read')).toEqual(['payroll.accounting_exports.generate']);
     expect(required('downloadExport')).toEqual(['payroll.accounting_exports.generate']);
     expect(required('downloadEmployeeDetail')).toEqual(['payroll.export_detail.read']);
     expect(required('recordOutcome')).toEqual(['payroll.export_outcomes.record']);

@@ -299,6 +299,34 @@ export class AccountingSupportExportsService {
     });
   }
 
+  /**
+   * The period's export with its outcomes, or null when none has been generated yet. Writes
+   * nothing; it carries neither file's content.
+   */
+  async read(
+    context: RequestContext,
+    periodId: string,
+  ): Promise<AccountingSupportExportView | null> {
+    requirePermission(context, 'generate', 'Reading a Finalized Payroll Accounting Support Export');
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const period = await transaction.payrollPeriod.findFirst({
+        where: { agencyId: context.agencyId, id: periodId },
+        select: { id: true },
+      });
+      if (!period) {
+        throw new AccountingSupportExportsServiceError(
+          'The Payroll Period could not be found.',
+          404,
+          'PAYROLL_PERIOD_NOT_FOUND',
+        );
+      }
+      const stored = await transaction.finalizedPayrollAccountingSupportExport.findUnique({
+        where: { payrollPeriodId: periodId },
+      });
+      return stored && toView(stored, await readOutcomes(transaction, stored));
+    });
+  }
+
   /** Download the export, which carries no employee-level detail; audited, and not an outcome. */
   async downloadExport(
     context: RequestContext,

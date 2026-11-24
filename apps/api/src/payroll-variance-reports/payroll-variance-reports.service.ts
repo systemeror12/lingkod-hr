@@ -53,13 +53,7 @@ export class PayrollVarianceReportsService {
    * already generated unchanged and write nothing.
    */
   async generate(context: RequestContext, periodId: string): Promise<PayrollVarianceReportView> {
-    if (!holdsAgencyWide(context, PERMISSION)) {
-      throw new PayrollVarianceReportsServiceError(
-        `Generating a Payroll Variance and Exception Report needs the ${PERMISSION} permission for the whole Agency.`,
-        403,
-        'PAYROLL_VARIANCE_REPORT_FORBIDDEN',
-      );
-    }
+    requirePermission(context, 'Generating a Payroll Variance and Exception Report');
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const period = await lockFinalizedPeriod(transaction, context, periodId);
       const stored = await transaction.payrollVarianceReport.findUnique({
@@ -124,6 +118,41 @@ export class PayrollVarianceReportsService {
       });
       return toView(created);
     });
+  }
+
+  /** The period's report, or null when none has been generated yet. Writes nothing. */
+  async read(context: RequestContext, periodId: string): Promise<PayrollVarianceReportView | null> {
+    requirePermission(context, 'Reading a Payroll Variance and Exception Report');
+    const stored = await withDatabaseContext(
+      requestDatabaseContext(context),
+      async (transaction) => {
+        const period = await transaction.payrollPeriod.findFirst({
+          where: { agencyId: context.agencyId, id: periodId },
+          select: { id: true },
+        });
+        if (!period) {
+          throw new PayrollVarianceReportsServiceError(
+            'The Payroll Period could not be found.',
+            404,
+            'PAYROLL_PERIOD_NOT_FOUND',
+          );
+        }
+        return transaction.payrollVarianceReport.findUnique({
+          where: { payrollPeriodId: periodId },
+        });
+      },
+    );
+    return stored && toView(stored);
+  }
+}
+
+function requirePermission(context: RequestContext, command: string): void {
+  if (!holdsAgencyWide(context, PERMISSION)) {
+    throw new PayrollVarianceReportsServiceError(
+      `${command} needs the ${PERMISSION} permission for the whole Agency.`,
+      403,
+      'PAYROLL_VARIANCE_REPORT_FORBIDDEN',
+    );
   }
 }
 

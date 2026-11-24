@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { dateLabel } from '../lib/overtime-format';
 import { paymentExportFilePath, type PaymentExportRecord } from '../lib/payment-exports';
+import { outputRequest, OutputRequestError } from '../lib/payroll-outputs';
 import { instantLabel, moneyLabel, type PayrollPeriod } from '../lib/payroll-periods';
+import {
+  AccountingExportRow,
+  DeductionSchedulesRow,
+  RegisterRow,
+  VarianceReportRow,
+} from './payroll-output-rows';
 import { StateSurface } from './state-surface';
 import { Button, buttonVariants } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
@@ -18,32 +25,32 @@ type Outputs =
   | { state: 'error'; message: string }
   | { state: 'ready'; exports: PaymentExportRecord[]; blocked: string | null };
 
-class RequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
-
 const instructionCount = (count: number) =>
   count === 1 ? '1 instruction' : `${count} instructions`;
 
 /**
- * Payroll → Reports (#327): one Finalized period's outputs, each with its status. It lists the
- * Payment Export: generating it, or why the API refused, and each generated export with its
- * controls and its CSV and summary. A superseding retry export is its own row. Generating marks no
- * one paid; Disbursement Outcomes are recorded on each payslip.
+ * Payroll → Reports (#327): one Finalized period's outputs, each with its status, each shown only
+ * to those its permission names. The register and schedules, and the accounting support export,
+ * are one stored output each (payroll-output-rows.tsx). The Payment Export lists each generated
+ * export with its controls and its CSV and summary, or why the API refused; a superseding retry
+ * export is its own row. Generating marks no one paid; Disbursement Outcomes are recorded on each
+ * payslip.
  */
 export function PayrollReports({
   agencyId,
   periods,
+  canGenerateRegisters,
+  canGenerateAccountingExport,
+  canReadEmployeeDetail,
   canGeneratePaymentExport,
 }: {
   agencyId: string;
   /** The Agency's Finalized periods, newest first; only they produce outputs. */
   periods: PayrollPeriod[];
+  /** `payroll.registers.generate`: the register, variance report, and deduction schedules. */
+  canGenerateRegisters: boolean;
+  canGenerateAccountingExport: boolean;
+  canReadEmployeeDetail: boolean;
   canGeneratePaymentExport: boolean;
 }) {
   const [periodId, setPeriodId] = useState(periods[0]?.id ?? '');
@@ -54,23 +61,7 @@ export function PayrollReports({
   const period = periods.find((item) => item.id === periodId);
 
   const request = useCallback(
-    async (path: string, init: RequestInit = {}): Promise<unknown> => {
-      const response = await fetch(`/api/v1/agencies/${agencyId}${path}`, {
-        ...init,
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...init.headers },
-      });
-      const value = (await response.json().catch(() => null)) as {
-        error?: { message?: string };
-      } | null;
-      if (!response.ok) {
-        throw new RequestError(
-          value?.error?.message ?? 'The Payroll request failed.',
-          response.status,
-        );
-      }
-      return value;
-    },
+    (path: string, init?: RequestInit) => outputRequest(agencyId, path, init),
     [agencyId],
   );
 
@@ -96,8 +87,8 @@ export function PayrollReports({
   );
 
   useEffect(() => {
-    if (periodId && !outputs[periodId]) void load(periodId);
-  }, [periodId, outputs, load]);
+    if (canGeneratePaymentExport && periodId && !outputs[periodId]) void load(periodId);
+  }, [canGeneratePaymentExport, periodId, outputs, load]);
 
   async function generate(target: PayrollPeriod): Promise<void> {
     setBusy(true);
@@ -111,7 +102,7 @@ export function PayrollReports({
       );
     } catch (caught: unknown) {
       // A refusal the API explains, such as a missing destination, stores nothing; show it on the row.
-      if (caught instanceof RequestError && caught.status === 409) {
+      if (caught instanceof OutputRequestError && caught.status === 409) {
         await load(target.id, caught.message);
       } else {
         setError(
@@ -155,7 +146,11 @@ export function PayrollReports({
               <strong className="font-[600] text-ink">Payment Export</strong>
             </Td>
             <Td>
-              {current.blocked ? (
+              {busy ? (
+                <span role="status">
+                  <StatusTag tone="warning">Generating…</StatusTag>
+                </span>
+              ) : current.blocked ? (
                 <StatusTag tone="danger">Blocked</StatusTag>
               ) : (
                 <StatusTag tone="neutral">Not generated</StatusTag>
@@ -175,7 +170,11 @@ export function PayrollReports({
                   type="button"
                   variant="primary"
                 >
-                  {current.blocked ? 'Generate again' : 'Generate Payment Export'}
+                  {busy
+                    ? 'Generating…'
+                    : current.blocked
+                      ? 'Generate again'
+                      : 'Generate Payment Export'}
                 </Button>
               ) : null}
             </Td>
@@ -195,7 +194,7 @@ export function PayrollReports({
                 </span>
               </Td>
               <Td>
-                <StatusTag tone="info">Generated</StatusTag>
+                <StatusTag tone="info">Ready</StatusTag>
               </Td>
               <Td>
                 <span className="block text-small text-ink">
@@ -241,9 +240,9 @@ export function PayrollReports({
     <div className="grid gap-5">
       <PageHeader breadcrumbs={[{ label: 'Payroll' }, { label: 'Reports' }]} title="Reports" />
       <p className="m-0 max-w-[760px] text-small text-ink-muted">
-        Each Finalized Payroll Period’s outputs, with their status. Generating the Payment Export
-        hands its instructions off; it marks no one paid. Record each instruction’s Disbursement
-        Outcome on its payslip.
+        Each Finalized Payroll Period’s outputs, with their status. An output reads Ready only once
+        the API has generated it. Generating the Payment Export hands its instructions off; it marks
+        no one paid. Record each instruction’s Disbursement Outcome on its payslip.
       </p>
       {periods.length === 0 ? (
         <StateSurface compact label="Payroll outputs">
@@ -300,7 +299,23 @@ export function PayrollReports({
                     <Th>Files</Th>
                   </tr>
                 </thead>
-                <tbody>{paymentExportRows(period, outputs[period.id])}</tbody>
+                <tbody key={period.id}>
+                  {canGenerateRegisters ? (
+                    <>
+                      <RegisterRow agencyId={agencyId} period={period} />
+                      <VarianceReportRow agencyId={agencyId} period={period} />
+                      <DeductionSchedulesRow agencyId={agencyId} period={period} />
+                    </>
+                  ) : null}
+                  {canGenerateAccountingExport ? (
+                    <AccountingExportRow
+                      agencyId={agencyId}
+                      canReadEmployeeDetail={canReadEmployeeDetail}
+                      period={period}
+                    />
+                  ) : null}
+                  {canGeneratePaymentExport ? paymentExportRows(period, outputs[period.id]) : null}
+                </tbody>
               </Table>
             </Panel>
           ) : null}

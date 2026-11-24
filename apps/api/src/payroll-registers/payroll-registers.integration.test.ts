@@ -397,6 +397,47 @@ describe.skipIf(!enabled)('Payroll Register in PostgreSQL', () => {
     expect(await registersOf(other.agencyId)).toEqual([]);
   });
 
+  it('reads the register only once generated, and links its PDF through an audited access link', async () => {
+    const payroll = await finalizedPayroll('READ', twoEmployees);
+    const other = await finalizedPayroll('READ-OTHER', twoEmployees);
+    const storage = new RecordedStorage();
+    expect(await service(storage).read(payroll.preparer, payroll.periodId)).toBeNull();
+    await expect(service(storage).file(payroll.preparer, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'PAYROLL_REGISTER_NOT_FOUND',
+    });
+
+    const register = await service(storage).generate(payroll.preparer, payroll.periodId);
+    expect(await service(storage).read(payroll.cashier, payroll.periodId)).toEqual(register);
+    const [document] = await registerDocuments(payroll.agencyId);
+    const version = document!.versions[0]!;
+    const { accessUrl, expiresAt } = await service(storage).file(payroll.cashier, payroll.periodId);
+    expect(accessUrl).toBe(`https://storage.example.test/${version.storageKey}`);
+    expect(Date.parse(expiresAt)).toBeGreaterThan(Date.now());
+    const accesses = await admin.auditEvent.findMany({
+      where: { agencyId: payroll.agencyId, action: 'DOCUMENT_ACCESS_LINK_ISSUED' },
+    });
+    expect(accesses).toEqual([
+      expect.objectContaining({
+        actorMembershipId: payroll.cashier.membershipId,
+        entityId: version.id,
+      }),
+    ]);
+    // Reading writes nothing.
+    expect(await generatedAudits(payroll.agencyId)).toHaveLength(1);
+
+    for (const read of ['read', 'file'] as const) {
+      await expect(service(storage)[read](payroll.reader, payroll.periodId)).rejects.toMatchObject({
+        statusCode: 403,
+        code: 'PAYROLL_REGISTER_FORBIDDEN',
+      });
+      await expect(service(storage)[read](other.preparer, payroll.periodId)).rejects.toMatchObject({
+        statusCode: 404,
+        code: 'PAYROLL_PERIOD_NOT_FOUND',
+      });
+    }
+  });
+
   it('keeps a register immutable and in its Agency', async () => {
     const payroll = await finalizedPayroll('GUARD', twoEmployees);
     const other = await finalizedPayroll('GUARD-OTHER', twoEmployees);

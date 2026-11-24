@@ -19,11 +19,20 @@ const context: RequestContext = {
 
 describe('DeductionSummariesController', () => {
   it('needs payroll.registers.generate on every route', () => {
-    for (const route of ['generate', 'read'] as const) {
+    for (const route of ['generate', 'readForPeriod', 'read'] as const) {
       expect(
         Reflect.getMetadata(REQUIRED_PERMISSIONS, DeductionSummariesController.prototype[route]),
       ).toEqual(['payroll.registers.generate']);
     }
+  });
+
+  it('reads the period’s summaries, or null before they are generated', async () => {
+    const service = { readForPeriod: vi.fn().mockResolvedValue(null) };
+    const controller = new DeductionSummariesController(service as never);
+    await expect(controller.readForPeriod(agencyId, periodId, context)).resolves.toEqual({
+      deductionSummaries: null,
+    });
+    expect(service.readForPeriod).toHaveBeenCalledWith(context, periodId);
   });
 
   it('reads the stored summaries of the period', async () => {

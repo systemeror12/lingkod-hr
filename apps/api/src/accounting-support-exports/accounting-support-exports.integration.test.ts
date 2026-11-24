@@ -244,6 +244,26 @@ describe.skipIf(!enabled)('Finalized Payroll Accounting Support Export in Postgr
     expect(stored.content).not.toContain('Accounting Payee');
   });
 
+  it('reads the period’s export only once generated, to the permitted of its own Agency', async () => {
+    const payroll = await finalizedPayroll('READ', specs);
+    const other = await finalizedPayroll('READ-OTHER', specs);
+    expect(await service.read(payroll.generator, payroll.periodId)).toBeNull();
+    const generated = await service.generate(payroll.generator, payroll.periodId);
+    expect(await service.read(payroll.detailReader, payroll.periodId)).toEqual(generated);
+    // Reading is not a download: it writes no Audit Event.
+    expect(
+      await auditOf(payroll.tenant.agency.id, ACCOUNTING_SUPPORT_EXPORT_DOWNLOADED),
+    ).toHaveLength(0);
+    await expect(service.read(payroll.recorder, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'PAYROLL_ACCOUNTING_EXPORT_FORBIDDEN',
+    });
+    await expect(service.read(other.generator, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'PAYROLL_PERIOD_NOT_FOUND',
+    });
+  });
+
   it('refuses a payroll that does not reconcile and stores nothing', async () => {
     const payroll = await finalizedPayroll('UNRECONCILED', [
       specs[0]!,

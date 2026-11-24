@@ -43,6 +43,12 @@ export interface PayrollRegisterView {
   generatedByMembershipId: string;
 }
 
+/** A short-lived signed link to the register's issued PDF. */
+export interface PayrollRegisterFile {
+  accessUrl: string;
+  expiresAt: string;
+}
+
 interface FinalizedPeriod {
   id: string;
   code: string;
@@ -78,13 +84,7 @@ export class PayrollRegistersService {
   constructor(@Inject(DocumentsService) private readonly documents: DocumentsService) {}
 
   async generate(context: RequestContext, periodId: string): Promise<PayrollRegisterView> {
-    if (!holdsAgencyWide(context, PERMISSION)) {
-      throw new PayrollRegistersServiceError(
-        `Generating a Payroll Register needs the ${PERMISSION} permission for the whole Agency.`,
-        403,
-        'PAYROLL_REGISTER_FORBIDDEN',
-      );
-    }
+    requirePermission(context, 'Generating a Payroll Register');
     const prepared = await withDatabaseContext(
       requestDatabaseContext(context),
       async (transaction) => {
@@ -162,6 +162,89 @@ export class PayrollRegistersService {
       });
       return toView(created);
     });
+  }
+
+  /** The period's register, or null when none has been generated yet. Writes nothing. */
+  async read(context: RequestContext, periodId: string): Promise<PayrollRegisterView | null> {
+    requirePermission(context, 'Reading a Payroll Register');
+    const stored = await withDatabaseContext(
+      requestDatabaseContext(context),
+      async (transaction) => {
+        await assertPeriod(transaction, context, periodId);
+        return transaction.payrollRegister.findUnique({ where: { payrollPeriodId: periodId } });
+      },
+    );
+    return stored && toView(stored);
+  }
+
+  /**
+   * A signed link to the period's register PDF, issued, and audited, by the shared document
+   * service. Payroll has checked the permission and that the register is the period's.
+   */
+  async file(context: RequestContext, periodId: string): Promise<PayrollRegisterFile> {
+    requirePermission(context, 'Opening a Payroll Register');
+    const found = await withDatabaseContext(
+      requestDatabaseContext(context),
+      async (transaction) => {
+        await assertPeriod(transaction, context, periodId);
+        const register = await transaction.payrollRegister.findUnique({
+          where: { payrollPeriodId: periodId },
+          select: { documentId: true },
+        });
+        if (!register) return null;
+        const document = await transaction.document.findFirst({
+          where: { agencyId: context.agencyId, id: register.documentId },
+          select: { currentVersionId: true },
+        });
+        return document?.currentVersionId
+          ? { documentId: register.documentId, versionId: document.currentVersionId }
+          : null;
+      },
+    );
+    const access =
+      found &&
+      (await this.documents.issueAccessLinkForPersonnel(
+        context,
+        found.documentId,
+        found.versionId,
+      ));
+    if (!access) {
+      throw new PayrollRegistersServiceError(
+        'The Payroll Register has not been generated.',
+        404,
+        'PAYROLL_REGISTER_NOT_FOUND',
+      );
+    }
+    return { accessUrl: access.accessUrl, expiresAt: access.expiresAt };
+  }
+}
+
+function requirePermission(context: RequestContext, command: string): void {
+  if (!holdsAgencyWide(context, PERMISSION)) {
+    throw new PayrollRegistersServiceError(
+      `${command} needs the ${PERMISSION} permission for the whole Agency.`,
+      403,
+      'PAYROLL_REGISTER_FORBIDDEN',
+    );
+  }
+}
+
+/** The period, if it is the caller's Agency's; otherwise not found. */
+async function assertPeriod(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  periodId: string,
+): Promise<void> {
+  const period = await transaction.payrollPeriod.findFirst({
+    where: { agencyId: context.agencyId, id: periodId },
+    select: { id: true },
+  });
+  if (!period) {
+    throw new PayrollRegistersServiceError(
+      'The Payroll Period could not be found.',
+      404,
+      'PAYROLL_PERIOD_NOT_FOUND',
+    );
   }
 }
 
