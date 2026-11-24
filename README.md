@@ -158,7 +158,12 @@ Certifier), `payroll.budget@example.test` (Budget Officer),
 the Agency `E2E-PAYSLIPS` holds Payroll Period `E2E-PAYSLIP-2849-CLOTHING`,
 Finalized with two Ready payslips. `payslip.approver@example.test` (Payroll
 Approver) releases and withholds them, and `payslip.employee@example.test` and
-`payslip.other@example.test` each read their own once released. The seed
+`payslip.other@example.test` each read their own once released.
+For the Payment Export, the Agency `E2E-PAYMENT-EXPORT` holds two Finalized
+periods, one of them blocked: `payment.cashier@example.test` (Cashier)
+generates exports and records Disbursement Outcomes, and
+`payment.preparer@example.test` (Payroll Preparer) corrects a rejected
+destination. The seed
 refuses to run in production.
 
 To sign in locally:
