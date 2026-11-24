@@ -139,16 +139,19 @@ function services(fixture: AttendanceWorkflowFixture) {
 
 /**
  * A Monday at least a week out and the weekdays after it, in a stretch clear of the
- * fixture calendar's December 25, so every weekday has expected duty.
+ * fixture calendar's December 25, so every weekday has expected duty, and clear of January,
+ * where `credit()`'s next-year COC, effective February 1, has not started yet.
  */
 function workWeek(): (offset: number) => string {
   for (let start = 7; ; start += 1) {
     const monday = manilaDate(start);
     if (new Date(`${monday}T00:00:00.000Z`).getUTCDay() !== 1) continue;
     const day = (offset: number) => manilaDate(start + offset);
-    const year = monday.slice(0, 4);
     if (
-      [0, 7, 14].some((offset) => day(offset) >= `${year}-12-20` && day(offset) <= `${year}-12-31`)
+      [0, 7, 14].some((offset) => {
+        const monthDay = day(offset).slice(5);
+        return monthDay >= '12-20' || monthDay <= '01-31';
+      })
     ) {
       continue;
     }
