@@ -324,6 +324,7 @@ describe.skipIf(!enabled)('Legacy Register Comparison in PostgreSQL', () => {
 
     const { differences, ...summary } = comparison;
     expect(await service.list(period.preparer, period.periodId)).toEqual([summary]);
+    expect(await service.listForAgency(period.preparer)).toEqual([summary]);
     expect(await service.get(period.preparer, period.periodId, comparison.id)).toEqual(comparison);
     expect(differences).toHaveLength(3);
   });
@@ -386,6 +387,9 @@ describe.skipIf(!enabled)('Legacy Register Comparison in PostgreSQL', () => {
       statusCode: 404,
     });
     expect(await comparisonsOf(approved.agencyId)).toEqual([]);
+    // Another Agency's comparison is not in this Agency's list.
+    expect(await service.listForAgency(approved.preparer)).toEqual([]);
+    await expect(service.listForAgency(approved.reader)).rejects.toMatchObject({ statusCode: 403 });
   });
 
   it('keeps comparisons and differences immutable for the application', async () => {

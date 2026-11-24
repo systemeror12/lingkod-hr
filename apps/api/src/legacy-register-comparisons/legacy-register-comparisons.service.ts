@@ -119,18 +119,22 @@ export class LegacyRegisterComparisonsService {
         where: { agencyId: context.agencyId, payrollPeriodId: periodId },
         orderBy: [{ comparedAt: 'asc' }, { id: 'asc' }],
       });
-      const counts = await transaction.legacyRegisterDifference.groupBy({
-        by: ['legacyRegisterComparisonId'],
-        where: {
-          agencyId: context.agencyId,
-          legacyRegisterComparisonId: { in: rows.map((row) => row.id) },
-        },
-        _count: { _all: true },
+      return summaries(transaction, context.agencyId, rows);
+    });
+  }
+
+  /**
+   * The Agency's comparisons of every period, newest first, without their differences, for the
+   * Payroll workspace's list.
+   */
+  async listForAgency(context: RequestContext): Promise<LegacyRegisterComparisonSummary[]> {
+    assertPermission(context);
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const rows = await transaction.legacyRegisterComparison.findMany({
+        where: { agencyId: context.agencyId },
+        orderBy: [{ comparedAt: 'desc' }, { id: 'desc' }],
       });
-      const countOf = new Map(
-        counts.map((count) => [count.legacyRegisterComparisonId, count._count._all]),
-      );
-      return rows.map((row) => toSummary(row, countOf.get(row.id) ?? 0));
+      return summaries(transaction, context.agencyId, rows);
     });
   }
 
@@ -350,6 +354,22 @@ async function readView(
       compareText(a.payComponentCode, b.payComponentCode),
   );
   return { ...toSummary(comparison, differences.length), differences };
+}
+
+async function summaries(
+  transaction: Transaction,
+  agencyId: string,
+  rows: ComparisonRow[],
+): Promise<LegacyRegisterComparisonSummary[]> {
+  const counts = await transaction.legacyRegisterDifference.groupBy({
+    by: ['legacyRegisterComparisonId'],
+    where: { agencyId, legacyRegisterComparisonId: { in: rows.map((row) => row.id) } },
+    _count: { _all: true },
+  });
+  const countOf = new Map(
+    counts.map((count) => [count.legacyRegisterComparisonId, count._count._all]),
+  );
+  return rows.map((row) => toSummary(row, countOf.get(row.id) ?? 0));
 }
 
 function toSummary(row: ComparisonRow, differenceCount: number): LegacyRegisterComparisonSummary {

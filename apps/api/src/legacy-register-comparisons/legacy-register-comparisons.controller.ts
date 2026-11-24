@@ -64,6 +64,22 @@ export class LegacyRegisterComparisonsController {
     }));
   }
 
+  /** The Agency's comparisons of every period, newest first, without their differences. */
+  @Get(':agencyId/legacy-register-comparisons')
+  @RequirePermission('payroll.legacy_registers.compare')
+  async listForAgency(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ comparisons: LegacyRegisterComparisonSummary[] }> {
+    const agency = agencyIdSchema.safeParse(agencyId);
+    if (!agency.success || agency.data !== context.agencyId) {
+      throw failure(context, 404, 'AGENCY_NOT_FOUND', 'The Agency could not be found.');
+    }
+    return this.run(context, async () => ({
+      comparisons: await this.service.listForAgency(context),
+    }));
+  }
+
   @Get(':agencyId/payroll-periods/:periodId/legacy-register-comparisons')
   @RequirePermission('payroll.legacy_registers.compare')
   async list(

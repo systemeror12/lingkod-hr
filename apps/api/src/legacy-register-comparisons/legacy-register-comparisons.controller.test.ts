@@ -19,7 +19,7 @@ const file = { buffer: Buffer.from('employee_number,component_code,amount\n') };
 
 describe('LegacyRegisterComparisonsController', () => {
   it('needs payroll.legacy_registers.compare on every route', () => {
-    for (const route of ['compare', 'list', 'get'] as const) {
+    for (const route of ['compare', 'list', 'listForAgency', 'get'] as const) {
       expect(
         Reflect.getMetadata(
           REQUIRED_PERMISSIONS,
@@ -65,6 +65,9 @@ describe('LegacyRegisterComparisonsController', () => {
     });
     await expect(
       controller.compare('00000000-0000-4000-8000-000000000009', periodId, file, context),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      controller.listForAgency('00000000-0000-4000-8000-000000000009', context),
     ).rejects.toMatchObject({ status: 404 });
     await expect(controller.list(agencyId, 'not-a-uuid', context)).rejects.toMatchObject({
       status: 404,
