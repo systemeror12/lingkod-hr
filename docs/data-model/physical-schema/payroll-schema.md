@@ -828,6 +828,11 @@ The period read (`payroll.periods.read`) names each review step's actor and
 time: the certifier, the Budget and Accounting checkpoint reviewers, the
 approver, and the finalizer, each by membership and display name (#639). No
 record holds who started a calculation, so the read names no calculator.
+Migrations 0167 and 0168 grant the read Agency-wide to the Payroll Preparer,
+HR Certifier, Budget Officer, Accounting Reviewer, Payroll Approver, and
+Internal Auditor. Migration 0202 adds the Cashier's `R` from hris-controls.md
+§6.10, which 0167 could not seed because the `cashier` role came in 0186. The
+HR Admin's `C` is not seeded.
 
 Migration 0193 backfills the approver and finalizer of existing rows from their
 `PAYROLL_PERIOD_APPROVED` and `PAYROLL_PERIOD_FINALIZED` Audit Events. A
