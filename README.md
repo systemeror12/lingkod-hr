@@ -163,7 +163,8 @@ For the Payment Export, the Agency `E2E-PAYMENT-EXPORT` holds two Finalized
 periods, one of them blocked: `payment.cashier@example.test` (Cashier)
 generates exports and records Disbursement Outcomes, and
 `payment.preparer@example.test` (Payroll Preparer) corrects a rejected
-destination. The seed
+destination. For legacy register comparison, `legacy.preparer@example.test`
+(Payroll Preparer) compares registers against `E2E-LEGACY-2848-CLOTHING`. The seed
 refuses to run in production.
 
 To sign in locally:

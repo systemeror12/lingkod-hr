@@ -29,6 +29,10 @@
  *   none, so its export is blocked. `payment.cashier@` (Cashier) generates and records outcomes;
  *   `payment.preparer@` (Payroll Preparer) corrects the rejected destination; `payment.approver@`
  *   finalized both. Its amounts establish no rule.
+ * - `seedLegacyRegisterComparisonFixture()`: its own Agency `E2E-LEGACY-REGISTER` and Payroll
+ *   Period `E2E-LEGACY-2848-CLOTHING`, Finalized, whose Employees `E2E-LEGACY-0001` and
+ *   `E2E-LEGACY-0002` each have one synthetic clothing allowance line. `legacy.preparer@` (Payroll
+ *   Preparer) compares legacy registers with it (legacy-register-comparison.spec.ts).
  * - `seededUserEmails` and `seedLocalCredentials()`: each seeded User's local passphrase, TOTP
  *   factor, and Recovery Codes, as the README documents.
  */
@@ -167,6 +171,27 @@ const paymentExportFixture = {
 } as const;
 
 /**
+ * The legacy register comparison journey's own Agency (legacy-register-comparison.spec.ts), so no
+ * other spec lists its Finalized period or comparisons. Its amounts are synthetic, establish no
+ * rule, and are repeated in the spec's register files under apps/web/e2e/fixtures/.
+ */
+const legacyRegisterFixture = {
+  agencyId: 'a9d00000-0000-4000-8000-0000000000a0',
+  periodId: 'a9d00000-0000-4000-8000-000000000001',
+  preparer: { email: 'legacy.preparer@example.test', name: 'E2E Legacy Register Preparer' },
+  employees: [
+    {
+      id: 'a9d00000-0000-4000-8000-0000000000e1',
+      number: 'E2E-LEGACY-0001',
+      name: 'E2E Ana Reyes',
+    },
+    { id: 'a9d00000-0000-4000-8000-0000000000e2', number: 'E2E-LEGACY-0002', name: 'E2E Ben Cruz' },
+  ],
+  /** Each Employee's one finalized clothing allowance line. */
+  amount: '1000.0000',
+} as const;
+
+/**
  * Local-only sign-in credentials, documented in the README. Every seeded User gets the passphrase;
  * seeded MFA-Required Users also get a TOTP factor with this secret and these Recovery Codes. The
  * Playwright fixture in `apps/web/e2e/sign-in.ts` repeats these values.
@@ -203,6 +228,7 @@ const seededUserEmails = [
   paymentExportFixture.cashier.email,
   paymentExportFixture.preparer.email,
   paymentExportFixture.approver.email,
+  legacyRegisterFixture.preparer.email,
 ];
 
 function manilaToday(): string {
@@ -3156,6 +3182,7 @@ async function seed(): Promise<void> {
   await seedDtrFixture();
   await seedPayslipReleaseFixture();
   await seedPaymentExportFixture();
+  await seedLegacyRegisterComparisonFixture();
 }
 
 /**
@@ -3736,6 +3763,153 @@ async function seedPaymentExportFixture(): Promise<void> {
           reason: 'Payment Export E2E fixture',
           createdByMembershipId: preparerId,
           updatedByMembershipId: preparerId,
+        },
+      });
+    }
+  });
+}
+
+/**
+ * A Finalized Payroll Period in its own Agency for the legacy register comparison journey, written
+ * as finalization leaves it under `session_replication_role = 'replica'`: a special period paying
+ * the cash clothing allowance with one synthetic line per Employee. Each run clears the Agency's
+ * comparisons, since comparing the same file again returns the stored one.
+ */
+async function seedLegacyRegisterComparisonFixture(): Promise<void> {
+  const { agencyId, periodId, preparer } = legacyRegisterFixture;
+  const [preparerRole, clothing] = await Promise.all([
+    prisma.role.findFirstOrThrow({
+      where: { agencyId: null, code: 'payroll_preparer', status: 'ACTIVE' },
+    }),
+    prisma.payComponent.findUniqueOrThrow({
+      where: { code: 'CLOTHING_ALLOWANCE' },
+      select: { id: true },
+    }),
+  ]);
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.agency.upsert({
+      where: { id: agencyId },
+      update: { status: 'ACTIVE' },
+      create: {
+        id: agencyId,
+        code: 'E2E-LEGACY-REGISTER',
+        name: 'Legacy Register Comparison Journey Agency',
+        acronym: 'LRC',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const where = { agencyId };
+    await transaction.legacyRegisterDifference.deleteMany({ where });
+    await transaction.legacyRegisterComparison.deleteMany({ where });
+    await transaction.auditEvent.deleteMany({ where });
+    await transaction.payrollLine.deleteMany({ where });
+    await transaction.payrollEmployee.deleteMany({ where });
+    await transaction.payrollPeriodComponent.deleteMany({ where });
+    await transaction.payrollPeriod.deleteMany({ where });
+    await transaction.employee.deleteMany({ where });
+  });
+
+  const user = await prisma.user.upsert({
+    where: { emailNormalized: preparer.email },
+    update: {
+      displayName: preparer.name,
+      globalStatus: 'ACTIVE',
+      lockedAt: null,
+      lockedByAgencyId: null,
+    },
+    create: {
+      emailNormalized: preparer.email,
+      displayName: preparer.name,
+      globalStatus: 'ACTIVE',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  const membership =
+    (await prisma.agencyMembership.findFirst({
+      where: { agencyId, userId: user.id, status: 'ACTIVE' },
+    })) ??
+    (await prisma.agencyMembership.create({
+      data: { agencyId, userId: user.id, status: 'ACTIVE', activatedAt: new Date() },
+    }));
+  if (
+    !(await prisma.membershipRole.findFirst({
+      where: { agencyId, membershipId: membership.id, roleId: preparerRole.id },
+    }))
+  ) {
+    await prisma.membershipRole.create({
+      data: {
+        agencyId,
+        membershipId: membership.id,
+        roleId: preparerRole.id,
+        effectiveFrom: new Date('2026-01-01'),
+        reason: 'Legacy register comparison E2E fixture',
+      },
+    });
+  }
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.payrollPeriod.create({
+      data: {
+        id: periodId,
+        agencyId,
+        code: 'E2E-LEGACY-2848-CLOTHING',
+        runType: 'SPECIAL',
+        periodFrom: new Date('2848-01-01'),
+        periodTo: new Date('2848-12-31'),
+        cutoffAt: new Date('2848-01-01T00:00:00+08:00'),
+        paymentDate: new Date('2848-06-15'),
+        status: 'FINALIZED',
+        calculationVersion: 1,
+        rowVersion: 8,
+        finalizedAt: new Date('2025-12-01T02:00:00Z'),
+        components: { create: { payComponentId: clothing.id } },
+      },
+    });
+    for (const employee of legacyRegisterFixture.employees) {
+      await transaction.employee.create({
+        data: {
+          id: employee.id,
+          agencyId,
+          employeeNumber: employee.number,
+          legalName: employee.name,
+          birthDate: new Date('1990-01-01'),
+          sex: 'FEMALE',
+          civilStatus: 'SINGLE',
+          contactEmail: `${employee.number.toLowerCase()}@example.test`,
+          serviceStatus: 'ACTIVE',
+          firstGovernmentServiceDate: new Date('2020-01-01'),
+          agencyServiceStartDate: new Date('2020-01-01'),
+          createdByMembershipId: membership.id,
+          updatedByMembershipId: membership.id,
+        },
+      });
+      const result = await transaction.payrollEmployee.create({
+        data: {
+          agencyId,
+          payrollPeriodId: periodId,
+          calculationVersion: 1,
+          employeeId: employee.id,
+          compensationBasisSnapshot: {},
+          status: 'FINALIZED',
+          grossAmount: legacyRegisterFixture.amount,
+          netAmount: legacyRegisterFixture.amount,
+          calculationHash: createHash('sha256')
+            .update(`e2e-legacy-register:${periodId}:${employee.id}`)
+            .digest('hex'),
+        },
+      });
+      await transaction.payrollLine.create({
+        data: {
+          agencyId,
+          payrollEmployeeId: result.id,
+          payComponentId: clothing.id,
+          lineType: 'EARNING',
+          amount: legacyRegisterFixture.amount,
+          sourceSnapshot: { fixture: 'Synthetic E2E amount, not a rate' },
         },
       });
     }

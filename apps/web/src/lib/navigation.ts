@@ -298,6 +298,14 @@ const destinations: readonly (Destination & {
       hasPermission(session, 'payroll.compensation.manage'),
   },
   {
+    href: '/legacy-register-comparisons',
+    label: 'Legacy Register Comparisons',
+    stage: 'Payroll',
+    permission: 'payroll.legacy_registers.compare',
+    // The page names each comparison's Payroll Period from the periods list.
+    visible: (session) => hasPermission(session, 'payroll.periods.read'),
+  },
+  {
     href: '/salary-rules',
     label: 'Salary Rules',
     stage: 'Payroll',
