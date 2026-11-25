@@ -1595,11 +1595,15 @@ CREATE TABLE leave_cancellation_effects (
   effect_kind text NOT NULL
     CHECK (effect_kind IN (
       'COMMITMENT_RELEASE','LEDGER_REVERSAL','LEDGER_REPLACEMENT',
-      'ATTENDANCE_CORRECTION','PAYROLL_CORRECTION'
+      'ATTENDANCE_CORRECTION','ATTENDANCE_LOCKED_CORRECTION',
+      'PAYROLL_CORRECTION','PAYROLL_REPLACEMENT'
     )),
   effect_key citext NOT NULL CHECK (btrim(effect_key::text) <> ''),
   owner_record_id uuid NOT NULL,
   owner_status citext NOT NULL CHECK (btrim(owner_status::text) <> ''),
+  payroll_adjustment_id uuid,
+  CHECK ((payroll_adjustment_id IS NOT NULL)
+         = (effect_kind = 'PAYROLL_CORRECTION' AND owner_status = 'DEFERRED')),
   FOREIGN KEY (agency_id, leave_cancellation_id)
     REFERENCES leave_cancellations (agency_id, id),
   UNIQUE (leave_cancellation_id, effect_key),
@@ -1746,11 +1750,31 @@ Attendance Period covers the input's dates, Attendance instead accepts a
 `FOR_AUTHORIZATION`. The locked records stay unchanged until a different HR
 Administrator authorizes it. A missing `ATTENDANCE_CORRECTION_POSTED_LEAVE`
 route or other Attendance refusal fails the command with
-`LEAVE_CANCELLATION_ATTENDANCE_REFUSED`. Withdrawing a posted Payroll Input
-is Payroll's correction handoff (#228). Until it exists, applying a
-cancellation to a line with a `PAYROLL_INPUT` effect fails as a blocking
-`LEAVE_CANCELLATION_PAYROLL_HANDOFF_UNAVAILABLE`, and the posting and its
-input stay in force.
+`LEAVE_CANCELLATION_ATTENDANCE_REFUSED`.
+
+A cancelled line with a `PAYROLL_INPUT` posting effect also asks Payroll, in
+the same command, to withdraw that input by the correction key
+`leave-cancellation:<cancellation>:<line>:payroll` (#228; payroll-schema.md
+§4). Payroll decides by the input's state, and Leave records its answer as a
+`PAYROLL_CORRECTION` effect whose key is the correction key and whose owner is
+the input: `WITHDRAWN` when Payroll cancelled a `PENDING` input, which also
+blocks each live payroll that used it, or `DEFERRED` when a finalized payroll
+consumed it, with `payroll_adjustment_id` naming the Payroll Adjustment that
+holds the withdrawal. An adjustment can hold several lines' corrections, so it
+is a column, not an owner record. A retained quantity is placed on its Work
+Dates as at posting and accepted as a new input that replaces the withdrawn
+one, under source key `...:payroll-replacement`, source type
+`LeaveCancellation`, and the cancellation's identifier; the
+`PAYROLL_REPLACEMENT` effect names it with owner status `ACCEPTED`. Migration
+0203 guards both kinds against Payroll's own record: the withdrawn input
+carries the effect key, or its adjustment cause does, and the replacement
+input names this cancellation. Leave never writes payroll tables. A
+`RETRYABLE_FAILURE` answer fails the command as a retryable
+`LEAVE_CANCELLATION_PAYROLL_RETRYABLE`, and a `REJECTED` answer, or retained
+dates that cannot be placed, as a blocking `LEAVE_CANCELLATION_PAYROLL_REJECTED`
+or `LEAVE_CANCELLATION_PAYROLL_WORK_DATES_UNPLACED`. Each rolls back every
+effect, so the cancellation stays approved and the posting and its input stay
+in force.
 
 A cancellation scope names the exact cancelled dates within one approval
 allocation line. A scope covering the whole line cancels its full quantity. A

@@ -301,6 +301,8 @@ export interface LeaveCancellationEffectSummary {
   effectKey: string;
   ownerRecordId: string;
   ownerStatus: string;
+  /** The Payroll Adjustment that holds a `DEFERRED` Payroll correction. */
+  payrollAdjustmentId: string | null;
   /** Live Attendance status of a locked handoff; ownerStatus is the status accepted at handoff. */
   attendanceHandoff: PostedLeaveHandoffStatus | null;
 }
@@ -1058,7 +1060,14 @@ const cancellationSelect = {
   },
   effects: {
     orderBy: { effectKey: 'asc' as const },
-    select: { id: true, effectKind: true, effectKey: true, ownerRecordId: true, ownerStatus: true },
+    select: {
+      id: true,
+      effectKind: true,
+      effectKey: true,
+      ownerRecordId: true,
+      ownerStatus: true,
+      payrollAdjustmentId: true,
+    },
   },
   scopes: {
     orderBy: [{ dateFrom: 'asc' as const }, { id: 'asc' as const }],
@@ -1185,6 +1194,43 @@ function cancellationApplyFailure(error: unknown): LeaveApplicationServiceError 
  */
 function postingLineKey(versionId: string, lineId: string): string {
   return `leave-posting:${versionId}:${lineId}`;
+}
+
+/** Payroll's refusal of a correction keeps its retryable or blocking meaning. */
+function cancellationPayrollRefused(
+  range: string,
+  answer: { outcome: 'REJECTED' | 'RETRYABLE_FAILURE'; code: string; reason: string },
+): LeaveApplicationServiceError {
+  return answer.outcome === 'REJECTED'
+    ? new LeaveApplicationServiceError(
+        `Payroll refused to correct leave without pay from ${range}: ${answer.reason} (${answer.code}). The cancellation stays approved and the posting stays in force.`,
+        409,
+        'LEAVE_CANCELLATION_PAYROLL_REJECTED',
+        [answer.code],
+      )
+    : new LeaveApplicationServiceError(
+        `Payroll cannot correct leave without pay from ${range} yet: ${answer.reason} (${answer.code}). The cancellation stays approved and the posting stays in force; apply it again later.`,
+        503,
+        'LEAVE_CANCELLATION_PAYROLL_RETRYABLE',
+        [answer.code],
+      );
+}
+
+/** The provenance and Work Dates Leave sends Payroll for leave without pay. */
+function leaveWithoutPayPayload(
+  leaveApplicationVersionId: string,
+  approvalDecisionId: string,
+  line: { id: string; policyVersionId: string; unitCode: string },
+  placed: { workDates: readonly { workDate: string; quantity: string }[] },
+) {
+  return {
+    leaveApplicationVersionId,
+    allocationLineId: line.id,
+    approvalDecisionId,
+    policyVersionId: line.policyVersionId,
+    unitCode: line.unitCode,
+    workDates: placed.workDates.map((workDate) => ({ ...workDate })),
+  };
 }
 
 /** Attendance's refusal stays a deterministic, blocking cancellation failure. */
@@ -3444,30 +3490,14 @@ export class LeaveApplicationsService implements OnModuleInit {
     },
   ): Promise<string> {
     const { version, line } = handoff;
-    const segment = version.calculationSegments.find(
-      (candidate) =>
-        candidate.policyVersionId === line.policyVersionId &&
-        candidate.dateFrom.getTime() === line.dateFrom.getTime() &&
-        candidate.dateTo.getTime() === line.dateTo.getTime(),
+    const placed = await this.placeLeaveWithoutPay(
+      transaction,
+      context.agencyId,
+      version,
+      line,
+      line,
+      line.quantity,
     );
-    const assignment = segment?.scheduleAssignmentId
-      ? await transaction.scheduleAssignment.findFirst({
-          where: { agencyId: context.agencyId, id: segment.scheduleAssignmentId },
-          select: {
-            workScheduleVersion: {
-              select: { dayRules: { select: { weekday: true, ruleType: true } } },
-            },
-          },
-        })
-      : null;
-    const placed = leaveWithoutPayWorkDates({
-      dateFrom: formatDate(line.dateFrom),
-      dateTo: formatDate(line.dateTo),
-      unitCode: line.unitCode,
-      quantity: formatQuantity(line.quantity),
-      dayRules: assignment?.workScheduleVersion.dayRules ?? null,
-      holidayFacts: segment?.holidayFacts ?? null,
-    });
     const range = `${formatDate(line.dateFrom)} to ${formatDate(line.dateTo)}`;
     if ('reason' in placed) {
       throw new LeaveApplicationServiceError(
@@ -3486,14 +3516,7 @@ export class LeaveApplicationsService implements OnModuleInit {
       sourceId: handoff.postingId,
       effectiveDate: placed.workDates[0]!.workDate,
       quantity: formatQuantity(line.quantity),
-      payload: {
-        leaveApplicationVersionId: version.id,
-        allocationLineId: line.id,
-        approvalDecisionId: handoff.approvalDecisionId,
-        policyVersionId: line.policyVersionId,
-        unitCode: line.unitCode,
-        workDates: placed.workDates.map((workDate) => ({ ...workDate })),
-      },
+      payload: leaveWithoutPayPayload(version.id, handoff.approvalDecisionId, line, placed),
     });
     if ('payrollInputId' in answer) return answer.payrollInputId;
     throw answer.outcome === 'REJECTED'
@@ -3507,6 +3530,149 @@ export class LeaveApplicationsService implements OnModuleInit {
           503,
           'LEAVE_POSTING_PAYROLL_RETRYABLE',
         );
+  }
+
+  /**
+   * The Work Dates of `quantity` leave without pay over `range` within an
+   * approved line, placed by the line's frozen Leave Calculation Segment, or
+   * the reason they cannot be placed.
+   */
+  private async placeLeaveWithoutPay(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    version: VersionRecord,
+    line: { dateFrom: Date; dateTo: Date; unitCode: string; policyVersionId: string },
+    range: { dateFrom: Date; dateTo: Date },
+    quantity: Prisma.Decimal,
+  ): Promise<ReturnType<typeof leaveWithoutPayWorkDates>> {
+    const segment = version.calculationSegments.find(
+      (candidate) =>
+        candidate.policyVersionId === line.policyVersionId &&
+        candidate.dateFrom.getTime() === line.dateFrom.getTime() &&
+        candidate.dateTo.getTime() === line.dateTo.getTime(),
+    );
+    const assignment = segment?.scheduleAssignmentId
+      ? await transaction.scheduleAssignment.findFirst({
+          where: { agencyId, id: segment.scheduleAssignmentId },
+          select: {
+            workScheduleVersion: {
+              select: { dayRules: { select: { weekday: true, ruleType: true } } },
+            },
+          },
+        })
+      : null;
+    return leaveWithoutPayWorkDates({
+      dateFrom: formatDate(range.dateFrom),
+      dateTo: formatDate(range.dateTo),
+      unitCode: line.unitCode,
+      quantity: formatQuantity(quantity),
+      dayRules: assignment?.workScheduleVersion.dayRules ?? null,
+      holidayFacts: segment?.holidayFacts ?? null,
+    });
+  }
+
+  /**
+   * Asks Payroll to correct the Payroll Input a cancelled leave-without-pay
+   * line posted, inside the apply transaction, and records Payroll's answer
+   * as effects. Payroll, not Leave, decides by the input's state (#330 D11):
+   * it cancels a `PENDING` input, blocking each live payroll that uses it
+   * until recalculated, or leaves a `CONSUMED` input as it is and records the
+   * withdrawal in a Payroll Adjustment against its finalized payroll. A
+   * retained quantity is accepted again as a replacement input on its own
+   * Work Dates. The effect key is the correction key, so Payroll's record
+   * names the effect. Any refusal throws, so the apply rolls back and the
+   * posting stays in force.
+   */
+  private async correctLeaveWithoutPay(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    correction: {
+      employeeId: string;
+      version: VersionRecord;
+      approvalDecisionId: string;
+      cancellationId: string;
+      effectKey: string;
+      payrollInputId: string;
+      line: {
+        id: string;
+        dateFrom: Date;
+        dateTo: Date;
+        unitCode: string;
+        policyVersionId: string;
+      };
+      retained: Prisma.Decimal;
+      retainedRange: { dateFrom: Date; dateTo: Date };
+    },
+  ): Promise<void> {
+    const { line, retained, effectKey } = correction;
+    const range = `${formatDate(line.dateFrom)} to ${formatDate(line.dateTo)}`;
+    const placed = retained.greaterThan(0)
+      ? await this.placeLeaveWithoutPay(
+          transaction,
+          context.agencyId,
+          correction.version,
+          line,
+          correction.retainedRange,
+          retained,
+        )
+      : null;
+    if (placed && 'reason' in placed) {
+      throw new LeaveApplicationServiceError(
+        `The leave without pay retained from ${range} cannot be placed on exact Work Dates for Payroll. ${placed.reason} The cancellation stays approved and the posting stays in force.`,
+        409,
+        'LEAVE_CANCELLATION_PAYROLL_WORK_DATES_UNPLACED',
+      );
+    }
+    const correctionKey = `${effectKey}:payroll`;
+    const withdrawal = await this.payrollInputs.withdrawInTransaction(transaction, {
+      agencyId: context.agencyId,
+      sourceModule: 'LEAVE',
+      payrollInputId: correction.payrollInputId,
+      correctionKey,
+    });
+    if ('code' in withdrawal) throw cancellationPayrollRefused(range, withdrawal);
+    const deferred = 'payrollAdjustmentId' in withdrawal;
+    await transaction.leaveCancellationEffect.create({
+      data: {
+        agencyId: context.agencyId,
+        leaveCancellationId: correction.cancellationId,
+        effectKind: 'PAYROLL_CORRECTION',
+        effectKey: correctionKey,
+        ownerRecordId: withdrawal.payrollInputId,
+        ownerStatus: deferred ? 'DEFERRED' : 'WITHDRAWN',
+        payrollAdjustmentId: deferred ? withdrawal.payrollAdjustmentId : null,
+      },
+    });
+    if (!placed) return;
+    const replacement = await this.payrollInputs.acceptInTransaction(transaction, {
+      agencyId: context.agencyId,
+      employeeId: correction.employeeId,
+      sourceModule: 'LEAVE',
+      inputKind: 'LEAVE_WITHOUT_PAY',
+      sourceKey: `${effectKey}:payroll-replacement`,
+      sourceType: 'LeaveCancellation',
+      sourceId: correction.cancellationId,
+      effectiveDate: placed.workDates[0]!.workDate,
+      quantity: formatQuantity(retained),
+      replacesPayrollInputId: correction.payrollInputId,
+      payload: leaveWithoutPayPayload(
+        correction.version.id,
+        correction.approvalDecisionId,
+        line,
+        placed,
+      ),
+    });
+    if ('code' in replacement) throw cancellationPayrollRefused(range, replacement);
+    await transaction.leaveCancellationEffect.create({
+      data: {
+        agencyId: context.agencyId,
+        leaveCancellationId: correction.cancellationId,
+        effectKind: 'PAYROLL_REPLACEMENT',
+        effectKey: `${effectKey}:payroll-replacement`,
+        ownerRecordId: replacement.payrollInputId,
+        ownerStatus: 'ACCEPTED',
+      },
+    });
   }
 
   async returnToApplicant(
@@ -4770,9 +4936,10 @@ export class LeaveApplicationsService implements OnModuleInit {
    * as a replacement with the original effective date and policy. Attendance
    * supersedes each cancelled line's posted-leave input and recalculates the
    * affected Work Dates, or, when a Work Date is locked, accepts a pending
-   * Attendance Correction for a different HR Administrator to authorize. Every
-   * effect key derives from the cancellation and line, so a retry cannot
-   * duplicate an effect.
+   * Attendance Correction for a different HR Administrator to authorize. A
+   * line posted as leave without pay also asks Payroll to correct its Payroll
+   * Input. Every effect key derives from the cancellation and line, so a retry
+   * cannot duplicate an effect.
    */
   private async reversePostedLeave(
     transaction: Prisma.TransactionClient,
@@ -4799,19 +4966,6 @@ export class LeaveApplicationsService implements OnModuleInit {
       );
       return scope ? [{ line, scope }] : [];
     });
-    // Withdrawing a posted Payroll Input is Payroll's correction handoff (#228).
-    // Until it exists, cancelling such a line fails closed, so Attendance and
-    // Payroll never disagree about leave without pay.
-    const payrollKeys = new Set(
-      cancelled.map(({ line }) => `${postingLineKey(version.id, line.id)}:payroll`),
-    );
-    if (posting?.effects.some(({ effectKey }) => payrollKeys.has(effectKey))) {
-      throw new LeaveApplicationServiceError(
-        'Cancelling posted leave without pay needs Payroll to withdraw its Payroll Input, which Payroll cannot do yet. The posting stays in force and the cancellation stays approved.',
-        409,
-        'LEAVE_CANCELLATION_PAYROLL_HANDOFF_UNAVAILABLE',
-      );
-    }
     const accountIds = [
       ...new Set(
         cancelled.flatMap(({ line }) => (line.leaveAccountId ? [line.leaveAccountId] : [])),
@@ -4941,6 +5095,19 @@ export class LeaveApplicationsService implements OnModuleInit {
           ownerStatus: handoff.kind,
         },
       });
+      if (posting?.effects.some(({ effectKey }) => effectKey === `${postedKey}:payroll`)) {
+        await this.correctLeaveWithoutPay(transaction, context, {
+          employeeId,
+          version,
+          approvalDecisionId: allocation.approvalDecisionId,
+          cancellationId: cancellation.id,
+          effectKey,
+          payrollInputId: postedRecordId(`${postedKey}:payroll`),
+          line,
+          retained,
+          retainedRange,
+        });
+      }
     }
   }
 

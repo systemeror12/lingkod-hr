@@ -280,6 +280,8 @@ Create:
 10. the Terminal Leave Input assessment, snapshot, line, and handoff-outcome
     tables
 11. `attendance_deficit_charges`, once `payroll_inputs` exists (#340, migration 0155)
+12. the Payroll effects of `leave_cancellation_effects`, once `payroll_adjustment_causes` exists
+    (#228, migration 0203)
 
 Payroll Input identifiers remain application-validated until the Payroll tables
 exist. Separation source identities remain polymorphic and are validated through

@@ -5120,6 +5120,8 @@ model LeaveCancellationEffect {
   effectKey           String @map("effect_key") @db.Citext
   ownerRecordId       String @map("owner_record_id") @db.Uuid
   ownerStatus         String @map("owner_status") @db.Citext
+  /// The Payroll Adjustment that holds a `DEFERRED` Payroll correction (#228).
+  payrollAdjustmentId String? @map("payroll_adjustment_id") @db.Uuid
 
   agency            Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   leaveCancellation LeaveCancellation @relation(fields: [agencyId, leaveCancellationId], references: [agencyId, id], onDelete: Restrict)
