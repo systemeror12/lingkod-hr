@@ -71,7 +71,13 @@ describe('StageBar', () => {
           paymentDate: '2026-01-31',
           status: 'CALCULATING',
           calculationVersion: 1,
+          carriesAdjustments: false,
           payComponentIds: [],
+          finalizedAt: null,
+          voidRequestedAt: null,
+          voidDocumentVersionId: null,
+          voidReason: null,
+          voidedAt: null,
           rowVersion: 2,
           totals: null,
         }}

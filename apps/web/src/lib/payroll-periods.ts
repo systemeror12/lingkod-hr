@@ -24,8 +24,18 @@ export interface PayrollPeriod {
   cutoffAt: string;
   paymentDate: string;
   status: PayrollPeriodStatus;
+  /** A special period marked to carry the open Payroll Adjustments: the supplemental payroll. */
+  carriesAdjustments: boolean;
   calculationVersion: number;
   payComponentIds: string[];
+  /** When it became Finalized; kept once it is voided. */
+  finalizedAt: string | null;
+  /** A finalized period's open or approved void request (#358); null when none. */
+  voidRequestedAt: string | null;
+  voidDocumentVersionId: string | null;
+  /** The void request's reason, or a cancelled draft's. */
+  voidReason: string | null;
+  voidedAt: string | null;
   rowVersion: number;
   totals: PayrollPeriodTotals | null;
 }
@@ -203,6 +213,11 @@ export function resultStatusDisplay(status: string): StatusDisplay {
       return { label: 'Calculated', tone: 'info' };
     case 'EXCEPTION':
       return { label: 'Blocked by exception', tone: 'danger' };
+    case 'FINALIZED':
+      return { label: 'Finalized', tone: 'success' };
+    // A voided period's results stay readable, voided with it (#358).
+    case 'VOIDED':
+      return { label: 'Voided', tone: 'neutral' };
     default:
       return { label: status, tone: 'neutral' };
   }
@@ -348,6 +363,10 @@ export interface PayrollPeriodReview {
   finalizedByMembershipId: string | null;
   finalizedByName: string | null;
   certification: PayrollCertification | null;
+  /** A voided regular period's replacement: the same month's regular period that is not voided. */
+  replacedByPeriodId: string | null;
+  /** The voided periods a regular period replaces. */
+  replacesPeriodIds: string[];
 }
 
 /** The checkpoint reviews confirmed on the export in force. */

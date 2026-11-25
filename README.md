@@ -154,7 +154,12 @@ payroll review, Payroll Period `E2E-REVIEW-2850-CLOTHING` waits For review, and
 one User holds each review function: `payroll.certifier@example.test` (HR
 Certifier), `payroll.budget@example.test` (Budget Officer),
 `payroll.accounting@example.test` (Accounting Reviewer), and
-`payroll.approver@example.test` (Payroll Approver). For payslip release,
+`payroll.approver@example.test` (Payroll Approver). For payroll corrections,
+the same Users act on Finalized periods `E2E-CORRECTION-2850-CLOTHING`, whose
+Payroll Adjustment waits Open on a Leave source correction, and
+`E2E-CORRECTION-2851-02`, which the approver asks to void;
+`payroll.void.approver@example.test` (Payroll Approver) approves the void.
+For payslip release,
 the Agency `E2E-PAYSLIPS` holds Payroll Period `E2E-PAYSLIP-2849-CLOTHING`,
 Finalized with two Ready payslips. `payslip.approver@example.test` (Payroll
 Approver) releases and withholds them, and `payslip.employee@example.test` and

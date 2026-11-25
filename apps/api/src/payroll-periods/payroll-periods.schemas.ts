@@ -134,6 +134,18 @@ export type PayrollAdjustmentRecalculationInput = z.input<
   typeof payrollAdjustmentRecalculationSchema
 >;
 
+export const PAYROLL_ADJUSTMENT_STATUSES = ['OPEN', 'POSTED', 'CANCELLED'] as const;
+
+export type PayrollAdjustmentStatus = (typeof PAYROLL_ADJUSTMENT_STATUSES)[number];
+
+/** The Payroll Adjustment list's filters (#651); each is optional. */
+export const payrollAdjustmentListQuerySchema = z
+  .object({
+    status: z.enum(PAYROLL_ADJUSTMENT_STATUSES).optional(),
+    originalPayrollPeriodId: z.string().uuid().optional(),
+  })
+  .strict();
+
 /**
  * Revoke a certification, return a period for correction, return an
  * approved period before finalization, or decline a void request, with a

@@ -79,6 +79,8 @@ type PeriodDetail =
       billings: ContributionBilling[];
       /** Who acted and what certifying binds; null before the period is calculated. */
       review: PayrollPeriodReview | null;
+      /** The period as `GET /payroll-periods/:id` reads it, for its void and replacement links. */
+      read: PayrollPeriodReview;
     };
 
 /** A Finalized period's payslips as the server lists them, each in its status. */
@@ -114,6 +116,7 @@ const emptyDraft = {
   cutoffAt: '',
   paymentDate: '',
   payComponentIds: [] as string[],
+  carriesAdjustments: false,
 };
 
 /** What a period's payslips and exceptions were read for; a change reads them again. */
@@ -137,8 +140,9 @@ function message(caught: unknown, fallback: string): string {
  * From For review to Finalized, each period shows its Approvals and the review commands the actor's
  * permissions and the period's state allow; once it is Finalized, the Payroll Approver releases
  * its Ready payslips. On a Finalized payslip, the Cashier records each Payment Instruction's
- * Disbursement Outcomes and supersedes one the API marks retryable. The API decides every refusal;
- * this screen shows its reason.
+ * Disbursement Outcomes and supersedes one the API marks retryable. A special period may be the
+ * supplemental payroll that carries open Payroll Adjustments; a voided period stays readable and
+ * links to its replacement (#651). The API decides every refusal; this screen shows its reason.
  */
 export function PayslipsWorkspace({
   agencyId,
@@ -149,6 +153,7 @@ export function PayslipsWorkspace({
   employees,
   evidenceReadable = false,
   initialList,
+  initialOpenPeriodId,
   canReadPayslips = false,
   canReadPaymentExports = false,
   canRecordDisbursement = false,
@@ -163,6 +168,8 @@ export function PayslipsWorkspace({
   /** Whether the actor can list the Agency's Document Versions to cite as review evidence. */
   evidenceReadable?: boolean;
   initialList: PayrollPeriodList;
+  /** A period to start open, such as one a Payroll Corrections link names. */
+  initialOpenPeriodId?: string | undefined;
   /** Whether the actor reads every payslip of a period (`payroll.payslips.read` Agency-wide). */
   canReadPayslips?: boolean;
   /** Whether the actor reads and supersedes Payment Instructions (`payroll.payment_exports.generate`). */
@@ -174,7 +181,9 @@ export function PayslipsWorkspace({
 }) {
   const [list, setList] = useState(initialList);
   // Periods the actor opened or closed; any other starts open unless it is finished.
-  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const [toggled, setToggled] = useState<Record<string, boolean>>(
+    initialOpenPeriodId ? { [initialOpenPeriodId]: true } : {},
+  );
   const [details, setDetails] = useState<Record<string, PeriodDetail>>({});
   const [payslipLists, setPayslipLists] = useState<Record<string, PayslipList>>({});
   const [paymentExports, setPaymentExports] = useState<Record<string, PaymentExportList>>({});
@@ -245,11 +254,7 @@ export function PayslipsWorkspace({
                 billings: ContributionBilling[];
               }>)
             : { billings: [] },
-          calculated
-            ? (request(`/payroll-periods/${period.id}`) as Promise<{
-                period: PayrollPeriodReview;
-              }>)
-            : { period: null },
+          request(`/payroll-periods/${period.id}`) as Promise<{ period: PayrollPeriodReview }>,
         ]);
         setDetails((current) => ({
           ...current,
@@ -259,7 +264,8 @@ export function PayslipsWorkspace({
             results: results.results,
             exceptions: exceptions.exceptions,
             billings: billings.billings,
-            review: review.period,
+            review: calculated ? review.period : null,
+            read: review.period,
           },
         }));
       } catch (caught: unknown) {
@@ -403,6 +409,7 @@ export function PayslipsWorkspace({
           ...draft,
           cutoffAt: draft.cutoffAt ? `${draft.cutoffAt}:00+08:00` : '',
           payComponentIds: draft.runType === 'SPECIAL' ? draft.payComponentIds : [],
+          carriesAdjustments: draft.runType === 'SPECIAL' && draft.carriesAdjustments,
         }),
       });
       await refreshList();
@@ -500,7 +507,7 @@ export function PayslipsWorkspace({
     setForm({ kind: 'create' });
   }
 
-  const set = (key: Exclude<keyof typeof emptyDraft, 'payComponentIds'>) =>
+  const set = (key: Exclude<keyof typeof emptyDraft, 'payComponentIds' | 'carriesAdjustments'>) =>
     function update(event: { currentTarget: EventTarget }) {
       const value = targetValue(event);
       setDraft((current) => ({ ...current, [key]: value }));
@@ -806,7 +813,21 @@ export function PayslipsWorkspace({
               ['Gross', totals ? moneyLabel(totals.grossAmount) : '—'],
               ['Deductions', totals ? moneyLabel(totals.totalDeductions) : '—'],
               ['Net pay', totals ? moneyLabel(totals.netAmount) : '—'],
+              ...(period.carriesAdjustments
+                ? [
+                    ['Carries', 'Open Payroll Adjustments (supplemental payroll)'] as [
+                      string,
+                      string,
+                    ],
+                  ]
+                : []),
             ]}
+          />
+          <PeriodCorrection
+            onFollow={(periodId) => setToggled((current) => ({ ...current, [periodId]: true }))}
+            period={period}
+            periodCode={(id) => periodById.get(id)?.code ?? id}
+            read={detail?.state === 'ready' ? detail.read : null}
           />
         </div>
         {detail?.state === 'ready' && detail.review ? (
@@ -1006,6 +1027,7 @@ export function PayslipsWorkspace({
               return (
                 <Panel
                   key={period.id}
+                  id={`period-${period.id}`}
                   title={period.code}
                   flush
                   data-period={period.code}
@@ -1111,6 +1133,20 @@ export function PayslipsWorkspace({
                     value={draft.paymentDate}
                   />
                 </Field>
+                {draft.runType === 'SPECIAL' ? (
+                  <label className="flex items-center gap-2 text-small text-ink min-[621px]:col-span-2">
+                    <input
+                      checked={draft.carriesAdjustments}
+                      onChange={(event) => {
+                        const checked = (event.currentTarget as unknown as { checked: boolean })
+                          .checked;
+                        setDraft((current) => ({ ...current, carriesAdjustments: checked }));
+                      }}
+                      type="checkbox"
+                    />
+                    Carries open Payroll Adjustments (supplemental payroll)
+                  </label>
+                ) : null}
                 {draft.runType === 'SPECIAL' ? (
                   <fieldset className="m-0 grid gap-2 border-0 p-0 min-[621px]:col-span-2">
                     <legend className={cn(labelClass, 'mb-1')}>Components it pays</legend>
@@ -1389,12 +1425,101 @@ export function SalaryComputation({ result }: { result: PayrollResultDetail }) {
   );
 }
 
-/** The records a line rests on, or its calculation snapshot when it names none. */
+/**
+ * The records a line rests on, or its calculation snapshot when it names none. A Payroll
+ * Adjustment's line names the original period's dates it recalculates.
+ */
 export function sourceSummary(line: PayrollLine): string {
+  const adjustment = adjustmentOf(line);
+  if (adjustment) {
+    return `Payroll Adjustment for ${dateLabel(adjustment.periodFrom)} – ${dateLabel(adjustment.periodTo)}`;
+  }
   const [first] = line.sources;
   if (!first) return 'Calculation snapshot';
   const more = line.sources.length - 1;
   return `${lineSourceLabel[first.kind]}${more > 0 ? ` and ${more} more` : ''}`;
+}
+
+/** The Payroll Adjustment a line carries, as its calculation snapshot names it; null for others. */
+export function adjustmentOf(
+  line: PayrollLine,
+): { payrollAdjustmentId: string; periodFrom: string; periodTo: string } | null {
+  const named = (line.sourceSnapshot as { payrollAdjustment?: unknown } | null)?.payrollAdjustment;
+  if (typeof named !== 'object' || named === null) return null;
+  const { payrollAdjustmentId, periodFrom, periodTo } = named as Record<string, unknown>;
+  return typeof payrollAdjustmentId === 'string' &&
+    typeof periodFrom === 'string' &&
+    typeof periodTo === 'string'
+    ? { payrollAdjustmentId, periodFrom, periodTo }
+    : null;
+}
+
+/**
+ * A period's void, as the API records it: a request awaiting approval, or the void with its
+ * reason, and the replacement link both ways (#358). A link opens the linked period on this list.
+ */
+export function PeriodCorrection({
+  period,
+  read,
+  periodCode,
+  onFollow,
+}: {
+  period: PayrollPeriod;
+  /** The period's own read; null while it loads. */
+  read: PayrollPeriodReview | null;
+  periodCode: (periodId: string) => string;
+  onFollow: (periodId: string) => void;
+}) {
+  const link = (periodId: string) => (
+    <a
+      key={periodId}
+      className="font-[600] text-primary hover:underline"
+      href={`#period-${periodId}`}
+      onClick={() => onFollow(periodId)}
+    >
+      {periodCode(periodId)}
+    </a>
+  );
+  const replacedBy = read?.replacedByPeriodId ?? null;
+  const replaces = read?.replacesPeriodIds ?? [];
+  const voided = period.status === 'VOIDED' && period.finalizedAt !== null;
+  const requested = period.status === 'FINALIZED' && period.voidRequestedAt !== null;
+  if (!voided && !requested && replaces.length === 0) return null;
+  return (
+    <section aria-label={`${period.code} correction`} className="grid gap-2">
+      {requested ? (
+        <p className="m-0 text-small text-ink">
+          <StatusTag tone="warning">Void requested</StatusTag>{' '}
+          {`Requested ${instantLabel(period.voidRequestedAt!)}: ${period.voidReason ?? ''}. It stays Finalized until the request is approved.`}
+        </p>
+      ) : null}
+      {voided ? (
+        <Facts
+          facts={[
+            ['Finalized', instantLabel(period.finalizedAt!)],
+            ['Voided', period.voidedAt ? instantLabel(period.voidedAt) : '—'],
+            ['Void reason', period.voidReason ?? '—'],
+            [
+              'Replaced by',
+              replacedBy ? link(replacedBy) : read ? 'No replacement period yet' : 'Reading…',
+            ],
+          ]}
+        />
+      ) : null}
+      {replaces.length > 0 ? (
+        <p className="m-0 text-small text-ink">
+          Replaces the voided{' '}
+          {replaces.map((periodId, index) => (
+            <Fragment key={periodId}>
+              {index > 0 ? ', ' : null}
+              {link(periodId)}
+            </Fragment>
+          ))}
+          .
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
 function LineProvenance({ line }: { line: PayrollLine }) {

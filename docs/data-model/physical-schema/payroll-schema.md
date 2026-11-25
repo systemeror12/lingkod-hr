@@ -1987,6 +1987,16 @@ version and those an adjustment against it already names, such as a held
 Employee (_reading_). An Employee of the Agency with no result in it may be
 named, so a late Personnel record can be paid against an empty original.
 
+`GET /agencies/:agencyId/payroll-adjustments` lists the Agency's
+adjustments, newest first and at most 200, with `payroll.periods.read`
+Agency-wide (#651). It filters by `status` and `originalPayrollPeriodId`.
+Each row names its Employee, status, original period, and causes (origin,
+reason, input and correction key, hold, and who opened it and when). For an
+`OPEN` adjustment, `carriedBy` lists each period past `DRAFT` and not yet
+`FINALIZED` whose current version's snapshot names it, which can be more than
+one. `postedBy` is the period that posted it. It writes nothing and holds no
+amount: the carrying period's Payroll Lines hold the difference.
+
 How the carrying calculation computes a difference, where the sources are
 silent (_readings_, #356):
 

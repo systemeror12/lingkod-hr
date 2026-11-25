@@ -18,6 +18,11 @@
  *   `payroll.certifier@` (HR Certifier), `payroll.budget@` (Budget Officer),
  *   `payroll.accounting@` (Accounting Reviewer), and `payroll.approver@` (Payroll Approver).
  *   Evidence `E2E-PAYROLL-REVIEW-EVIDENCE` has a fixed Document Version ID.
+ *   `payroll.void.approver@` (Payroll Approver, Teresa Villanueva) approves voids only.
+ * - `seedPayrollCorrectionsFixture()`: in the Work Queue Agency, Finalized Payroll Periods
+ *   `E2E-CORRECTION-2850-CLOTHING`, whose Payroll Adjustment for Alex Rivera waits Open on a Leave
+ *   source correction, and `E2E-CORRECTION-2851-02`, the latest regular period, to void and replace
+ *   (payroll-corrections.spec.ts). The review fixture's Users act on both; amounts are synthetic.
  * - `seedPayslipReleaseFixture()`: its own Agency `E2E-PAYSLIPS` and Payroll Period
  *   `E2E-PAYSLIP-2849-CLOTHING`, Finalized by `payslip.approver@` (Payroll Approver), with two zero
  *   payslips Ready at fixed Payslip IDs (payslip-release.spec.ts). Employee-role Users read their
@@ -96,11 +101,25 @@ const payrollReviewers = [
     role: 'accounting_reviewer',
   },
   { email: 'payroll.approver@example.test', name: 'Paolo Mendoza', role: 'payroll_approver' },
+  // A second Payroll Approver, who approves Paolo Mendoza's void request (payroll-corrections.spec.ts).
+  {
+    email: 'payroll.void.approver@example.test',
+    name: 'Teresa Villanueva',
+    role: 'payroll_approver',
+  },
 ] as const;
 const payrollReviewPeriodId = 'a9a00000-0000-4000-8000-000000000001';
 const payrollReviewEvidenceDocumentId = 'a9a00000-0000-4000-8000-000000000002';
 /** Repeated in apps/web/e2e/payroll-review.spec.ts, which types it as checkpoint evidence. */
 const payrollReviewEvidenceVersionId = 'a9a00000-0000-4000-8000-000000000003';
+/** The payroll corrections journey's fixed rows (payroll-corrections.spec.ts). */
+const payrollCorrectionsFixture = {
+  originalPeriodId: 'a9a00000-0000-4000-8000-000000000101',
+  voidPeriodId: 'a9a00000-0000-4000-8000-000000000102',
+  payrollInputId: 'a9a00000-0000-4000-8000-000000000103',
+  leaveApplicationId: 'a9a00000-0000-4000-8000-000000000104',
+  adjustmentId: 'a9a00000-0000-4000-8000-000000000105',
+} as const;
 /**
  * The payslip release journey's own Agency (payslip-release.spec.ts), so no other spec counts its
  * linked Employees or Documents. Its Payroll Approver finalized the period; each reader is an
@@ -1217,6 +1236,9 @@ async function seed(): Promise<void> {
     await transaction.payrollCertification.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollPeriodActor.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollPeriodComponent.deleteMany({ where: { agencyId: agency.id } });
+    // payroll-corrections.spec.ts opens and posts Payroll Adjustments against these periods.
+    await transaction.payrollAdjustmentCause.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.payrollAdjustment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollPeriod.deleteMany({ where: { agencyId: agency.id } });
     await transaction.authorizedPayrollComponentInput.deleteMany({
       where: { agencyId: agency.id },
@@ -3179,6 +3201,7 @@ async function seed(): Promise<void> {
   // reports them loaded after the snapshot and certification is refused.
   await seedSyntheticRuleVersions();
   await seedPayrollReviewFixture(agency.id, membership.id);
+  await seedPayrollCorrectionsFixture(agency.id, membership.id);
   await seedDtrFixture();
   await seedPayslipReleaseFixture();
   await seedPaymentExportFixture();
@@ -3322,6 +3345,182 @@ async function seedPayrollReviewFixture(agencyId: string, preparerMembershipId: 
         calculationHash: createHash('sha256')
           .update(`e2e-payroll-review:${payrollReviewPeriodId}:${alex.id}`)
           .digest('hex'),
+      },
+    });
+  });
+}
+
+/**
+ * The payroll corrections journey (payroll-corrections.spec.ts) in the Work Queue Agency, after
+ * the review fixture, whose Users act here too. Rows are written as their commands leave them,
+ * under `session_replication_role = 'replica'`; the Work Queue reset clears them each run.
+ *
+ * - `E2E-CORRECTION-2850-CLOTHING`, Finalized by Paolo Mendoza. Alex Rivera's one synthetic line
+ *   is a ₱500.00 day without pay resting on a Leave Payroll Input it consumed. Leave later
+ *   withdrew that input, so a Payroll Adjustment waits Open with a `SOURCE_CORRECTION` cause, as
+ *   #650 leaves it. Recalculating the special period writes no such line, so the difference is a
+ *   positive ₱500.00 a supplemental payroll can carry. No Personnel record supplies a pay basis
+ *   (see payroll-periods.spec.ts), so no calculation here writes a non-zero line, and this fixture
+ *   stands in for one. Its amounts are synthetic and establish no rule.
+ * - `E2E-CORRECTION-2851-02`, a regular period Finalized by Paolo Mendoza with Alex Rivera's zero
+ *   payslip, later than any other regular period, so the spec can void and replace it.
+ */
+async function seedPayrollCorrectionsFixture(agencyId: string, preparerMembershipId: string) {
+  const fixture = payrollCorrectionsFixture;
+  const approver = await prisma.agencyMembership.findFirstOrThrow({
+    where: { agencyId, user: { emailNormalized: 'payroll.approver@example.test' } },
+    select: { id: true },
+  });
+  const alex = await prisma.employee.findFirstOrThrow({
+    where: { agencyId, employeeNumber: 'E2E-0001' },
+    select: { id: true },
+  });
+  const [clothing, daysWithoutPay] = await Promise.all([
+    prisma.payComponent.findUniqueOrThrow({
+      where: { code: 'CLOTHING_ALLOWANCE' },
+      select: { id: true },
+    }),
+    prisma.payComponent.findUniqueOrThrow({
+      where: { code: 'DAYS_WITHOUT_PAY' },
+      select: { id: true },
+    }),
+  ]);
+  const hash = (label: string) => createHash('sha256').update(label).digest('hex');
+  const finalizedAt = new Date('2026-11-02T01:00:00.000Z');
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    // The Payroll Periods, lines, and adjustments are cleared with the Agency's other rows.
+    await transaction.payrollInput.deleteMany({ where: { agencyId, id: fixture.payrollInputId } });
+
+    for (const period of [
+      {
+        id: fixture.originalPeriodId,
+        code: 'E2E-CORRECTION-2850-CLOTHING',
+        runType: 'SPECIAL',
+        periodFrom: new Date('2850-01-01'),
+        periodTo: new Date('2850-12-31'),
+        cutoffAt: new Date('2850-01-01T00:00:00+08:00'),
+        paymentDate: new Date('2850-06-15'),
+        components: { create: { payComponentId: clothing.id } },
+      },
+      {
+        id: fixture.voidPeriodId,
+        code: 'E2E-CORRECTION-2851-02',
+        runType: 'REGULAR',
+        periodFrom: new Date('2851-02-01'),
+        periodTo: new Date('2851-02-28'),
+        cutoffAt: new Date('2851-02-20T00:00:00+08:00'),
+        paymentDate: new Date('2851-02-28'),
+      },
+    ]) {
+      await transaction.payrollPeriod.create({
+        data: {
+          ...period,
+          agencyId,
+          status: 'FINALIZED',
+          calculationVersion: 1,
+          rowVersion: 8,
+          finalizedAt,
+          finalizedByMembershipId: approver.id,
+        },
+      });
+      await transaction.payrollPeriodActor.createMany({
+        data: [
+          {
+            agencyId,
+            payrollPeriodId: period.id,
+            membershipId: preparerMembershipId,
+            payrollFunction: 'PREPARATION',
+          },
+          {
+            agencyId,
+            payrollPeriodId: period.id,
+            membershipId: approver.id,
+            payrollFunction: 'APPROVAL',
+          },
+        ],
+      });
+    }
+
+    await transaction.payrollEmployee.create({
+      data: {
+        agencyId,
+        payrollPeriodId: fixture.voidPeriodId,
+        calculationVersion: 1,
+        employeeId: alex.id,
+        compensationBasisSnapshot: { status: 'INDETERMINATE', reason: 'MISSING_PAY_BASIS' },
+        // As finalization leaves it.
+        status: 'FINALIZED',
+        calculationHash: hash(`e2e-payroll-correction:${fixture.voidPeriodId}:${alex.id}`),
+      },
+    });
+
+    await transaction.payrollInput.create({
+      data: {
+        id: fixture.payrollInputId,
+        agencyId,
+        employeeId: alex.id,
+        sourceModule: 'LEAVE',
+        inputKind: 'LEAVE_WITHOUT_PAY',
+        sourceKey: 'E2E-CORRECTION:LWOP-2850-03-02',
+        sourceType: 'LeaveApplication',
+        sourceId: fixture.leaveApplicationId,
+        effectiveDate: new Date('2850-03-02'),
+        quantity: '1',
+        status: 'CONSUMED',
+        payloadSnapshot: { synthetic: true },
+        payloadHash: hash('e2e-payroll-correction:lwop'),
+        acceptedAt: new Date('2026-10-20T01:00:00.000Z'),
+        consumedByPayrollPeriodId: fixture.originalPeriodId,
+      },
+    });
+    const result = await transaction.payrollEmployee.create({
+      data: {
+        agencyId,
+        payrollPeriodId: fixture.originalPeriodId,
+        calculationVersion: 1,
+        employeeId: alex.id,
+        compensationBasisSnapshot: { status: 'INDETERMINATE', reason: 'MISSING_PAY_BASIS' },
+        // As finalization leaves it.
+        status: 'FINALIZED',
+        grossAmount: '0',
+        totalDeductions: '500',
+        netAmount: '-500',
+        calculationHash: hash(`e2e-payroll-correction:${fixture.originalPeriodId}:${alex.id}`),
+      },
+    });
+    const line = await transaction.payrollLine.create({
+      data: {
+        agencyId,
+        payrollEmployeeId: result.id,
+        payComponentId: daysWithoutPay.id,
+        lineType: 'DEDUCTION',
+        quantity: '1',
+        amount: '500',
+        sourceSnapshot: { synthetic: true, unit: 'DAY', payrollInputId: fixture.payrollInputId },
+      },
+    });
+    await transaction.payrollLineSource.create({
+      data: { agencyId, payrollLineId: line.id, payrollInputId: fixture.payrollInputId },
+    });
+    await transaction.payrollAdjustment.create({
+      data: {
+        id: fixture.adjustmentId,
+        agencyId,
+        originalPayrollPeriodId: fixture.originalPeriodId,
+        employeeId: alex.id,
+        status: 'OPEN',
+        openedAt: new Date('2026-11-10T01:00:00.000Z'),
+      },
+    });
+    await transaction.payrollAdjustmentCause.create({
+      data: {
+        agencyId,
+        payrollAdjustmentId: fixture.adjustmentId,
+        origin: 'SOURCE_CORRECTION',
+        payrollInputId: fixture.payrollInputId,
+        sourceCorrectionKey: 'E2E-CORRECTION:LEAVE-CANCELLATION-2850-03-02',
+        createdAt: new Date('2026-11-10T01:00:00.000Z'),
       },
     });
   });
