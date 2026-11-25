@@ -2754,34 +2754,381 @@ it.skipIf(!enabled)(
         }),
       ).toBe(1);
 
-      // Payroll cannot withdraw the input yet (#228), so cancelling the posted
-      // line fails closed and leaves the posting and its Payroll Input in force.
-      const lwopCancellation = (
-        await applications.requestCancellation(requestCancelEmployee, lwopId, {
-          scopeType: 'WHOLE',
-          reason: 'Returned to duty early.',
-        })
-      ).cancellations.at(-1)!;
-      await applications.decideCancellation(cancelApprover, lwopId, { decision: 'APPROVE' });
+      // Cancelling posted leave without pay asks Payroll to correct each input
+      // inside the apply command, and Payroll answers by the input's state (#228).
+      const seedPayroll = <T>(run: (transaction: Prisma.TransactionClient) => Promise<T>) =>
+        admin.$transaction(async (transaction) => {
+          // Fixture rows standing in for what Payroll's own commands would write.
+          await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+          return run(transaction);
+        });
+      const payrollPeriod = (code: string, status: string, from: string, to: string) =>
+        seedPayroll((transaction) =>
+          transaction.payrollPeriod.create({
+            data: {
+              agencyId: agency.id,
+              code: `LEAVE-${code}-${suffix}`,
+              runType: 'SPECIAL',
+              periodFrom: new Date(`${from}T00:00:00.000Z`),
+              periodTo: new Date(`${to}T00:00:00.000Z`),
+              cutoffAt: new Date(),
+              paymentDate: new Date(`${to}T00:00:00.000Z`),
+              status,
+              calculationVersion: 1,
+              finalizedAt: status === 'FINALIZED' ? new Date() : null,
+            },
+          }),
+        );
+      const consume = (payrollInputId: string, payrollPeriodId: string) =>
+        seedPayroll((transaction) =>
+          transaction.payrollInput.update({
+            where: { id: payrollInputId },
+            data: { status: 'CONSUMED', consumedByPayrollPeriodId: payrollPeriodId },
+          }),
+        );
+      const postLeaveWithoutPay = async (dateFrom: string, dateTo: string, label: string) => {
+        const draft = await applications.create(agencyContext, {
+          employeeId: employee.id,
+          leaveTypeId: withoutPay.id,
+        });
+        const id = draft.application.id;
+        await applications.update(agencyContext, id, {
+          reason: 'Unpaid leave handed to Payroll.',
+          periods: [{ dateFrom, dateTo }],
+          documents: [
+            { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+          ],
+        });
+        await applications.submit(employeeContext, id, submitInput);
+        await applications.route(recorderContext, id);
+        await applications.certify(recorderContext, id, {});
+        await applications.recommend(supervisorContext, id, { outcome: 'RECOMMEND_APPROVAL' });
+        await applications.decide(approverContext, id, { decision: 'APPROVE' });
+        const version = (
+          await applications.post(postingContext, id, `post-${label}-${suffix}`)
+        ).versions.at(-1)!;
+        const line = version.approvalAllocation!.lines[0]!;
+        const payrollInputId = version.posting!.effects.find(
+          ({ effectKind }) => effectKind === 'PAYROLL_INPUT',
+        )!.ownerRecordId;
+        return { id, line, payrollInputId };
+      };
+      /** Requests and approves a cancellation, whole or of the line's last date. */
+      const approveCancellation = async (
+        id: string,
+        partial?: { allocationLineId: string; dateFrom: string; dateTo: string; quantity: string },
+      ) => {
+        const requested = await applications.requestCancellation(
+          requestCancelEmployee,
+          id,
+          partial
+            ? { scopeType: 'PARTIAL', reason: 'Returned to duty early.', scopes: [partial] }
+            : { scopeType: 'WHOLE', reason: 'Returned to duty early.' },
+        );
+        await applications.decideCancellation(cancelApprover, id, { decision: 'APPROVE' });
+        return requested.cancellations.at(-1)!.id;
+      };
+      const payrollEffects = async (id: string) =>
+        (await applications.findById(recorderContext, id))!.cancellations
+          .at(-1)!
+          .effects.filter(({ effectKind }) => effectKind.startsWith('PAYROLL_'));
+      const lwopInputId = payrollEffect.ownerRecordId;
+      const lwopCancellationId = await approveCancellation(lwopId);
+      const lwopCorrectionKey = `leave-cancellation:${lwopCancellationId}:${lwopLine.id}:payroll`;
+
+      // A refusal from Payroll rolls the whole apply back: the cancellation stays
+      // approved, the posting stays in force, and the failure says whether a
+      // retry can succeed.
+      for (const [outcome, failureKind, code] of [
+        ['RETRYABLE_FAILURE', 'RETRYABLE', 'LEAVE_CANCELLATION_PAYROLL_RETRYABLE'],
+        ['REJECTED', 'BLOCKING', 'LEAVE_CANCELLATION_PAYROLL_REJECTED'],
+      ] as const) {
+        const refusingPayroll = new LeaveApplicationsService(
+          leaveApplicationAuditWriter,
+          documents,
+          approvals,
+          completionRegistry,
+          schedules,
+          arrangements,
+          calendars,
+          postedLeaveInputs,
+          attendanceCorrections,
+          new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+          {
+            withdrawInTransaction: async () => ({
+              outcome,
+              code: 'PAYROLL_TEST_REFUSAL',
+              reason: 'Payroll payrollRefused the test correction.',
+            }),
+          } as unknown as PayrollInputsService,
+        );
+        await expect(
+          refusingPayroll.applyCancellation(
+            applyContext,
+            lwopId,
+            lwopCancellationId,
+            `apply-lwop-${suffix}`,
+          ),
+        ).rejects.toMatchObject({
+          code,
+          statusCode: failureKind === 'RETRYABLE' ? 503 : 409,
+          message: expect.stringContaining('Payroll payrollRefused the test correction.'),
+        });
+        const payrollRefused = await applications.findById(recorderContext, lwopId);
+        expect(payrollRefused!.application.status).toBe('CANCEL_REQUESTED');
+        expect(payrollRefused!.cancellations.at(-1)).toMatchObject({
+          decisionStatus: 'APPROVED',
+          effectStatus: 'FAILED',
+          lastEffectFailureCode: code,
+          lastEffectFailureKind: failureKind,
+          effects: [],
+        });
+        await expect(
+          admin.payrollInput.findUniqueOrThrow({ where: { id: lwopInputId } }),
+        ).resolves.toMatchObject({ status: 'PENDING', sourceCorrectionKey: null });
+        await expect(
+          admin.attendancePostedLeaveInput.count({
+            where: {
+              agencyId: agency.id,
+              sourceType: 'LeaveCancellation',
+              sourceId: lwopCancellationId,
+            },
+          }),
+        ).resolves.toBe(0);
+      }
+
+      // A pending input no payroll uses: Payroll cancels it under the effect's
+      // key, and the retry under the same Idempotency-Key applies.
+      const lwopApplied = await applications.applyCancellation(
+        applyContext,
+        lwopId,
+        lwopCancellationId,
+        `apply-lwop-${suffix}`,
+      );
+      expect(lwopApplied.application.status).toBe('CANCELLED');
+      expect(lwopApplied.cancellations.at(-1)).toMatchObject({
+        effectStatus: 'APPLIED',
+        lastEffectFailureCode: null,
+        lastEffectFailureKind: null,
+      });
+      expect(await payrollEffects(lwopId)).toEqual([
+        expect.objectContaining({
+          effectKind: 'PAYROLL_CORRECTION',
+          effectKey: lwopCorrectionKey,
+          ownerRecordId: lwopInputId,
+          ownerStatus: 'WITHDRAWN',
+          payrollAdjustmentId: null,
+        }),
+      ]);
       await expect(
-        applications.applyCancellation(
-          applyContext,
-          lwopId,
-          lwopCancellation.id,
-          `apply-lwop-${suffix}`,
-        ),
-      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_PAYROLL_HANDOFF_UNAVAILABLE' });
-      expect(
-        (await applications.findById(recorderContext, lwopId))!.cancellations.at(-1),
-      ).toMatchObject({
-        decisionStatus: 'APPROVED',
-        effectStatus: 'FAILED',
-        lastEffectFailureKind: 'BLOCKING',
-        effects: [],
+        admin.payrollInput.findUniqueOrThrow({ where: { id: lwopInputId } }),
+      ).resolves.toMatchObject({ status: 'CANCELLED', sourceCorrectionKey: lwopCorrectionKey });
+      // A Payroll effect must name what Payroll recorded under its key.
+      await expect(
+        admin.leaveCancellationEffect.create({
+          data: {
+            agencyId: agency.id,
+            leaveCancellationId: lwopCancellationId,
+            effectKind: 'PAYROLL_CORRECTION',
+            effectKey: `${lwopCorrectionKey}:forged`,
+            ownerRecordId: lwopInputId,
+            ownerStatus: 'WITHDRAWN',
+          },
+        }),
+      ).rejects.toThrow(/withdrawn under its key/);
+
+      // Partial, before consumption: the retained dates come back as a
+      // replacement input naming the cancelled one.
+      const lwopPartialMonday = nextMonday(105);
+      const partialPending = await postLeaveWithoutPay(
+        lwopPartialMonday,
+        addDays(lwopPartialMonday, 2),
+        'lwop-partial',
+      );
+      const partialPendingCancellation = await approveCancellation(partialPending.id, {
+        allocationLineId: partialPending.line.id,
+        dateFrom: addDays(lwopPartialMonday, 2),
+        dateTo: addDays(lwopPartialMonday, 2),
+        quantity: '1',
+      });
+      await applications.applyCancellation(
+        applyContext,
+        partialPending.id,
+        partialPendingCancellation,
+        `apply-lwop-partial-${suffix}`,
+      );
+      const partialKey = `leave-cancellation:${partialPendingCancellation}:${partialPending.line.id}`;
+      const [partialWithdrawal, partialReplacement] = await payrollEffects(partialPending.id);
+      expect(partialWithdrawal).toMatchObject({
+        effectKind: 'PAYROLL_CORRECTION',
+        effectKey: `${partialKey}:payroll`,
+        ownerRecordId: partialPending.payrollInputId,
+        ownerStatus: 'WITHDRAWN',
+      });
+      expect(partialReplacement).toMatchObject({
+        effectKind: 'PAYROLL_REPLACEMENT',
+        effectKey: `${partialKey}:payroll-replacement`,
+        ownerStatus: 'ACCEPTED',
       });
       await expect(
-        admin.payrollInput.findUniqueOrThrow({ where: { id: payrollEffect.ownerRecordId } }),
-      ).resolves.toMatchObject({ status: 'PENDING' });
+        admin.payrollInput.findUniqueOrThrow({ where: { id: partialPending.payrollInputId } }),
+      ).resolves.toMatchObject({ status: 'CANCELLED' });
+      const pendingReplacement = await admin.payrollInput.findUniqueOrThrow({
+        where: { id: partialReplacement!.ownerRecordId },
+      });
+      expect(pendingReplacement).toMatchObject({
+        employeeId: employee.id,
+        sourceModule: 'LEAVE',
+        inputKind: 'LEAVE_WITHOUT_PAY',
+        sourceKey: `${partialKey}:payroll-replacement`,
+        sourceType: 'LeaveCancellation',
+        sourceId: partialPendingCancellation,
+        status: 'PENDING',
+        replacesPayrollInputId: partialPending.payrollInputId,
+        payloadSnapshot: {
+          allocationLineId: partialPending.line.id,
+          unitCode: 'WORKING_DAY',
+          workDates: [
+            { workDate: lwopPartialMonday, quantity: '1.0000' },
+            { workDate: addDays(lwopPartialMonday, 1), quantity: '1.0000' },
+          ],
+        },
+      });
+      expect(pendingReplacement.quantity!.toFixed(4)).toBe('2.0000');
+      expect(pendingReplacement.effectiveDate.toISOString().slice(0, 10)).toBe(lwopPartialMonday);
+
+      // A pending input a live payroll uses: Payroll cancels it and blocks the
+      // period until it is returned and recalculated.
+      const liveMonday = nextMonday(112);
+      const live = await postLeaveWithoutPay(liveMonday, addDays(liveMonday, 1), 'lwop-live');
+      const livePeriod = await payrollPeriod('LIVE', 'FOR_REVIEW', liveMonday, liveMonday);
+      const liveCancellation = await approveCancellation(live.id);
+      await applications.applyCancellation(
+        applyContext,
+        live.id,
+        liveCancellation,
+        `apply-lwop-live-${suffix}`,
+      );
+      expect(await payrollEffects(live.id)).toEqual([
+        expect.objectContaining({ ownerRecordId: live.payrollInputId, ownerStatus: 'WITHDRAWN' }),
+      ]);
+      await expect(
+        admin.payrollException.findMany({
+          where: { agencyId: agency.id, payrollPeriodId: livePeriod.id },
+          select: { exceptionType: true, severity: true, employeeId: true },
+        }),
+      ).resolves.toEqual([
+        { exceptionType: 'PAYROLL_INPUT_WITHDRAWN', severity: 'BLOCKING', employeeId: employee.id },
+      ]);
+      await seedPayroll((transaction) =>
+        transaction.payrollPeriod.update({
+          where: { id: livePeriod.id },
+          data: { status: 'DRAFT' },
+        }),
+      );
+
+      // Consumed by a finalized payroll, whole and partial: the inputs stay
+      // CONSUMED and Payroll records both withdrawals in the Employee's one
+      // Payroll Adjustment against that payroll.
+      const consumedMonday = nextMonday(119);
+      const consumedWhole = await postLeaveWithoutPay(
+        consumedMonday,
+        addDays(consumedMonday, 1),
+        'lwop-consumed-whole',
+      );
+      const consumedPartial = await postLeaveWithoutPay(
+        addDays(consumedMonday, 7),
+        addDays(consumedMonday, 9),
+        'lwop-consumed-partial',
+      );
+      const finalized = await payrollPeriod(
+        'FINALIZED',
+        'FINALIZED',
+        consumedMonday,
+        addDays(consumedMonday, 13),
+      );
+      await consume(consumedWhole.payrollInputId, finalized.id);
+      await consume(consumedPartial.payrollInputId, finalized.id);
+      const consumedWholeCancellation = await approveCancellation(consumedWhole.id);
+      await applications.applyCancellation(
+        applyContext,
+        consumedWhole.id,
+        consumedWholeCancellation,
+        `apply-lwop-consumed-whole-${suffix}`,
+      );
+      const consumedPartialCancellation = await approveCancellation(consumedPartial.id, {
+        allocationLineId: consumedPartial.line.id,
+        dateFrom: addDays(consumedMonday, 9),
+        dateTo: addDays(consumedMonday, 9),
+        quantity: '1',
+      });
+      await applications.applyCancellation(
+        applyContext,
+        consumedPartial.id,
+        consumedPartialCancellation,
+        `apply-lwop-consumed-partial-${suffix}`,
+      );
+      const adjustment = await admin.payrollAdjustment.findFirstOrThrow({
+        where: { agencyId: agency.id, originalPayrollPeriodId: finalized.id },
+      });
+      expect(adjustment).toMatchObject({ employeeId: employee.id, status: 'OPEN' });
+      const [wholeDeferral] = await payrollEffects(consumedWhole.id);
+      expect(wholeDeferral).toMatchObject({
+        effectKind: 'PAYROLL_CORRECTION',
+        effectKey: `leave-cancellation:${consumedWholeCancellation}:${consumedWhole.line.id}:payroll`,
+        ownerRecordId: consumedWhole.payrollInputId,
+        ownerStatus: 'DEFERRED',
+        payrollAdjustmentId: adjustment.id,
+      });
+      const [partialDeferral, consumedReplacement] = await payrollEffects(consumedPartial.id);
+      expect(partialDeferral).toMatchObject({
+        ownerRecordId: consumedPartial.payrollInputId,
+        ownerStatus: 'DEFERRED',
+        payrollAdjustmentId: adjustment.id,
+      });
+      expect(consumedReplacement).toMatchObject({
+        effectKind: 'PAYROLL_REPLACEMENT',
+        ownerStatus: 'ACCEPTED',
+      });
+      await expect(
+        admin.payrollInput.findMany({
+          where: { id: { in: [consumedWhole.payrollInputId, consumedPartial.payrollInputId] } },
+          select: { status: true, consumedByPayrollPeriodId: true, sourceCorrectionKey: true },
+        }),
+      ).resolves.toEqual([
+        { status: 'CONSUMED', consumedByPayrollPeriodId: finalized.id, sourceCorrectionKey: null },
+        { status: 'CONSUMED', consumedByPayrollPeriodId: finalized.id, sourceCorrectionKey: null },
+      ]);
+      await expect(
+        admin.payrollAdjustmentCause.findMany({
+          where: { agencyId: agency.id, payrollAdjustmentId: adjustment.id },
+          orderBy: { createdAt: 'asc' },
+          select: { origin: true, payrollInputId: true, sourceCorrectionKey: true },
+        }),
+      ).resolves.toEqual([
+        {
+          origin: 'SOURCE_CORRECTION',
+          payrollInputId: consumedWhole.payrollInputId,
+          sourceCorrectionKey: wholeDeferral!.effectKey,
+        },
+        {
+          origin: 'SOURCE_CORRECTION',
+          payrollInputId: consumedPartial.payrollInputId,
+          sourceCorrectionKey: partialDeferral!.effectKey,
+        },
+      ]);
+      await expect(
+        admin.payrollInput.findUniqueOrThrow({ where: { id: consumedReplacement!.ownerRecordId } }),
+      ).resolves.toMatchObject({
+        status: 'PENDING',
+        replacesPayrollInputId: consumedPartial.payrollInputId,
+        payloadSnapshot: {
+          workDates: [
+            { workDate: addDays(consumedMonday, 7), quantity: '1.0000' },
+            { workDate: addDays(consumedMonday, 8), quantity: '1.0000' },
+          ],
+        },
+      });
 
       // Separate requested periods stay separate through Attendance (#456).
       const splitMonday = nextMonday(52);
@@ -4254,7 +4601,13 @@ it.skipIf(!enabled)(
         await transaction.attendanceDay.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.attendancePeriod.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leavePostingEffect.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.payrollException.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.payrollAdjustmentCause.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.payrollAdjustment.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.payrollInput.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.payrollPeriod.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.attendancePostedLeaveInput.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });
