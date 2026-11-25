@@ -366,6 +366,22 @@ describe.skipIf(!enabled)('Deduction summaries in PostgreSQL', () => {
     expect(await summariesOf(payroll.tenant.agency.id)).toBe(0);
   });
 
+  it('reads the period’s summaries only once generated, to the permitted of its own Agency', async () => {
+    const payroll = await finalizedPayroll('READ', [{ number: 'E-001' }]);
+    const other = await finalizedPayroll('READ-OTHER', [{ number: 'E-001' }]);
+    expect(await service.readForPeriod(payroll.preparer, payroll.periodId)).toBeNull();
+    const generated = await service.generate(payroll.preparer, payroll.periodId);
+    expect(await service.readForPeriod(payroll.approver, payroll.periodId)).toEqual(generated);
+    await expect(service.readForPeriod(payroll.reader, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'DEDUCTION_SUMMARIES_FORBIDDEN',
+    });
+    await expect(service.readForPeriod(other.preparer, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'PAYROLL_PERIOD_NOT_FOUND',
+    });
+  });
+
   it('needs payroll.registers.generate to generate or read', async () => {
     const payroll = await finalizedPayroll('FORBIDDEN', [{ number: 'E-001' }]);
     await expect(service.generate(payroll.reader, payroll.periodId)).rejects.toMatchObject({

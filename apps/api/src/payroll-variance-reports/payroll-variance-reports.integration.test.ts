@@ -417,6 +417,27 @@ describe.skipIf(!enabled)('Payroll Variance and Exception Report in PostgreSQL',
     });
   });
 
+  it('reads the period’s report only once generated, to the permitted of its own Agency', async () => {
+    const results: PeriodSpec['results'] = { 'E-001': [['BASIC_SALARY', 'EARNING', '1.00']] };
+    const payroll = await agencyWith('READ', [{ code: 'PAY-2875-02', month: '02', results }]);
+    const other = await agencyWith('READ-OTHER', [{ code: 'PAY-2875-02', month: '02', results }]);
+    const periodId = payroll.periodIds['PAY-2875-02']!;
+
+    expect(await service.read(payroll.preparer, periodId)).toBeNull();
+    const generated = await service.generate(payroll.preparer, periodId);
+    expect(await service.read(payroll.approver, periodId)).toEqual(generated);
+    expect(await reportsOf(payroll.tenant.agency.id)).toBe(1);
+
+    await expect(service.read(payroll.reader, periodId)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'PAYROLL_VARIANCE_REPORT_FORBIDDEN',
+    });
+    await expect(service.read(other.preparer, periodId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'PAYROLL_PERIOD_NOT_FOUND',
+    });
+  });
+
   it('refuses a payroll that is not FINALIZED, without the permission, or of another Agency', async () => {
     const results: PeriodSpec['results'] = { 'E-001': [['BASIC_SALARY', 'EARNING', '1.00']] };
     const payroll = await agencyWith('REFUSED', [

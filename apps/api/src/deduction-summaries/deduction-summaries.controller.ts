@@ -1,4 +1,13 @@
-import { Controller, Get, HttpException, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  HttpException,
+  Inject,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
@@ -36,6 +45,22 @@ export class DeductionSummariesController {
     const id = parseId(periodId, context, 'PAYROLL_PERIOD_NOT_FOUND', 'The Payroll Period');
     return {
       deductionSummaries: await translate(context, () => this.service.generate(context, id)),
+    };
+  }
+
+  /** The period's three artifacts, or null when none have been generated. */
+  @Get(':agencyId/payroll-periods/:periodId/deduction-summaries')
+  @RequirePermission('payroll.registers.generate')
+  @Header('Cache-Control', 'no-store')
+  async readForPeriod(
+    @Param('agencyId') agencyId: string,
+    @Param('periodId') periodId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ deductionSummaries: DeductionSummariesView | null }> {
+    assertAgency(agencyId, context);
+    const id = parseId(periodId, context, 'PAYROLL_PERIOD_NOT_FOUND', 'The Payroll Period');
+    return {
+      deductionSummaries: await translate(context, () => this.service.readForPeriod(context, id)),
     };
   }
 

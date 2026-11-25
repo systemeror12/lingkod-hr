@@ -17,13 +17,24 @@ const context: RequestContext = {
 };
 
 describe('PayrollVarianceReportsController', () => {
-  it('needs payroll.registers.generate', () => {
-    expect(
-      Reflect.getMetadata(
-        REQUIRED_PERMISSIONS,
-        PayrollVarianceReportsController.prototype.generate,
-      ),
-    ).toEqual(['payroll.registers.generate']);
+  it('needs payroll.registers.generate on every route', () => {
+    for (const route of ['generate', 'read'] as const) {
+      expect(
+        Reflect.getMetadata(
+          REQUIRED_PERMISSIONS,
+          PayrollVarianceReportsController.prototype[route],
+        ),
+      ).toEqual(['payroll.registers.generate']);
+    }
+  });
+
+  it('reads the period’s report, or null before one is generated', async () => {
+    const service = { read: vi.fn().mockResolvedValue(null) };
+    const controller = new PayrollVarianceReportsController(service as never);
+    await expect(controller.read(agencyId, periodId, context)).resolves.toEqual({
+      varianceReport: null,
+    });
+    expect(service.read).toHaveBeenCalledWith(context, periodId);
   });
 
   it('generates the report of the period', async () => {

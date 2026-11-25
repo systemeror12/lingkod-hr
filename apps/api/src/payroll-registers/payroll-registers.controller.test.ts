@@ -18,10 +18,21 @@ const context: RequestContext = {
 };
 
 describe('PayrollRegistersController', () => {
-  it('needs payroll.registers.generate', () => {
-    expect(
-      Reflect.getMetadata(REQUIRED_PERMISSIONS, PayrollRegistersController.prototype.generate),
-    ).toEqual(['payroll.registers.generate']);
+  it('needs payroll.registers.generate on every route', () => {
+    for (const route of ['generate', 'read', 'file'] as const) {
+      expect(
+        Reflect.getMetadata(REQUIRED_PERMISSIONS, PayrollRegistersController.prototype[route]),
+      ).toEqual(['payroll.registers.generate']);
+    }
+  });
+
+  it('reads the period’s register, or null before one is generated', async () => {
+    const service = { read: vi.fn().mockResolvedValue(null) };
+    const controller = new PayrollRegistersController(service as never);
+    await expect(controller.read(agencyId, periodId, context)).resolves.toEqual({
+      register: null,
+    });
+    expect(service.read).toHaveBeenCalledWith(context, periodId);
   });
 
   it('translates a refusal, or unavailable storage, into its error code', async () => {
@@ -48,8 +59,10 @@ describe('PayrollRegistersController', () => {
     await expect(
       controller.generate('00000000-0000-4000-8000-000000000009', periodId, context),
     ).rejects.toMatchObject({ status: 404 });
-    await expect(controller.generate(agencyId, 'not-a-uuid', context)).rejects.toMatchObject({
-      status: 404,
-    });
+    for (const route of ['generate', 'read', 'file'] as const) {
+      await expect(controller[route](agencyId, 'not-a-uuid', context)).rejects.toMatchObject({
+        status: 404,
+      });
+    }
   });
 });

@@ -29,6 +29,10 @@
  *   none, so its export is blocked. `payment.cashier@` (Cashier) generates and records outcomes;
  *   `payment.preparer@` (Payroll Preparer) corrects the rejected destination; `payment.approver@`
  *   finalized both. Its amounts establish no rule.
+ * - `seedPayrollOutputsFixture()`: its own Agency `E2E-PAYROLL-OUTPUTS` with one Finalized period
+ *   `E2E-OUTPUTS-2847-CLOTHING`, certified at its results' hash, so its register and schedules
+ *   generate (payroll-outputs.spec.ts). `payroll.outputs@` (Accounting Reviewer) generates and
+ *   downloads them. Its amounts establish no rule.
  * - `seededUserEmails` and `seedLocalCredentials()`: each seeded User's local passphrase, TOTP
  *   factor, and Recovery Codes, as the README documents.
  */
@@ -167,6 +171,23 @@ const paymentExportFixture = {
 } as const;
 
 /**
+ * The payroll outputs journey's own Agency (payroll-outputs.spec.ts), so its register, schedules,
+ * and exports are generated fresh on each seed. Ids are fixed; the spec repeats the period code.
+ */
+const payrollOutputsFixture = {
+  agencyId: 'a9647000-0000-4000-8000-0000000000a0',
+  periodId: 'a9647000-0000-4000-8000-000000000001',
+  periodCode: 'E2E-OUTPUTS-2847-CLOTHING',
+  reviewer: { email: 'payroll.outputs@example.test', name: 'E2E Outputs Reviewer' },
+  employee: {
+    id: 'a9647000-0000-4000-8000-0000000000e1',
+    number: 'E2E-OUTPUTS-0001',
+    name: 'E2E Outputs Payee',
+    resultId: 'a9647000-0000-4000-8000-000000000002',
+  },
+} as const;
+
+/**
  * Local-only sign-in credentials, documented in the README. Every seeded User gets the passphrase;
  * seeded MFA-Required Users also get a TOTP factor with this secret and these Recovery Codes. The
  * Playwright fixture in `apps/web/e2e/sign-in.ts` repeats these values.
@@ -203,6 +224,7 @@ const seededUserEmails = [
   paymentExportFixture.cashier.email,
   paymentExportFixture.preparer.email,
   paymentExportFixture.approver.email,
+  payrollOutputsFixture.reviewer.email,
 ];
 
 function manilaToday(): string {
@@ -3156,6 +3178,7 @@ async function seed(): Promise<void> {
   await seedDtrFixture();
   await seedPayslipReleaseFixture();
   await seedPaymentExportFixture();
+  await seedPayrollOutputsFixture();
 }
 
 /**
@@ -3739,6 +3762,176 @@ async function seedPaymentExportFixture(): Promise<void> {
         },
       });
     }
+  });
+}
+
+/**
+ * A Finalized period whose outputs generate (payroll-outputs.spec.ts), written as finalization
+ * leaves it, under `session_replication_role = 'replica'`: one result paying the cash clothing
+ * allowance, certified at the hash of its results, as the register's reconciliation checks. Each
+ * run removes the outputs generated before, so the spec generates them again.
+ */
+async function seedPayrollOutputsFixture(): Promise<void> {
+  const fixture = payrollOutputsFixture;
+  const { agencyId, employee } = fixture;
+  const [reviewerRole, clothing] = await Promise.all([
+    prisma.role.findFirstOrThrow({
+      where: { agencyId: null, code: 'accounting_reviewer', status: 'ACTIVE' },
+    }),
+    prisma.payComponent.findUniqueOrThrow({
+      where: { code: 'CLOTHING_ALLOWANCE' },
+      select: { id: true },
+    }),
+  ]);
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.agency.upsert({
+      where: { id: agencyId },
+      update: { status: 'ACTIVE' },
+      create: {
+        id: agencyId,
+        code: 'E2E-PAYROLL-OUTPUTS',
+        name: 'Payroll Outputs Journey Agency',
+        acronym: 'POJ',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const where = { agencyId };
+    await transaction.auditEvent.deleteMany({ where });
+    await transaction.outboxEvent.deleteMany({ where });
+    await transaction.payrollRegister.deleteMany({ where });
+    await transaction.document.updateMany({ where, data: { currentVersionId: null } });
+    await transaction.documentVersion.deleteMany({ where });
+    await transaction.document.deleteMany({ where });
+    await transaction.payrollVarianceReport.deleteMany({ where });
+    await transaction.deductionSummary.deleteMany({ where });
+    await transaction.payrollExportExternalOutcome.deleteMany({ where });
+    await transaction.finalizedPayrollAccountingSupportExport.deleteMany({ where });
+    await transaction.payrollCertification.deleteMany({ where });
+    await transaction.payrollLine.deleteMany({ where });
+    await transaction.payrollEmployee.deleteMany({ where });
+    await transaction.payrollPeriodComponent.deleteMany({ where });
+    await transaction.payrollPeriod.deleteMany({ where });
+    await transaction.employee.deleteMany({ where });
+  });
+
+  const { email, name } = fixture.reviewer;
+  const user = await prisma.user.upsert({
+    where: { emailNormalized: email },
+    update: { displayName: name, globalStatus: 'ACTIVE', lockedAt: null, lockedByAgencyId: null },
+    create: {
+      emailNormalized: email,
+      displayName: name,
+      globalStatus: 'ACTIVE',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  const membership =
+    (await prisma.agencyMembership.findFirst({
+      where: { agencyId, userId: user.id, status: 'ACTIVE' },
+    })) ??
+    (await prisma.agencyMembership.create({
+      data: { agencyId, userId: user.id, status: 'ACTIVE', activatedAt: new Date() },
+    }));
+  if (
+    !(await prisma.membershipRole.findFirst({
+      where: { agencyId, membershipId: membership.id, roleId: reviewerRole.id },
+    }))
+  ) {
+    await prisma.membershipRole.create({
+      data: {
+        agencyId,
+        membershipId: membership.id,
+        roleId: reviewerRole.id,
+        effectiveFrom: new Date('2026-01-01'),
+        reason: 'Payroll outputs E2E fixture',
+      },
+    });
+  }
+
+  const resultHash = createHash('sha256')
+    .update(`e2e-payroll-outputs:${fixture.periodId}:${employee.id}`)
+    .digest('hex');
+  // The period's hash as payrollCalculationHash computes it: its results' hashes in Employee
+  // order, as canonical JSON with sorted keys.
+  const periodHash = createHash('sha256')
+    .update(JSON.stringify([{ calculationHash: resultHash, employeeId: employee.id }]))
+    .digest('hex');
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.payrollPeriod.create({
+      data: {
+        id: fixture.periodId,
+        agencyId,
+        code: fixture.periodCode,
+        runType: 'SPECIAL',
+        periodFrom: new Date('2847-01-01'),
+        periodTo: new Date('2847-12-31'),
+        cutoffAt: new Date('2847-01-01T00:00:00+08:00'),
+        paymentDate: new Date('2847-06-15'),
+        status: 'FINALIZED',
+        calculationVersion: 1,
+        rowVersion: 8,
+        finalizedAt: new Date('2025-12-01T02:00:00Z'),
+        finalizedByMembershipId: membership.id,
+        components: { create: { payComponentId: clothing.id } },
+      },
+    });
+    await transaction.employee.create({
+      data: {
+        id: employee.id,
+        agencyId,
+        employeeNumber: employee.number,
+        legalName: employee.name,
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: `${employee.number.toLowerCase()}@example.test`,
+        serviceStatus: 'ACTIVE',
+        firstGovernmentServiceDate: new Date('2020-01-01'),
+        agencyServiceStartDate: new Date('2020-01-01'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.payrollEmployee.create({
+      data: {
+        id: employee.resultId,
+        agencyId,
+        payrollPeriodId: fixture.periodId,
+        calculationVersion: 1,
+        employeeId: employee.id,
+        compensationBasisSnapshot: {},
+        status: 'FINALIZED',
+        grossAmount: '1000.00',
+        totalDeductions: '0',
+        netAmount: '1000.00',
+        calculationHash: resultHash,
+      },
+    });
+    await transaction.payrollLine.create({
+      data: {
+        agencyId,
+        payrollEmployeeId: employee.resultId,
+        payComponentId: clothing.id,
+        lineType: 'EARNING',
+        amount: '1000.00',
+        sourceSnapshot: { fixture: 'Payroll outputs E2E; establishes no rule' },
+      },
+    });
+    await transaction.payrollCertification.create({
+      data: {
+        agencyId,
+        payrollPeriodId: fixture.periodId,
+        calculationVersion: 1,
+        calculationHash: periodHash,
+        certifiedByMembershipId: membership.id,
+        approvedByMembershipId: membership.id,
+        approvedAt: new Date('2025-12-01T01:00:00Z'),
+      },
+    });
   });
 }
 

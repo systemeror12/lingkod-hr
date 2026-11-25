@@ -32,6 +32,18 @@ export function canManageHrmoInvitations(session: ActiveSession): boolean {
   );
 }
 
+/** Payroll → Reports: reading periods, and generating at least one of a period's outputs. */
+export function canReadPayrollReports(session: ActiveSession): boolean {
+  return (
+    hasPermission(session, 'payroll.periods.read') &&
+    [
+      'payroll.registers.generate',
+      'payroll.accounting_exports.generate',
+      'payroll.payment_exports.generate',
+    ].some((permission) => hasPermission(session, permission))
+  );
+}
+
 const destinations: readonly (Destination & {
   permission?: string;
   visible?: (session: ActiveSession) => boolean;
@@ -248,13 +260,11 @@ const destinations: readonly (Destination & {
     permission: 'payroll.periods.read',
   },
   {
-    // One Finalized period's outputs (#327); the Payment Export is the first of them.
+    // One Finalized period's outputs (#327).
     href: '/payroll-reports',
     label: 'Reports',
     stage: 'Payroll',
-    visible: (session) =>
-      hasPermission(session, 'payroll.periods.read') &&
-      hasPermission(session, 'payroll.payment_exports.generate'),
+    visible: canReadPayrollReports,
   },
   {
     href: '/my-payslips',

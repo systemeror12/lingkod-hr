@@ -151,6 +151,32 @@ export class DeductionSummariesService {
     });
   }
 
+  /** The period's three artifacts, or null when none have been generated yet. Writes nothing. */
+  async readForPeriod(
+    context: RequestContext,
+    periodId: string,
+  ): Promise<DeductionSummariesView | null> {
+    requirePermission(context, 'Reading deduction summaries');
+    const stored = await withDatabaseContext(
+      requestDatabaseContext(context),
+      async (transaction) => {
+        const period = await transaction.payrollPeriod.findFirst({
+          where: { agencyId: context.agencyId, id: periodId },
+          select: { id: true },
+        });
+        if (!period) {
+          throw new DeductionSummariesServiceError(
+            'The Payroll Period could not be found.',
+            404,
+            'PAYROLL_PERIOD_NOT_FOUND',
+          );
+        }
+        return transaction.deductionSummary.findUnique({ where: { payrollPeriodId: periodId } });
+      },
+    );
+    return stored && toView(stored);
+  }
+
   /** Read a stored period's three artifacts. */
   async read(
     context: RequestContext,
