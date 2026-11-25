@@ -52,6 +52,8 @@ export default async function PayslipsPage() {
       canReadPayslips={session.permissions.some(
         ({ code, scopePolicy }) => code === 'payroll.payslips.read' && scopePolicy === 'AGENCY',
       )}
+      canReadPaymentExports={hasPermission(session, 'payroll.payment_exports.generate')}
+      canRecordDisbursement={hasPermission(session, 'payroll.disbursement.update')}
       employees={employees}
       evidenceReadable={hasPermission(session, 'documents.evidence.read')}
       initialList={value as PayrollPeriodList}

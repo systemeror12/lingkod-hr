@@ -74,14 +74,16 @@ export interface MonetizationAdjustmentRequest {
 }
 
 /**
- * Payroll's acceptance of a Monetization Adjustment: the cancelled original
- * input when no credits are retained, else the `PENDING` replacement Payroll
- * valued for the retained credits.
+ * Payroll's acceptance of a Monetization Adjustment: the original input when
+ * no credits are retained, else the `PENDING` replacement Payroll valued for
+ * the retained credits. The original is `CANCELLED`, or stays `CONSUMED` when
+ * a finalized payroll paid it and its withdrawal waits in a Payroll
+ * Adjustment, which `payrollResult` names (#650).
  */
 export interface MonetizationAdjustmentAccepted {
   kind: 'ACCEPTED' | 'ALREADY_ACCEPTED';
   payrollInputId: string;
-  status: 'CANCELLED' | 'PENDING';
+  status: 'CANCELLED' | 'CONSUMED' | 'PENDING';
   amount: string | null;
   payrollResult: unknown;
 }

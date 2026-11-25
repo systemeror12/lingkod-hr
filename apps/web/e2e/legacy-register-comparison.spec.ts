@@ -9,7 +9,7 @@ import { signIn } from './sign-in';
 const CODE = 'E2E-LEGACY-2848-CLOTHING';
 const PREPARER = 'legacy.preparer@example.test';
 // Repeated from seed-protected-shell-e2e.ts.
-const PERIOD_ID = 'a9c00000-0000-4000-8000-000000000001';
+const PERIOD_ID = 'a9d00000-0000-4000-8000-000000000001';
 // Says 1,200.00 for E2E-LEGACY-0001 and matches E2E-LEGACY-0002.
 const register = resolve(__dirname, 'fixtures/legacy-register-2848.csv');
 // Names an Employee number and a component code LingkodHR does not have.

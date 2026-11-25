@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { attemptsOf, type PaymentExportRecord } from '../lib/payment-exports';
 import type { AuthorityOption, EmployeeOption } from '../lib/payroll-page-data';
 import { decimalLabel } from '../lib/payroll-inputs';
 import {
@@ -42,7 +43,7 @@ import {
   type ContributionBillingInput,
 } from './contribution-billings';
 import { Facts } from './payroll-inputs-workspace';
-import { PayslipActions } from './payslip-actions';
+import { PaymentActions, PayslipActions } from './payslip-actions';
 import { ContributionsTaxDeductions } from './payslip-deductions';
 import { actionLabel, PayrollReview } from './payroll-review';
 import { StateSurface } from './state-surface';
@@ -85,6 +86,12 @@ type PayslipList =
   | { state: 'loading' }
   | { state: 'error'; message: string }
   | { state: 'ready'; entries: PeriodPayslipEntry[] };
+
+/** A Finalized period's Payment Exports, each instruction with its outcomes, as the API lists them. */
+type PaymentExportList =
+  | { state: 'loading' }
+  | { state: 'error'; message: string }
+  | { state: 'ready'; exports: PaymentExportRecord[] };
 
 type Form =
   | { kind: 'create' }
@@ -129,7 +136,9 @@ function message(caught: unknown, fallback: string): string {
  * lists its issuer contribution billing, which a deductions manager records while it is in Draft.
  * From For review to Finalized, each period shows its Approvals and the review commands the actor's
  * permissions and the period's state allow; once it is Finalized, the Payroll Approver releases
- * its Ready payslips. The API decides every refusal; this screen shows its reason.
+ * its Ready payslips. On a Finalized payslip, the Cashier records each Payment Instruction's
+ * Disbursement Outcomes and supersedes one the API marks retryable. The API decides every refusal;
+ * this screen shows its reason.
  */
 export function PayslipsWorkspace({
   agencyId,
@@ -141,6 +150,8 @@ export function PayslipsWorkspace({
   evidenceReadable = false,
   initialList,
   canReadPayslips = false,
+  canReadPaymentExports = false,
+  canRecordDisbursement = false,
   reviewPermissions = [],
 }: {
   agencyId: string;
@@ -154,6 +165,10 @@ export function PayslipsWorkspace({
   initialList: PayrollPeriodList;
   /** Whether the actor reads every payslip of a period (`payroll.payslips.read` Agency-wide). */
   canReadPayslips?: boolean;
+  /** Whether the actor reads and supersedes Payment Instructions (`payroll.payment_exports.generate`). */
+  canReadPaymentExports?: boolean;
+  /** Whether the actor records Disbursement Outcomes (`payroll.disbursement.update`). */
+  canRecordDisbursement?: boolean;
   /** The review permissions (`REVIEW_PERMISSIONS`) the actor holds Agency-wide. */
   reviewPermissions?: string[];
 }) {
@@ -162,6 +177,7 @@ export function PayslipsWorkspace({
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const [details, setDetails] = useState<Record<string, PeriodDetail>>({});
   const [payslipLists, setPayslipLists] = useState<Record<string, PayslipList>>({});
+  const [paymentExports, setPaymentExports] = useState<Record<string, PaymentExportList>>({});
   const [form, setForm] = useState<Form>(null);
   const [payslip, setPayslip] = useState<Payslip | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
@@ -285,6 +301,27 @@ export function PayslipsWorkspace({
           [periodId]: {
             state: 'error',
             message: message(caught, 'The payslips’ statuses could not be read.'),
+          },
+        }));
+      }
+    },
+    [request],
+  );
+
+  const loadPaymentExports = useCallback(
+    async (periodId: string) => {
+      setPaymentExports((current) => ({ ...current, [periodId]: { state: 'loading' } }));
+      try {
+        const { exports } = (await request(`/payroll-periods/${periodId}/payment-exports`)) as {
+          exports: PaymentExportRecord[];
+        };
+        setPaymentExports((current) => ({ ...current, [periodId]: { state: 'ready', exports } }));
+      } catch (caught: unknown) {
+        setPaymentExports((current) => ({
+          ...current,
+          [periodId]: {
+            state: 'error',
+            message: message(caught, 'The Payment Instructions could not be read.'),
           },
         }));
       }
@@ -442,6 +479,10 @@ export function PayslipsWorkspace({
     setDecision(null);
     setForm({ kind: 'payslip', periodId, resultId });
     setPayslip({ state: 'loading' });
+    // Read again on each open: another Cashier may have recorded an outcome meanwhile.
+    if (canReadPaymentExports && periodById.get(periodId)?.status === 'FINALIZED') {
+      void loadPaymentExports(periodId);
+    }
     try {
       const { result } = (await request(`/payroll-periods/${periodId}/results/${resultId}`)) as {
         result: PayrollResultDetail;
@@ -713,6 +754,26 @@ export function PayslipsWorkspace({
         canWithhold={held.has('payroll.payslips.withhold')}
         entry={entry}
         onDone={(done) => reviewed(period.id, done)}
+        request={request}
+      />
+    );
+  }
+
+  /** On a Finalized payslip form: its Payment Instructions, their outcomes, and the Cashier's commands. */
+  function paymentSection(period: PayrollPeriod, resultId: string): ReactNode {
+    if (!canReadPaymentExports || period.status !== 'FINALIZED') return null;
+    const exports = paymentExports[period.id];
+    if (exports?.state === 'error') return <FormError message={exports.message} />;
+    return (
+      <PaymentActions
+        attempts={exports?.state === 'ready' ? attemptsOf(exports.exports, resultId) : undefined}
+        canRecordOutcome={canRecordDisbursement}
+        canSupersede={canReadPaymentExports}
+        onDone={async (done) => {
+          setError('');
+          setNotice(done);
+          await loadPaymentExports(period.id);
+        }}
         request={request}
       />
     );
@@ -1131,6 +1192,7 @@ export function PayslipsWorkspace({
                   </div>
                 ) : null}
                 {openPeriod && openResult ? payslipSection(openPeriod, openResult.id) : null}
+                {openPeriod && openResult ? paymentSection(openPeriod, openResult.id) : null}
                 {openPeriod ? reviewSection(openPeriod) : null}
                 <FormError message={error} />
                 {notice ? (

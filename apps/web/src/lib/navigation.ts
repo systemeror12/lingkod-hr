@@ -248,6 +248,15 @@ const destinations: readonly (Destination & {
     permission: 'payroll.periods.read',
   },
   {
+    // One Finalized period's outputs (#327); the Payment Export is the first of them.
+    href: '/payroll-reports',
+    label: 'Reports',
+    stage: 'Payroll',
+    visible: (session) =>
+      hasPermission(session, 'payroll.periods.read') &&
+      hasPermission(session, 'payroll.payment_exports.generate'),
+  },
+  {
     href: '/my-payslips',
     label: 'My Payslips',
     stage: 'Payroll',

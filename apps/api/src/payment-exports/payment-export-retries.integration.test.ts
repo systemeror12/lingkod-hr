@@ -495,6 +495,67 @@ describe.skipIf(!enabled)('Payment Export retries in PostgreSQL', () => {
     expect(await exports.generate(payroll.cashier, payroll.periodId)).toEqual(original);
   });
 
+  it('lists the period’s exports, each instruction with its outcomes in order and whether it can be retried', async () => {
+    const payroll = await exportedPayroll('LIST', 2);
+    const original = payroll.generated;
+    const [first, second] = original.instructions as [
+      PaymentExportView['instructions'][number],
+      PaymentExportView['instructions'][number],
+    ];
+    await recordOutcomes(payroll, original, first.id, ['SUBMITTED', 'REJECTED']);
+    await recordOutcomes(payroll, original, second.id, ['SUBMITTED', 'RETURNED']);
+
+    let [listed] = await exports.list(payroll.cashier, payroll.periodId);
+    expect(listed).toMatchObject({ id: original.id, supersedesPaymentExportId: null });
+    const [firstListed, secondListed] = listed!.instructions;
+    expect(firstListed).toMatchObject({
+      ...first,
+      retriedByPaymentInstructionId: null,
+      retryable: true,
+    });
+    expect(
+      firstListed!.outcomes.map(({ sequence, outcome, reason }) => [sequence, outcome, reason]),
+    ).toEqual([
+      [1, 'SUBMITTED', null],
+      [2, 'REJECTED', 'REJECTED by the bank'],
+    ]);
+    expect(secondListed!.retryable).toBe(true);
+
+    await correctDestination(payroll, first, '0099000666');
+    const retried = await retry(payroll, original, first.id);
+    await recordOutcomes(payroll, original, second.id, ['SETTLED']);
+
+    const all = await exports.list(payroll.cashier, payroll.periodId);
+    expect(all.map((record) => record.id)).toEqual([original.id, retried.id]);
+    [listed] = all;
+    expect(listed!.instructions[0]).toMatchObject({
+      retriedByPaymentInstructionId: retried.instructions[0]!.id,
+      retryable: false,
+    });
+    // RETURNED, then SETTLED: only the latest outcome decides.
+    expect(listed!.instructions[1]!.outcomes.map(({ outcome }) => outcome)).toEqual([
+      'SUBMITTED',
+      'RETURNED',
+      'SETTLED',
+    ]);
+    expect(listed!.instructions[1]!.retryable).toBe(false);
+    expect(all[1]!.instructions[0]).toMatchObject({
+      priorPaymentInstructionId: first.id,
+      outcomes: [],
+      retryable: false,
+    });
+
+    await expect(exports.list(payroll.reader, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'PAYMENT_EXPORT_FORBIDDEN',
+    });
+    const other = await exportedPayroll('LIST-OTHER');
+    await expect(exports.list(other.cashier, payroll.periodId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'PAYROLL_PERIOD_NOT_FOUND',
+    });
+  });
+
   it('retries only on a FINALIZED payroll', async () => {
     const payroll = await exportedPayroll('VOIDED');
     const original = payroll.generated;

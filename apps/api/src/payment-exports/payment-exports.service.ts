@@ -13,6 +13,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requestDatabaseContext } from '../database-context';
 import { manilaToday } from '../employee-scope';
+import type {
+  DisbursementOutcomeKind,
+  DisbursementOutcomeView,
+} from './disbursement-outcomes.service';
 import {
   PAYMENT_EXPORT_CONTRACT,
   PaymentExportBlockedError,
@@ -110,6 +114,20 @@ export interface PaymentExportView {
   instructions: PaymentInstructionView[];
 }
 
+/** A Payment Instruction as the period's list reads it: with its outcomes and whether it is retried. */
+export interface PaymentInstructionRecord extends PaymentInstructionView {
+  /** Its Disbursement Outcomes in their order, oldest first; the last is the latest. */
+  outcomes: DisbursementOutcomeView[];
+  /** The instruction that retried this attempt, in a superseding export; null if none has. */
+  retriedByPaymentInstructionId: string | null;
+  /** Whether `retry` would take it now: its latest outcome is REJECTED or RETURNED, and no instruction retried it. */
+  retryable: boolean;
+}
+
+export interface PaymentExportRecord extends Omit<PaymentExportView, 'instructions'> {
+  instructions: PaymentInstructionRecord[];
+}
+
 export interface PaymentExportArtifact {
   fileName: string;
   contentType: string;
@@ -189,6 +207,61 @@ export class PaymentExportsService {
         planPaymentExport({ period, results, destinations, onDate: manilaToday() }),
       );
       return this.write(transaction, context, period, plan, destinations);
+    });
+  }
+
+  /**
+   * The period's Payment Exports, oldest first: its original, then each
+   * superseding retry export. Each instruction carries its Disbursement
+   * Outcomes in sequence and whether it can be retried now, so a reader needs
+   * no rule of its own. A period with none, or not FINALIZED, lists none.
+   */
+  async list(context: RequestContext, periodId: string): Promise<PaymentExportRecord[]> {
+    requirePermission(context, 'Reading Payment Exports');
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const period = await transaction.payrollPeriod.findFirst({
+        where: { agencyId: context.agencyId, id: periodId },
+        select: { id: true },
+      });
+      if (!period) throw periodNotFound();
+      const rows = await transaction.paymentExport.findMany({
+        where: { agencyId: context.agencyId, payrollPeriodId: periodId },
+        orderBy: [{ generatedAt: 'asc' }, { id: 'asc' }],
+      });
+      const views: PaymentExportView[] = [];
+      for (const row of rows) views.push(toView(row, await readInstructions(transaction, row)));
+      const instructions = views.flatMap((view) => view.instructions);
+      const outcomes = await transaction.disbursementOutcome.findMany({
+        where: {
+          agencyId: context.agencyId,
+          paymentInstructionId: { in: instructions.map((instruction) => instruction.id) },
+        },
+        orderBy: [{ paymentInstructionId: 'asc' }, { sequence: 'asc' }],
+      });
+      const retriedBy = new Map(
+        instructions
+          .filter((instruction) => instruction.priorPaymentInstructionId !== null)
+          .map((instruction) => [instruction.priorPaymentInstructionId!, instruction.id]),
+      );
+      return views.map((view) => ({
+        ...view,
+        instructions: view.instructions.map((instruction) => {
+          const recorded = outcomes
+            .filter((outcome) => outcome.paymentInstructionId === instruction.id)
+            .map(outcomeView);
+          const retriedByPaymentInstructionId = retriedBy.get(instruction.id) ?? null;
+          const latest = recorded.at(-1);
+          return {
+            ...instruction,
+            outcomes: recorded,
+            retriedByPaymentInstructionId,
+            retryable:
+              retriedByPaymentInstructionId === null &&
+              latest !== undefined &&
+              RETRYABLE_OUTCOMES.includes(latest.outcome),
+          };
+        }),
+      }));
     });
   }
 
@@ -774,6 +847,30 @@ function toView(row: ExportRow, instructions: InstructionRow[]): PaymentExportVi
       ...instruction,
       amount: amount.toFixed(2),
     })),
+  };
+}
+
+function outcomeView(row: {
+  id: string;
+  paymentInstructionId: string;
+  sequence: number;
+  outcome: string;
+  externalReference: string | null;
+  evidenceDocumentVersionId: string | null;
+  reason: string | null;
+  recordedByMembershipId: string;
+  recordedAt: Date;
+}): DisbursementOutcomeView {
+  return {
+    id: row.id,
+    paymentInstructionId: row.paymentInstructionId,
+    sequence: row.sequence,
+    outcome: row.outcome as DisbursementOutcomeKind,
+    externalReference: row.externalReference,
+    evidenceDocumentVersionId: row.evidenceDocumentVersionId,
+    reason: row.reason,
+    recordedByMembershipId: row.recordedByMembershipId,
+    recordedAt: row.recordedAt.toISOString(),
   };
 }
 

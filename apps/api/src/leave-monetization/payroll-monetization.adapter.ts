@@ -95,10 +95,14 @@ export class PayrollInboxMonetizationAdapter implements PayrollMonetizationPort 
           });
           if ('code' in withdrawal) return refusal(withdrawal);
           if (!new Prisma.Decimal(request.retainedQuantity).greaterThan(0)) {
+            const deferred = 'payrollAdjustmentId' in withdrawal;
             return {
-              kind: withdrawal.outcome === 'WITHDRAWN' ? 'ACCEPTED' : 'ALREADY_ACCEPTED',
+              kind:
+                withdrawal.outcome === 'WITHDRAWN' || withdrawal.outcome === 'DEFERRED'
+                  ? 'ACCEPTED'
+                  : 'ALREADY_ACCEPTED',
               payrollInputId: withdrawal.payrollInputId,
-              status: 'CANCELLED',
+              status: deferred ? 'CONSUMED' : 'CANCELLED',
               amount: null,
               payrollResult: { withdrawal },
             };

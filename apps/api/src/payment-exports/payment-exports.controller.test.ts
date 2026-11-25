@@ -20,7 +20,7 @@ const context: RequestContext = {
 
 describe('PaymentExportsController', () => {
   it('needs payroll.payment_exports.generate on every route', () => {
-    for (const route of ['generate', 'retry', 'downloadCsv', 'downloadSummary'] as const) {
+    for (const route of ['list', 'generate', 'retry', 'downloadCsv', 'downloadSummary'] as const) {
       expect(
         Reflect.getMetadata(REQUIRED_PERMISSIONS, PaymentExportsController.prototype[route]),
       ).toEqual(['payroll.payment_exports.generate']);
