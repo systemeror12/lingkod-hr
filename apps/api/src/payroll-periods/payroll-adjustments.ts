@@ -3,7 +3,8 @@ import type { Prisma } from '@prisma/client';
 /** Why a Payroll Adjustment opens, or a later cause that joins it (payroll-schema.md §10). */
 export type PayrollAdjustmentCause =
   | { origin: 'PAYROLL_HOLD'; payrollHoldId: string }
-  | { origin: 'RECALCULATION'; reason: string; openedByMembershipId: string };
+  | { origin: 'RECALCULATION'; reason: string; openedByMembershipId: string }
+  | { origin: 'SOURCE_CORRECTION'; payrollInputId: string; sourceCorrectionKey: string };
 
 /**
  * Open the Employee's Payroll Adjustment against a FINALIZED period, or join
@@ -51,14 +52,26 @@ export async function openPayrollAdjustment(
         agencyId,
         payrollAdjustmentId,
         origin: cause.origin,
-        ...(cause.origin === 'PAYROLL_HOLD'
-          ? { payrollHoldId: cause.payrollHoldId }
-          : { reason: cause.reason, openedByMembershipId: cause.openedByMembershipId }),
+        ...causeColumns(cause),
       },
     });
     return { payrollAdjustmentId, joined: Boolean(open) };
   }
   throw new Error('The Payroll Adjustment kept changing while a cause was recorded.');
+}
+
+function causeColumns(cause: PayrollAdjustmentCause) {
+  switch (cause.origin) {
+    case 'PAYROLL_HOLD':
+      return { payrollHoldId: cause.payrollHoldId };
+    case 'RECALCULATION':
+      return { reason: cause.reason, openedByMembershipId: cause.openedByMembershipId };
+    case 'SOURCE_CORRECTION':
+      return {
+        payrollInputId: cause.payrollInputId,
+        sourceCorrectionKey: cause.sourceCorrectionKey,
+      };
+  }
 }
 
 /**

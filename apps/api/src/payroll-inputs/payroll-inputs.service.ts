@@ -4,6 +4,10 @@ import { Prisma } from '@prisma/client';
 import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import {
+  livePayrollsCarrying,
+  openPayrollAdjustment,
+} from '../payroll-periods/payroll-adjustments';
 import { PayrollMonetizationCalculator } from '../payroll-monetization/payroll-monetization.calculator';
 import {
   payrollInputSubmissionSchema,
@@ -31,10 +35,24 @@ export type PayrollInputAcceptance =
       missingFacts?: string[];
     };
 
-/** Payroll's answer to a withdrawal, with the same failure meanings as acceptance. */
+/**
+ * Payroll's answer to a withdrawal, with the same failure meanings as
+ * acceptance. `DEFERRED` means a finalized payroll consumed the input, so it
+ * stays `CONSUMED` and the withdrawal waits in the named Payroll Adjustment
+ * against that payroll, with the adjustment's current status (#650).
+ */
 export type PayrollInputWithdrawalAnswer =
   | { outcome: 'WITHDRAWN' | 'ALREADY_WITHDRAWN'; payrollInputId: string }
+  | PayrollInputDeferral
   | { outcome: 'REJECTED' | 'RETRYABLE_FAILURE'; code: string; reason: string };
+
+export interface PayrollInputDeferral {
+  outcome: 'DEFERRED' | 'ALREADY_DEFERRED';
+  payrollInputId: string;
+  payrollAdjustmentId: string;
+  originalPayrollPeriodId: string;
+  adjustmentStatus: 'OPEN' | 'POSTED' | 'CANCELLED';
+}
 
 export interface PayrollInputSummary {
   id: string;
@@ -184,11 +202,12 @@ export class PayrollInputsService {
       payloadSnapshot = { ...payloadSnapshot, payrollValuation: valued.valuation };
     }
 
-    // A replacement names a withdrawn input of the same source, Employee, and kind.
+    // A replacement names a withdrawn input of the same source, Employee, and
+    // kind: cancelled, or consumed with its withdrawal deferred to an adjustment.
     if (request.replacesPayrollInputId) {
       const replaced = await transaction.payrollInput.findFirst({
         where: { agencyId: request.agencyId, id: request.replacesPayrollInputId },
-        select: { employeeId: true, sourceModule: true, inputKind: true, status: true },
+        select: { id: true, employeeId: true, sourceModule: true, inputKind: true, status: true },
       });
       if (
         !replaced ||
@@ -201,7 +220,13 @@ export class PayrollInputsService {
           'The replaced Payroll Input is not one this source posted for the Employee and kind.',
         );
       }
-      if (replaced.status !== 'CANCELLED') {
+      if (
+        replaced.status !== 'CANCELLED' &&
+        !(
+          replaced.status === 'CONSUMED' &&
+          (await deferralOf(transaction, request.agencyId, replaced.id))
+        )
+      ) {
         return rejected(
           'PAYROLL_INPUT_REPLACED_NOT_WITHDRAWN',
           'A replacement needs its earlier Payroll Input withdrawn first.',
@@ -247,10 +272,11 @@ export class PayrollInputsService {
    *
    * When a live calculation uses the input, {@link withdrawFromLiveCalculation}
    * also blocks each such period until it is returned and recalculated (#649).
-   * Payroll does not yet correct an input a finalized payroll consumed (#650),
-   * so it refuses that as retryable. Two concurrent withdrawals of different
-   * inputs under one key fail the second caller's transaction on the key's
-   * unique index.
+   * When a finalized payroll consumed it, {@link deferToPayrollAdjustment}
+   * leaves it unchanged and records the withdrawal in a Payroll Adjustment
+   * against that payroll (#650); a replacement may then name it too. Two
+   * concurrent withdrawals of different inputs under one key fail the second
+   * caller's transaction on the key's unique index.
    */
   async withdrawInTransaction(
     transaction: Prisma.TransactionClient,
@@ -264,42 +290,65 @@ export class PayrollInputsService {
         'correctionKey: A stable correction key is required.',
       );
     }
+    // A deferred withdrawal keeps its key on its adjustment cause, not the input.
     const keyed = await transaction.payrollInput.findFirst({
       where: { agencyId, sourceModule, sourceCorrectionKey: correctionKey },
       select: { id: true },
     });
-    if (keyed && keyed.id !== payrollInputId) {
+    const keyedCause = await transaction.payrollAdjustmentCause.findFirst({
+      where: { agencyId, sourceCorrectionKey: correctionKey },
+      select: { payrollInputId: true },
+    });
+    if (
+      (keyed && keyed.id !== payrollInputId) ||
+      (keyedCause && keyedCause.payrollInputId !== payrollInputId)
+    ) {
       return rejected(
         'PAYROLL_CORRECTION_KEY_CONFLICT',
         'The correction key already withdrew another Payroll Input.',
       );
     }
 
-    const read = () =>
-      transaction.payrollInput.findFirst({
+    // A finalization, a void, or another withdrawal may change the input
+    // between the read and the write; the next pass answers its new state.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const input = await transaction.payrollInput.findFirst({
         where: { agencyId, id: payrollInputId },
-        select: { sourceModule: true, status: true, sourceCorrectionKey: true },
+        select: {
+          sourceModule: true,
+          status: true,
+          sourceCorrectionKey: true,
+          consumedByPayrollPeriodId: true,
+        },
       });
-    const settled = settledWithdrawal(await read(), request, correctionKey);
-    if (settled) return settled;
-
-    // Before the period rows, in the order a calculation start takes them.
-    await lockPayrollInputAcceptance(transaction, agencyId, 'SHARED');
-    const live = await lockLiveCalculations(transaction, agencyId, payrollInputId);
-    const cancelled = await transaction.payrollInput.updateMany({
-      where: { agencyId, id: payrollInputId, sourceModule, status: 'PENDING' },
-      data: { status: 'CANCELLED', sourceCorrectionKey: correctionKey },
-    });
-    if (cancelled.count === 1) {
-      if (live.length > 0) {
-        await withdrawFromLiveCalculation(transaction, agencyId, payrollInputId, live);
+      const settled = settledWithdrawal(input, request, correctionKey);
+      if (settled) return settled;
+      if (input?.status === 'CONSUMED') {
+        const deferred = await deferToPayrollAdjustment(
+          transaction,
+          request,
+          correctionKey,
+          input.consumedByPayrollPeriodId,
+        );
+        if (deferred) return deferred;
+        continue;
       }
-      return { outcome: 'WITHDRAWN', payrollInputId };
+
+      // Before the period rows, in the order a calculation start takes them.
+      await lockPayrollInputAcceptance(transaction, agencyId, 'SHARED');
+      const live = await lockLiveCalculations(transaction, agencyId, payrollInputId);
+      const cancelled = await transaction.payrollInput.updateMany({
+        where: { agencyId, id: payrollInputId, sourceModule, status: 'PENDING' },
+        data: { status: 'CANCELLED', sourceCorrectionKey: correctionKey },
+      });
+      if (cancelled.count === 1) {
+        if (live.length > 0) {
+          await withdrawFromLiveCalculation(transaction, agencyId, payrollInputId, live);
+        }
+        return { outcome: 'WITHDRAWN', payrollInputId };
+      }
     }
-    // A finalization or another withdrawal changed the input after the check.
-    const raced = settledWithdrawal(await read(), request, correctionKey);
-    if (!raced) throw new Error('The Payroll Input stayed PENDING but could not be withdrawn.');
-    return raced;
+    throw new Error('The Payroll Input kept changing while it was withdrawn.');
   }
 
   /** Payroll Inputs of the acting Agency, newest first, by source module and status. */
@@ -339,7 +388,10 @@ export class PayrollInputsService {
   }
 }
 
-/** Payroll's answer for an input that is no longer `PENDING`, or not the source's. */
+/**
+ * Payroll's answer for an input that is `CANCELLED` or not the source's.
+ * `PENDING` and `CONSUMED` inputs get `null`: their handlers answer them.
+ */
 function settledWithdrawal(
   input: { sourceModule: string; status: string; sourceCorrectionKey: string | null } | null,
   request: PayrollInputWithdrawal,
@@ -357,14 +409,136 @@ function settledWithdrawal(
           'Another correction already withdrew the Payroll Input.',
         );
   }
-  if (input.status === 'CONSUMED') {
+  return null;
+}
+
+/**
+ * The handler for an input a `FINALIZED` payroll consumed (#650, #330 D11
+ * #15, ADR 0016). The finalized payroll and the input stay as they are:
+ * Payroll opens the Employee's Payroll Adjustment against that payroll, or
+ * joins the `OPEN` one, with a `SOURCE_CORRECTION` cause naming the input and
+ * the source's correction key, and answers `DEFERRED` with the adjustment.
+ * The period that carries the adjustment recalculates the original without
+ * the input. A retry under the same key answers `ALREADY_DEFERRED` with the
+ * adjustment's current status; another key is refused, as for a cancelled
+ * input. Voiding the payroll later cancels the adjustment and makes the input
+ * `CANCELLED` under this key (#358).
+ *
+ * The consuming period's row is locked `FOR SHARE` before the input row, in
+ * the order a void takes them, so a void either committed first, leaving the
+ * input `PENDING` (answered `null` for the caller to read again), or waits
+ * for this cause and then cancels the input. A cause that joins an adjustment
+ * a live period already carries would not be counted, so that is refused as
+ * retryable until the carrying period is finalized or returned to `DRAFT`.
+ */
+async function deferToPayrollAdjustment(
+  transaction: Prisma.TransactionClient,
+  request: PayrollInputWithdrawal,
+  correctionKey: string,
+  consumedByPayrollPeriodId: string | null,
+): Promise<PayrollInputWithdrawalAnswer | null> {
+  const { agencyId, payrollInputId } = request;
+  const [period] = consumedByPayrollPeriodId
+    ? await transaction.$queryRaw<{ status: string }[]>`
+        SELECT "status" FROM "payroll_periods"
+        WHERE "agency_id" = CAST(${agencyId} AS uuid)
+          AND "id" = CAST(${consumedByPayrollPeriodId} AS uuid)
+        FOR SHARE`
+    : [];
+  const [input] = await transaction.$queryRaw<
+    { employee_id: string; status: string; consumed_by_payroll_period_id: string | null }[]
+  >`
+    SELECT "employee_id"::text, "status", "consumed_by_payroll_period_id"::text
+    FROM "payroll_inputs"
+    WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${payrollInputId} AS uuid)
+    FOR UPDATE`;
+  if (
+    !input ||
+    input.status !== 'CONSUMED' ||
+    input.consumed_by_payroll_period_id !== consumedByPayrollPeriodId
+  ) {
+    return null;
+  }
+  if (period?.status !== 'FINALIZED') {
     return {
       outcome: 'RETRYABLE_FAILURE',
       code: 'PAYROLL_INPUT_CONSUMED_CORRECTION_UNAVAILABLE',
-      reason: 'The Payroll Input was consumed by a payroll; Payroll cannot yet correct it (#650).',
+      reason: 'The Payroll Input is consumed by a payroll that is not FINALIZED.',
     };
   }
-  return null;
+  const originalPayrollPeriodId = consumedByPayrollPeriodId!;
+
+  const existing = await deferralOf(transaction, agencyId, payrollInputId);
+  if (existing) {
+    if (existing.sourceCorrectionKey.toLowerCase() !== correctionKey.toLowerCase()) {
+      return rejected(
+        'PAYROLL_INPUT_ALREADY_WITHDRAWN',
+        'Another correction already withdrew the Payroll Input.',
+      );
+    }
+    return {
+      outcome: 'ALREADY_DEFERRED',
+      payrollInputId,
+      payrollAdjustmentId: existing.payrollAdjustmentId,
+      originalPayrollPeriodId,
+      adjustmentStatus: existing.adjustmentStatus,
+    };
+  }
+
+  const open = await transaction.payrollAdjustment.findFirst({
+    where: {
+      agencyId,
+      originalPayrollPeriodId,
+      employeeId: input.employee_id,
+      status: 'OPEN',
+    },
+    select: { id: true },
+  });
+  const [carrier] = await livePayrollsCarrying(transaction, agencyId, open ? [open.id] : []);
+  if (carrier) {
+    return {
+      outcome: 'RETRYABLE_FAILURE',
+      code: 'PAYROLL_ADJUSTMENT_IN_PAYROLL',
+      reason: `Payroll Period ${carrier.code} already carries the Employee's adjustment for this payroll and calculated its difference. Retry after it is finalized or returned to DRAFT.`,
+    };
+  }
+  const { payrollAdjustmentId } = await openPayrollAdjustment(transaction, {
+    agencyId,
+    originalPayrollPeriodId,
+    employeeId: input.employee_id,
+    cause: { origin: 'SOURCE_CORRECTION', payrollInputId, sourceCorrectionKey: correctionKey },
+  });
+  return {
+    outcome: 'DEFERRED',
+    payrollInputId,
+    payrollAdjustmentId,
+    originalPayrollPeriodId,
+    adjustmentStatus: 'OPEN',
+  };
+}
+
+/** The source correction a Payroll Adjustment holds for a consumed input, if any. */
+async function deferralOf(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  payrollInputId: string,
+) {
+  const cause = await transaction.payrollAdjustmentCause.findFirst({
+    where: { agencyId, origin: 'SOURCE_CORRECTION', payrollInputId },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      payrollAdjustmentId: true,
+      sourceCorrectionKey: true,
+      adjustment: { select: { status: true } },
+    },
+  });
+  return cause
+    ? {
+        payrollAdjustmentId: cause.payrollAdjustmentId,
+        sourceCorrectionKey: cause.sourceCorrectionKey!,
+        adjustmentStatus: cause.adjustment.status as PayrollInputDeferral['adjustmentStatus'],
+      }
+    : null;
 }
 
 /**
