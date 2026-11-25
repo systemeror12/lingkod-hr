@@ -358,14 +358,17 @@ describe.skipIf(!enabled)('Authorized deductions in PostgreSQL', () => {
     const loanComponent = await admin.payComponent.findUniqueOrThrow({
       where: { code: 'LOAN_DEDUCTION' },
     });
+    // Payroll lines carry no stable order, so they are sorted by amount here;
+    // the loan deduction lines below assert the priority order.
     expect(
       borrowed.lines
         .filter((line) => line.payComponentId === loanComponent.id)
+        .sort((a, b) => Number(a.amount) - Number(b.amount))
         .map((line) => [line.lineType, line.ruleVersionId, String(line.amount)]),
     ).toEqual([
       ['DEDUCTION', deductionsId, '500'],
-      ['DEDUCTION', deductionsId, '3000'],
       ['DEDUCTION', deductionsId, '1500'],
+      ['DEDUCTION', deductionsId, '3000'],
     ]);
     const loanLines = await admin.loanDeductionLine.findMany({
       where: { payrollEmployeeId: borrowed.id },
