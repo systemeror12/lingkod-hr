@@ -126,6 +126,8 @@ function review(
     finalizedAt: status === 'FINALIZED' ? '2026-11-21T03:00:00.000Z' : null,
     finalizedByMembershipId: status === 'FINALIZED' ? 'member-approver' : null,
     finalizedByName: status === 'FINALIZED' ? 'Pia Approver' : null,
+    replacedByPeriodId: null,
+    replacesPeriodIds: [],
     certification: certified
       ? {
           id: 'certification-1',

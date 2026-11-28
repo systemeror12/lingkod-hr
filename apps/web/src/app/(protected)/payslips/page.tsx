@@ -20,7 +20,11 @@ const forbidden = (
   />
 );
 
-export default async function PayslipsPage() {
+export default async function PayslipsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string | string[] }>;
+}) {
   const session = await getActiveSession();
   if (!hasPermission(session, 'payroll.periods.read')) return forbidden;
 
@@ -37,6 +41,8 @@ export default async function PayslipsPage() {
     citesEvidence ? loadAuthorityOptions(session) : Promise.resolve([]),
   ]);
   if (list.status === 403) return forbidden;
+  // A Payroll Corrections link names the period to open.
+  const { period } = await searchParams;
   const value = list.value as Partial<PayrollPeriodList> | null;
   if (!Array.isArray(value?.periods) || !Array.isArray(value.payComponents)) {
     throw new Error('Payroll Periods could not be loaded.');
@@ -57,6 +63,7 @@ export default async function PayslipsPage() {
       employees={employees}
       evidenceReadable={hasPermission(session, 'documents.evidence.read')}
       initialList={value as PayrollPeriodList}
+      initialOpenPeriodId={typeof period === 'string' ? period : undefined}
       reviewPermissions={reviewPermissions}
     />
   );

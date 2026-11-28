@@ -18,7 +18,13 @@ const period: PayrollPeriod = {
   paymentDate: '2850-06-15',
   status: 'CERTIFIED',
   calculationVersion: 1,
+  carriesAdjustments: false,
   payComponentIds: [],
+  finalizedAt: null,
+  voidRequestedAt: null,
+  voidDocumentVersionId: null,
+  voidReason: null,
+  voidedAt: null,
   rowVersion: 4,
   totals: null,
 };
@@ -32,6 +38,8 @@ const review: PayrollPeriodReview = {
   finalizedAt: null,
   finalizedByMembershipId: null,
   finalizedByName: null,
+  replacedByPeriodId: null,
+  replacesPeriodIds: [],
   certification: {
     id: 'certification-1',
     calculationVersion: 1,

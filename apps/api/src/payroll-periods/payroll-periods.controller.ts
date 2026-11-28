@@ -6,6 +6,7 @@ import {
   Inject,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -16,6 +17,7 @@ import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import {
   PayrollAdjustmentsService,
+  type PayrollAdjustmentView,
   type PayrollRecalculationResult,
 } from './payroll-adjustments.service';
 import { PayrollApprovalService } from './payroll-approval.service';
@@ -270,6 +272,18 @@ export class PayrollPeriodsController {
     assertAgency(agencyId, context);
     const id = parsePeriodId(periodId, context);
     return translate(context, () => this.adjustments.openRecalculation(context, id, body));
+  }
+
+  /** List the Agency's Payroll Adjustments, newest first, by status and original period (#651). */
+  @Get(':agencyId/payroll-adjustments')
+  @RequirePermission('payroll.periods.read')
+  async listAdjustments(
+    @Param('agencyId') agencyId: string,
+    @Query() query: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ adjustments: PayrollAdjustmentView[] }> {
+    assertAgency(agencyId, context);
+    return { adjustments: await translate(context, () => this.adjustments.list(context, query)) };
   }
 
   /** Read a Certified Payroll Review Export; the period detail names the current one. */

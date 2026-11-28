@@ -248,6 +248,13 @@ const destinations: readonly (Destination & {
     permission: 'payroll.periods.read',
   },
   {
+    // Payroll Adjustments and voids of finalized payrolls (#651), beside Employee Payslips.
+    href: '/payroll-corrections',
+    label: 'Payroll Corrections',
+    stage: 'Payroll',
+    permission: 'payroll.periods.read',
+  },
+  {
     // One Finalized period's outputs (#327); the Payment Export is the first of them.
     href: '/payroll-reports',
     label: 'Reports',
